@@ -1,14 +1,27 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
-import { Settings } from "lucide-react";
+import { Menu, Settings } from "lucide-react";
 import { StatusIndicator } from "@/components/ui/StatusIndicator";
 import { HelpIconButton } from "@/components/onboarding/HelpIconButton";
+import { NavigationDrawer } from "./NavigationDrawer";
 
 export function TopBar() {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
   return (
     <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border bg-surface px-4 py-3">
-      <span className="text-sm font-semibold tracking-wide text-foreground">
-        EyeOnPit
-      </span>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setDrawerOpen(true)}
+          aria-label="Menu"
+          className="tap-target flex items-center justify-center text-muted-foreground hover:text-foreground"
+        >
+          <Menu className="h-5 w-5" aria-hidden />
+        </button>
+        <span className="text-sm font-semibold tracking-wide text-foreground">EyeOnPit</span>
+      </div>
       <div className="flex items-center gap-1">
         <StatusIndicator />
         <Link
@@ -20,6 +33,8 @@ export function TopBar() {
         </Link>
         <HelpIconButton />
       </div>
+
+      <NavigationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
     </header>
   );
 }

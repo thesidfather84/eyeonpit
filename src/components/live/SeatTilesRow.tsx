@@ -1,8 +1,18 @@
 import { computeApLikelihoodBySeat } from "@/lib/analysis/apLikelihood";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import type { CardTarget } from "@/contexts/InvestigationContext";
+import type { HandOutcome } from "@/types/investigation";
 
 const SEATS = [1, 2, 3, 4, 5, 6, 7];
+
+const OUTCOME_ABBR: Record<NonNullable<HandOutcome>, string> = {
+  win: "WIN",
+  loss: "LOSS",
+  push: "PUSH",
+  blackjack: "BJ",
+  surrender: "SUR",
+  void: "VOID",
+};
 
 /** "TABLE SEATS" — tapping a tracked seat selects it for bet changes, card entry, actions, and notes. */
 export function SeatTilesRow() {
@@ -35,6 +45,8 @@ export function SeatTilesRow() {
             statusLabel = "OCCUPIED";
           }
 
+          const displayLabel = record?.outcome ? OUTCOME_ABBR[record.outcome] : statusLabel;
+
           return (
             <button
               key={seat}
@@ -49,7 +61,7 @@ export function SeatTilesRow() {
               <span className="text-xs font-semibold">
                 {record?.betAmount != null ? `$${record.betAmount}` : "—"}
               </span>
-              <span className="text-[8px] font-medium tracking-wide">{statusLabel}</span>
+              <span className="text-[8px] font-medium tracking-wide">{displayLabel}</span>
             </button>
           );
         })}

@@ -10,6 +10,7 @@ import { SeatTilesRow } from "./SeatTilesRow";
 import { QuickBetPanel } from "./QuickBetPanel";
 import { CardEntryPad } from "./CardEntryPad";
 import { PlayerActionsRow } from "./PlayerActionsRow";
+import { ResultButtonsRow } from "./ResultButtonsRow";
 import { RoundControlsRow } from "./RoundControlsRow";
 import { EventLogPanel } from "./EventLogPanel";
 
@@ -32,6 +33,7 @@ export function LiveScreen() {
         <>
           <QuickBetPanel seatNumber={activeSeat} />
           <PlayerActionsRow seatNumber={activeSeat} />
+          <ResultButtonsRow seatNumber={activeSeat} />
         </>
       ) : (
         <p className="border-b border-border bg-surface px-3 py-2 text-xs text-muted-foreground">

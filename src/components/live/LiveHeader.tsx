@@ -1,27 +1,29 @@
 "use client";
 
-import Link from "next/link";
+import { useState } from "react";
 import { Eye, Lock, Menu, Pause, Play } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { useElapsedTimer } from "@/hooks/useElapsedTimer";
 import { formatElapsedTime } from "@/lib/utils/formatters";
+import { NavigationDrawer } from "@/components/navigation/NavigationDrawer";
 
 export function LiveHeader({ onLock }: { onLock: () => void }) {
   const { investigation, busy, pause, resume } = useInvestigationContext();
   const elapsedMs = useElapsedTimer(investigation);
   const isPaused = investigation.status === "paused";
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   return (
     <div className="flex flex-none flex-col border-b border-border bg-surface">
       <div className="flex items-center justify-between px-3 py-2">
         <div className="flex items-center gap-2">
-          <Link
-            href="/"
+          <button
+            onClick={() => setDrawerOpen(true)}
             aria-label="Menu"
             className="tap-target flex items-center justify-center text-muted-foreground hover:text-foreground"
           >
             <Menu className="h-5 w-5" aria-hidden />
-          </Link>
+          </button>
           <div className="flex items-center gap-1.5">
             <Eye className="h-4 w-4 text-accent" aria-hidden />
             <span className="text-sm font-bold tracking-wide text-foreground">EyeOnPit</span>
@@ -63,6 +65,8 @@ export function LiveHeader({ onLock }: { onLock: () => void }) {
           </button>
         </div>
       </div>
+
+      <NavigationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
     </div>
   );
 }

@@ -27,6 +27,8 @@ export function SeatsScreen() {
           const seatRounds = rounds.filter((r) => r.seats[seat]?.betAmount != null);
           const startingWager = seatRounds[0]?.seats[seat]?.betAmount ?? null;
           const latestWager = seatRounds[seatRounds.length - 1]?.seats[seat]?.betAmount ?? null;
+          const latestResult = [...rounds].reverse().find((r) => r.seats[seat]?.outcome)?.seats[seat]
+            ?.outcome;
 
           return (
             <div key={seat} className="rounded-lg border border-border bg-surface p-3">
@@ -39,7 +41,7 @@ export function SeatsScreen() {
                 </div>
               </div>
               {isTracked && (
-                <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+                <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs text-muted-foreground">
                   <span>
                     Starting <b className="text-foreground">{startingWager != null ? `$${startingWager}` : "—"}</b>
                   </span>
@@ -48,6 +50,9 @@ export function SeatsScreen() {
                   </span>
                   <span>
                     Hands <b className="text-foreground">{seatRounds.length}</b>
+                  </span>
+                  <span>
+                    Result <b className="text-foreground">{latestResult ?? "—"}</b>
                   </span>
                 </div>
               )}

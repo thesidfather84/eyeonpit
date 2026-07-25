@@ -19,7 +19,7 @@ export type SyncStatus = "local-only" | "pending" | "synced" | "conflict";
 export type InvestigationStatus = "draft" | "active" | "paused" | "closed";
 
 export type HandOutcome =
-  | "win" | "loss" | "push" | "blackjack" | "surrender" | null;
+  | "win" | "loss" | "push" | "blackjack" | "surrender" | "void" | null;
 
 export type WagerDirection = "up" | "down" | "same" | "first";
 

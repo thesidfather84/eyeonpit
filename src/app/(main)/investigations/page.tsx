@@ -31,9 +31,7 @@ export default function HistoryPage() {
         {investigations?.map((investigation) => (
           <li key={investigation.localId}>
             <Link
-              href={`/investigations/${investigation.localId}/${
-                investigation.status === "closed" ? "report" : "live"
-              }`}
+              href={`/investigations/${investigation.localId}/live`}
               className="tap-target flex flex-col gap-1 rounded-lg border border-border bg-surface p-3 hover:bg-surface-raised"
             >
               <div className="flex items-center justify-between">

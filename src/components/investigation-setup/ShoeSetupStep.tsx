@@ -1,4 +1,3 @@
-import { COUNTING_SYSTEMS } from "@/lib/counting-systems/countingSystems";
 import { FieldHint } from "@/components/onboarding/FieldHint";
 import type { WizardDraft } from "./SetupWizardShell";
 
@@ -9,32 +8,10 @@ interface StepProps {
 
 const DECK_PRESETS = [1, 2, 4, 6, 8];
 
+/** Counting system is not a setup choice — the Live screen computes every supported system simultaneously from the same cards. */
 export function ShoeSetupStep({ draft, onChange }: StepProps) {
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <p className="mb-2 text-sm font-medium text-foreground">Counting system</p>
-        <div className="grid grid-cols-2 gap-2">
-          {COUNTING_SYSTEMS.map((system) => (
-            <button
-              key={system}
-              type="button"
-              onClick={() => onChange({ countingSystem: system })}
-              className={`tap-target rounded-lg border text-sm font-semibold ${
-                draft.countingSystem === system
-                  ? "border-accent bg-accent/15 text-accent"
-                  : "border-border bg-surface text-foreground"
-              }`}
-            >
-              {system}
-            </button>
-          ))}
-        </div>
-        <FieldHint id="counting-system">
-          Determines how the live running and true count are calculated.
-        </FieldHint>
-      </div>
-
       <div>
         <p className="mb-2 text-sm font-medium text-foreground">Shoe size (decks)</p>
         <div className="grid grid-cols-5 gap-2">
@@ -53,6 +30,9 @@ export function ShoeSetupStep({ draft, onChange }: StepProps) {
             </button>
           ))}
         </div>
+        <FieldHint id="shoe-size">
+          Used to calculate decks remaining and penetration as cards are entered.
+        </FieldHint>
       </div>
     </div>
   );

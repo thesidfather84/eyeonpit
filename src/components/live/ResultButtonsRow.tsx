@@ -14,8 +14,9 @@ const RESULTS: { outcome: NonNullable<HandOutcome>; label: string }[] = [
 
 /** Fast result tagging for the active seat's hand this round. Stored on that seat's SeatHand record for the current round — see event log, Analysis, Seats, Report, and JSON export for where it surfaces. */
 export function ResultButtonsRow({ seatNumber }: { seatNumber: number }) {
-  const { currentRound, mutate, busy } = useInvestigationContext();
+  const { investigation, currentRound, mutate, busy } = useInvestigationContext();
   const current = currentRound.seats[seatNumber]?.outcome ?? null;
+  const disabled = busy || investigation.status !== "active";
 
   function handleResult(outcome: NonNullable<HandOutcome>, label: string) {
     mutate(
@@ -37,7 +38,7 @@ export function ResultButtonsRow({ seatNumber }: { seatNumber: number }) {
         {RESULTS.map(({ outcome, label }) => (
           <button
             key={outcome}
-            disabled={busy}
+            disabled={disabled}
             onClick={() => handleResult(outcome, label)}
             className={`tap-target rounded-lg border text-xs font-medium disabled:opacity-40 ${
               current === outcome

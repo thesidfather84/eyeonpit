@@ -14,7 +14,7 @@ export default async function InvestigationLayout({
   return (
     <LockProvider>
       <InvestigationProvider investigationId={id}>
-        <InvestigationChrome investigationId={id}>{children}</InvestigationChrome>
+        <InvestigationChrome>{children}</InvestigationChrome>
       </InvestigationProvider>
     </LockProvider>
   );

@@ -1,14 +1,34 @@
 "use client";
 
 import { useState } from "react";
-import { Redo2, Undo2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Pause, Play, Redo2, Undo2 } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
+import { completeInvestigation } from "@/lib/db/repositories/investigations";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 export function RoundControlsRow() {
-  const { currentRound, canUndo, canRedo, undo, redo, mutate, nextRound, newShoe, busy } =
-    useInvestigationContext();
+  const {
+    investigation,
+    currentRound,
+    canUndo,
+    canRedo,
+    undo,
+    redo,
+    mutate,
+    nextRound,
+    newShoe,
+    pause,
+    resume,
+    busy,
+  } = useInvestigationContext();
+  const router = useRouter();
   const [shoeConfirmOpen, setShoeConfirmOpen] = useState(false);
+  const [endConfirmOpen, setEndConfirmOpen] = useState(false);
+  const [ending, setEnding] = useState(false);
+
+  const isPaused = investigation.status === "paused";
+  const isActive = investigation.status === "active";
 
   function handleSaveRound() {
     mutate((round) => round, {
@@ -20,6 +40,17 @@ export function RoundControlsRow() {
   async function handleConfirmShoe() {
     await newShoe();
     setShoeConfirmOpen(false);
+  }
+
+  async function handleEndInvestigation() {
+    setEnding(true);
+    try {
+      await completeInvestigation(investigation.localId);
+      router.push("/");
+    } finally {
+      setEnding(false);
+      setEndConfirmOpen(false);
+    }
   }
 
   return (
@@ -44,45 +75,72 @@ export function RoundControlsRow() {
       <div className="mb-2 grid grid-cols-2 gap-2">
         <button
           onClick={handleSaveRound}
-          disabled={busy}
+          disabled={busy || !isActive}
           className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
         >
           Save Round
         </button>
         <button
           onClick={nextRound}
-          disabled={busy}
+          disabled={busy || !isActive}
           className="tap-target rounded-lg bg-accent text-xs font-bold text-accent-foreground disabled:opacity-40"
         >
           Next Round ▶▶
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="mb-2 grid grid-cols-2 gap-2">
         <button
           onClick={() => setShoeConfirmOpen(true)}
-          disabled={busy}
+          disabled={busy || !isActive}
           className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
         >
           New Shoe
         </button>
         <button
-          onClick={() => setShoeConfirmOpen(true)}
-          disabled={busy}
-          className="tap-target rounded-lg bg-destructive text-xs font-bold text-destructive-foreground disabled:opacity-40"
+          onClick={isPaused ? resume : pause}
+          disabled={busy || investigation.status === "closed"}
+          className="tap-target flex items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
         >
-          End Shoe
+          {isPaused ? (
+            <>
+              <Play className="h-4 w-4" aria-hidden /> Resume
+            </>
+          ) : (
+            <>
+              <Pause className="h-4 w-4" aria-hidden /> Pause
+            </>
+          )}
         </button>
       </div>
 
+      <button
+        onClick={() => setEndConfirmOpen(true)}
+        disabled={busy || investigation.status === "closed"}
+        className="tap-target w-full rounded-lg bg-destructive text-xs font-bold text-destructive-foreground disabled:opacity-40"
+      >
+        End Investigation
+      </button>
+
       <ConfirmDialog
         open={shoeConfirmOpen}
-        title="End this shoe and start fresh counting?"
-        message="Running and true count reset to zero for the new shoe. Every round already recorded stays in history."
+        title="Start a new shoe?"
+        message="Running and true count reset to zero for the new shoe, across every counting system. Every round already recorded stays in history."
         confirmLabel="Start New Shoe"
         busy={busy}
         onConfirm={handleConfirmShoe}
         onCancel={() => setShoeConfirmOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={endConfirmOpen}
+        title="End this investigation?"
+        message={`${investigation.rounds.length} rounds recorded across ${investigation.trackedSeats.length} tracked seat(s). You can still reopen it later from History.`}
+        confirmLabel="End Investigation"
+        destructive
+        busy={ending}
+        onConfirm={handleEndInvestigation}
+        onCancel={() => setEndConfirmOpen(false)}
       />
     </div>
   );

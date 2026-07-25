@@ -12,28 +12,28 @@ const RESULT_LABEL: Record<string, string> = {
  * Permanent, always-visible dealer panel — one shared DealerHand per round,
  * never duplicated into seat records. Tapping the upcard/draw area or the
  * hidden hole-card slot sets the shared card-entry target (CardEntryPad
- * applies the next tapped rank to whichever target is active).
+ * applies the next tapped rank to whichever target is active). Blackjack,
+ * Bust, and Stand are explicit taps — the total still auto-calculates live,
+ * but the result is the operator's call, not a silent auto-derivation.
  */
 export function DealerPanel() {
-  const { currentRound, activeTarget, setActiveTarget, mutate, busy } = useInvestigationContext();
+  const { investigation, currentRound, activeTarget, setActiveTarget, mutate, undo, canUndo, busy } =
+    useInvestigationContext();
   const dealerHand = currentRound.dealerHand;
   const visible = dealerVisibleCards(dealerHand);
   const total = visible.length > 0 ? computeHandTotal(visible) : null;
+  const disabled = busy || investigation.status !== "active";
 
   const isDealerTarget = activeTarget === "dealer";
   const isHoleTarget = activeTarget === "dealer-hole";
   const canRevealHole = Boolean(dealerHand.upcard) && !dealerHand.holeCardRevealed;
-  const canStand =
-    dealerHand.holeCardRevealed &&
-    total !== null &&
-    !total.bust &&
-    total.value >= 17 &&
-    dealerHand.result === null;
+  const canDeclareResult = dealerHand.holeCardRevealed && dealerHand.result === null;
+  const canStand = canDeclareResult && total !== null && !total.bust && total.value >= 17;
 
-  function handleStand() {
-    mutate((round) => ({ ...round, dealerHand: { ...round.dealerHand, result: "stand" } }), {
+  function setResult(result: "blackjack" | "bust" | "stand", label: string) {
+    mutate((round) => ({ ...round, dealerHand: { ...round.dealerHand, result } }), {
       type: "dealer-reveal",
-      message: "Dealer stands",
+      message: `Dealer: ${label}`,
     });
   }
 
@@ -91,13 +91,34 @@ export function DealerPanel() {
         ))}
       </div>
 
-      <div className="mt-2 flex gap-2">
+      <div className="mt-2 grid grid-cols-2 gap-2">
         <button
-          onClick={handleStand}
-          disabled={!canStand || busy}
-          className="tap-target flex-1 rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
+          onClick={() => setResult("blackjack", "Blackjack")}
+          disabled={!canDeclareResult || disabled}
+          className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
+        >
+          Dealer Blackjack
+        </button>
+        <button
+          onClick={() => setResult("bust", "Bust")}
+          disabled={!canDeclareResult || disabled}
+          className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
+        >
+          Dealer Bust
+        </button>
+        <button
+          onClick={() => setResult("stand", "Stands")}
+          disabled={!canStand || disabled}
+          className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
         >
           Dealer Stands
+        </button>
+        <button
+          onClick={undo}
+          disabled={!canUndo || busy}
+          className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
+        >
+          Undo Dealer Card
         </button>
       </div>
     </div>

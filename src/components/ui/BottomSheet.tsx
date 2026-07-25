@@ -42,13 +42,12 @@ export function BottomSheet({ open, onClose, title, children }: BottomSheetProps
         onClick={onClose}
       />
       <div
-        className="relative rounded-t-xl border-t border-border bg-surface p-4"
-        style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" }}
+        className="relative flex max-h-[85vh] flex-col rounded-t-xl border-t border-border bg-surface"
         role="dialog"
         aria-modal="true"
         aria-label={title}
       >
-        <div className="mb-3 flex items-center justify-between">
+        <div className="flex flex-none items-center justify-between p-4 pb-3">
           <h2 className="text-base font-semibold text-foreground">{title}</h2>
           <button
             onClick={onClose}
@@ -58,7 +57,12 @@ export function BottomSheet({ open, onClose, title, children }: BottomSheetProps
             ✕
           </button>
         </div>
-        {children}
+        <div
+          className="flex-1 overflow-y-auto px-4"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" }}
+        >
+          {children}
+        </div>
       </div>
     </div>,
     document.body

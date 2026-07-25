@@ -8,7 +8,6 @@ import {
   completeInvestigation,
   updateInvestigation,
 } from "@/lib/db/repositories/investigations";
-import { downloadInvestigationJson } from "@/lib/export/toJson";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { dealerVisibleCards, computeHandTotal } from "@/lib/utils/blackjackTotal";
@@ -141,11 +140,8 @@ export function ReportScreen() {
         </div>
       </section>
 
-      <section className="flex flex-col gap-2">
-        <Button variant="secondary" onClick={() => downloadInvestigationJson(investigation)}>
-          Export JSON
-        </Button>
-        <Button variant="destructive" onClick={() => setCompleting(true)}>
+      <section>
+        <Button variant="destructive" fullWidth onClick={() => setCompleting(true)}>
           Complete Investigation
         </Button>
       </section>

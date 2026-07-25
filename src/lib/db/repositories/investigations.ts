@@ -287,13 +287,14 @@ export async function advanceRound(
   const currentRound = investigation.rounds[investigation.rounds.length - 1];
   const now = new Date().toISOString();
 
-  const stats = computeShoeStats(investigation, currentRound.shoeNumber, investigation.countingSystem);
+  const stats = computeShoeStats(investigation, currentRound.shoeNumber);
+  const snapshot = stats.counts[investigation.countingSystem];
   const finalizedRounds = investigation.rounds.map((round) =>
     round.id === currentRound.id
       ? {
           ...round,
-          runningCount: stats.runningCount,
-          trueCount: stats.trueCount,
+          runningCount: snapshot.runningCount,
+          trueCount: snapshot.trueCount,
           updatedAt: now,
         }
       : round

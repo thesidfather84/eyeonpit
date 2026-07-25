@@ -32,10 +32,8 @@ export function BeginRecordingStep({ draft }: { draft: WizardDraft }) {
         </p>
       </div>
       <div>
-        <p className="text-sm text-muted-foreground">Counting system / Shoe</p>
-        <p className="font-medium text-foreground">
-          {draft.countingSystem} · {draft.shoeTotalDecks} decks
-        </p>
+        <p className="text-sm text-muted-foreground">Shoe</p>
+        <p className="font-medium text-foreground">{draft.shoeTotalDecks} decks</p>
       </div>
     </div>
   );

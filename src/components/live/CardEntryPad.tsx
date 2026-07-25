@@ -9,7 +9,8 @@ const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 
 /** Large rank-only buttons — suits are skipped in this build for entry speed. Applies to whichever target (dealer / dealer hole / seat) is currently active. */
 export function CardEntryPad() {
-  const { activeTarget, setActiveTarget, mutate, busy } = useInvestigationContext();
+  const { investigation, activeTarget, setActiveTarget, mutate, busy } = useInvestigationContext();
+  const disabled = busy || investigation.status !== "active";
 
   const targetLabel =
     activeTarget === "dealer"
@@ -70,7 +71,7 @@ export function CardEntryPad() {
         {RANKS.map((rank) => (
           <button
             key={rank}
-            disabled={busy}
+            disabled={disabled}
             onClick={() => handleTap(rank)}
             className="tap-target flex h-12 items-center justify-center rounded-lg border border-border bg-surface-raised text-lg font-bold text-foreground active:bg-accent active:text-accent-foreground disabled:opacity-40"
           >

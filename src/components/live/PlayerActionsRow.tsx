@@ -16,7 +16,8 @@ const ACTIONS: { action: PlayerAction; label: string }[] = [
 
 /** Actions are stored with the seat and round — every tap appends to that seat's action log for the current round. */
 export function PlayerActionsRow({ seatNumber }: { seatNumber: number }) {
-  const { mutate, busy } = useInvestigationContext();
+  const { investigation, mutate, busy } = useInvestigationContext();
+  const disabled = busy || investigation.status !== "active";
 
   function handleAction(action: PlayerAction, label: string) {
     mutate(
@@ -46,7 +47,7 @@ export function PlayerActionsRow({ seatNumber }: { seatNumber: number }) {
         {ACTIONS.map(({ action, label }) => (
           <button
             key={action}
-            disabled={busy}
+            disabled={disabled}
             onClick={() => handleAction(action, label)}
             className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
           >

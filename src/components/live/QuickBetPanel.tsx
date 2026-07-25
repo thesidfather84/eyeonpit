@@ -16,6 +16,7 @@ export function QuickBetPanel({ seatNumber }: { seatNumber: number }) {
   const currentBet = record?.betAmount ?? 0;
   const priorRounds = investigation.rounds.filter((r) => r.id !== currentRound.id);
   const previousBet = findPreviousBet(seatNumber, priorRounds);
+  const disabled = busy || investigation.status !== "active";
 
   function applyBet(newAmount: number, label?: string) {
     const wagerChange = computeWagerChange(newAmount, previousBet);
@@ -67,28 +68,28 @@ export function QuickBetPanel({ seatNumber }: { seatNumber: number }) {
 
       <div className="mb-2 grid grid-cols-4 gap-2">
         <button
-          disabled={busy}
+          disabled={disabled}
           onClick={() => applyBet(Math.max(0, currentBet - BET_STEP))}
           className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
         >
           Bet Down
         </button>
         <button
-          disabled={busy || previousBet == null}
+          disabled={disabled || previousBet == null}
           onClick={() => applyBet(previousBet ?? currentBet)}
           className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
         >
           Same Bet
         </button>
         <button
-          disabled={busy}
+          disabled={disabled}
           onClick={() => applyBet(currentBet + BET_STEP)}
           className="tap-target rounded-lg border border-accent bg-accent/15 text-xs font-medium text-accent disabled:opacity-40"
         >
           Bet Up
         </button>
         <button
-          disabled={busy}
+          disabled={disabled}
           onClick={() => setCustomOpen((v) => !v)}
           className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
         >
@@ -109,7 +110,7 @@ export function QuickBetPanel({ seatNumber }: { seatNumber: number }) {
           />
           <button
             onClick={handleCustomCommit}
-            disabled={busy || customValue === ""}
+            disabled={disabled || customValue === ""}
             className="tap-target shrink-0 rounded-lg bg-accent px-4 text-sm font-medium text-accent-foreground disabled:opacity-40"
           >
             Set
@@ -124,7 +125,7 @@ export function QuickBetPanel({ seatNumber }: { seatNumber: number }) {
         {MULTIPLIERS.map((mult) => (
           <button
             key={mult}
-            disabled={busy || previousBet == null}
+            disabled={disabled || previousBet == null}
             onClick={() => applyBet(Math.round(previousBet! * mult), `${mult}x`)}
             className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
           >

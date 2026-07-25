@@ -8,19 +8,6 @@ import { findOrCreatePracticeInvestigation } from "@/lib/onboarding/practiceInve
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
-const WORKFLOW_STEPS = [
-  "Start a new investigation and enter casino/table details.",
-  "Mark which seats are occupied, then which are tracked.",
-  "Enter each tracked seat's opening wager.",
-  "Choose a counting system and shoe size.",
-  "Begin recording — the Live screen opens automatically.",
-  "Tap the dealer or a seat to target it, then tap cards as they're dealt.",
-  "Use Quick Bet Entry, Player Actions, and Undo/Redo as the round plays out.",
-  "Tap Next Round to save and advance; New Shoe resets the count.",
-  "Pause anytime — recording stops, nothing already saved is affected.",
-  "Review Analysis and Seats for timelines, then finish in Report.",
-];
-
 export function SettingsScreen() {
   const router = useRouter();
   const { showGuidedTips, setShowGuidedTips } = useSettingsStore();
@@ -87,17 +74,6 @@ export function SettingsScreen() {
           <span className="text-sm font-medium text-foreground">Dark theme</span>
           <span className="text-xs text-muted-foreground">Always on</span>
         </div>
-      </section>
-
-      <section className="rounded-lg border border-border bg-surface p-3">
-        <h2 className="mb-2 text-sm font-semibold text-foreground">How EyeOnPit Works</h2>
-        <ol className="flex flex-col gap-1.5 text-xs text-muted-foreground">
-          {WORKFLOW_STEPS.map((step, i) => (
-            <li key={i}>
-              <span className="text-foreground">{i + 1}.</span> {step}
-            </li>
-          ))}
-        </ol>
       </section>
 
       <Button variant="secondary" disabled={practiceLoading} onClick={handlePractice}>

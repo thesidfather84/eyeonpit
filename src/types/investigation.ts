@@ -99,8 +99,8 @@ export interface Investigation {
   investigationDate: string; // ISO date
   operatorName: string;
 
-  activeSeatCount: number; // 1-7; editable mid-investigation
-  trackedSeats: number[]; // subset of activeSeatCount
+  occupiedSeats: number[]; // subset of 1-7 actually in play; editable mid-investigation
+  trackedSeats: number[]; // subset of occupiedSeats being surveilled
   initialWagers: Record<number, number>;
 
   rounds: Round[];
@@ -112,6 +112,8 @@ export interface Investigation {
   correlationScores: Record<number, CorrelationScores>; // Phase 7
 
   pausedDurationMs: number;
+  /** Set the instant status flips to "paused"; lets the elapsed timer reconstruct correctly even after a reload mid-pause. */
+  pausedAt: string | null;
   createdAt: string;
   updatedAt: string;
   deviceId: string;

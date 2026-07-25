@@ -2,7 +2,11 @@ import { v4 as uuidv4 } from "uuid";
 import { getDb } from "@/lib/db/client";
 import { generateInvestigationId } from "@/lib/investigation-id";
 import { getOrCreateDeviceId } from "@/lib/utils/deviceId";
-import type { Investigation, Round } from "@/types/investigation";
+import type {
+  Investigation,
+  InvestigationStatus,
+  Round,
+} from "@/types/investigation";
 
 export interface CreateInvestigationInput {
   casino: string;
@@ -10,10 +14,12 @@ export interface CreateInvestigationInput {
   dealerName: string;
   investigationDate: string; // ISO date, "2026-07-25"
   operatorName: string;
-  activeSeatCount: number;
+  occupiedSeats: number[];
   trackedSeats: number[];
   initialWagers: Record<number, number>;
   isDemo?: boolean;
+  /** Defaults to "draft". The setup wizard passes "active" so the investigation is immediately the operator's active one. */
+  status?: InvestigationStatus;
 }
 
 /** How many investigations already exist locally for a given date — feeds ID generation. */
@@ -32,7 +38,7 @@ export async function createInvestigation(
   const investigation: Investigation = {
     localId: uuidv4(),
     displayId: generateInvestigationId(input.investigationDate, existingCount),
-    status: "draft",
+    status: input.status ?? "draft",
     isDemo: input.isDemo ?? false,
 
     casino: input.casino,
@@ -41,7 +47,7 @@ export async function createInvestigation(
     investigationDate: input.investigationDate,
     operatorName: input.operatorName,
 
-    activeSeatCount: input.activeSeatCount,
+    occupiedSeats: input.occupiedSeats,
     trackedSeats: input.trackedSeats,
     initialWagers: input.initialWagers,
 
@@ -54,6 +60,7 @@ export async function createInvestigation(
     correlationScores: {},
 
     pausedDurationMs: 0,
+    pausedAt: null,
     createdAt: now,
     updatedAt: now,
     deviceId: getOrCreateDeviceId(),
@@ -140,4 +147,104 @@ export async function updateRound(
 /** Soft delete only — see plan.md §5, deletions must be propagatable by a future sync backend. */
 export async function softDeleteInvestigation(localId: string): Promise<void> {
   await updateInvestigation(localId, { deletedAt: new Date().toISOString() });
+}
+
+/**
+ * Mid-investigation seat changes (plan.md §9 decision 5 — players join/leave
+ * a table routinely). Tracked seats are pruned to stay a subset of occupied.
+ */
+export async function updateSeatConfiguration(
+  localId: string,
+  occupiedSeats: number[],
+  trackedSeats: number[]
+): Promise<void> {
+  const prunedTracked = trackedSeats.filter((seat) => occupiedSeats.includes(seat));
+  await updateInvestigation(localId, {
+    occupiedSeats,
+    trackedSeats: prunedTracked,
+  });
+}
+
+/** Pause stops the session timer only — all round data is preserved untouched. Plan.md §10 decision 1. */
+export async function pauseInvestigation(localId: string): Promise<void> {
+  await updateInvestigation(localId, {
+    status: "paused",
+    pausedAt: new Date().toISOString(),
+  });
+}
+
+export async function resumeInvestigation(localId: string): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation || !investigation.pausedAt) return;
+
+  const pausedMs = Date.now() - new Date(investigation.pausedAt).getTime();
+  await updateInvestigation(localId, {
+    status: "active",
+    pausedAt: null,
+    pausedDurationMs: investigation.pausedDurationMs + Math.max(0, pausedMs),
+  });
+}
+
+/**
+ * A fresh, empty Round for the given tracked seats. Dealer cards live once
+ * on `dealerHand`, never duplicated per seat — plan.md §0.5/§2. Only the
+ * first round seeds each seat's bet from the wizard's initial wagers; every
+ * later round starts with an unset bet (Phase 3 wires real bet entry).
+ */
+export function createEmptyRound(
+  roundNumber: number,
+  trackedSeats: number[],
+  initialWagers: Record<number, number>
+): Round {
+  const now = new Date().toISOString();
+  const seats: Round["seats"] = {};
+
+  for (const seatNumber of trackedSeats) {
+    seats[seatNumber] = {
+      seatNumber,
+      betAmount: roundNumber === 1 ? initialWagers[seatNumber] ?? null : null,
+      wagerChange: { direction: "first", amount: null, overridden: false },
+      playerCards: [],
+      actions: [],
+      outcome: null,
+      deviationNote: "",
+      observationNote: "",
+    };
+  }
+
+  return {
+    id: uuidv4(),
+    roundNumber,
+    startTime: now,
+    videoTimestamp: null,
+    dealerHand: {
+      upcard: null,
+      holeCard: null,
+      holeCardRevealed: false,
+      drawCards: [],
+      result: null,
+    },
+    seats,
+    runningCount: null,
+    trueCount: null,
+    operatorNote: "",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/** Appends a new round (roundNumber = current count + 1) and returns it. */
+export async function startNextRound(investigationLocalId: string): Promise<Round> {
+  const investigation = await getInvestigation(investigationLocalId);
+  if (!investigation) {
+    throw new Error(`Investigation ${investigationLocalId} not found.`);
+  }
+
+  const round = createEmptyRound(
+    investigation.rounds.length + 1,
+    investigation.trackedSeats,
+    investigation.initialWagers
+  );
+  await addRound(investigationLocalId, round);
+  return round;
 }

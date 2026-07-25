@@ -1,14 +1,11 @@
 import Link from "next/link";
+import { ResumeInvestigationCard } from "@/components/dashboard/ResumeInvestigationCard";
+import { PracticeInvestigationCta } from "@/components/dashboard/PracticeInvestigationCta";
 
 export default function Home() {
   return (
-    <div className="flex flex-col gap-4 p-4">
-      <div className="rounded-lg border border-border bg-surface p-4">
-        <p className="text-sm text-muted-foreground">
-          Phase 1 scaffold. The dashboard (resume/new/practice/recent) lands
-          in Phase 2.
-        </p>
-      </div>
+    <div className="flex flex-col gap-3 p-4">
+      <ResumeInvestigationCard />
 
       <Link
         href="/investigations/new"
@@ -16,6 +13,8 @@ export default function Home() {
       >
         + New Investigation
       </Link>
+
+      <PracticeInvestigationCta />
 
       <Link
         href="/investigations"

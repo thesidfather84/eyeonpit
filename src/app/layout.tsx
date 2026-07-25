@@ -36,9 +36,9 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-background text-foreground">
+      <body className="flex h-full flex-col overflow-hidden bg-background text-foreground">
         <TopBar />
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        <main className="flex flex-1 flex-col overflow-y-auto">{children}</main>
         <BottomNav />
       </body>
     </html>

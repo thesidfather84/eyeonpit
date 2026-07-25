@@ -1,8 +1,9 @@
-# EyeOnPit — Development Plan (Rev. 4 — Round-Based Dealer Workflow)
+# EyeOnPit — Development Plan (Rev. 5 — Vercel Production Target)
 
 **Product:** EyeOnPit
 **Domain:** EyeOnPit.com
 **Purpose:** Professional casino surveillance and blackjack investigation software. Primary use case: an operator on a phone, live at/near the pit, rapidly logging round-by-round blackjack activity across up to seven player seats — with zero dependency on casino Wi-Fi or cellular service, guided by a fast operational sequence rather than a manual.
+**Hosting:** Vercel is the production hosting platform, assumed from every phase forward — see §13.
 
 ---
 
@@ -13,6 +14,7 @@
 3. **Local storage is a prototype choice, not the architecture.** Every record carries sync-ready fields (`localId`, `deviceId`, `syncStatus`, soft-delete) so a future secure backend can be added without a data-model rewrite.
 4. **Guided, but never in the way.** New operators are taught the workflow inside the app. Experienced operators get out of the way entirely — every guidance mechanism is dismissible/skippable and never adds a step to the fast path.
 5. **A round is one shared event, not N disconnected hands.** The dealer deals once per round to the whole table. EyeOnPit's data model mirrors that reality: one `DealerHand` per round, referenced by every seat in that round — never duplicated per seat.
+6. **Production-quality at every phase, not prototype-then-harden.** Every phase must build, lint, and deploy cleanly on Vercel before it's considered done — see §13.
 
 ---
 
@@ -50,8 +52,8 @@ interface Investigation {
   investigationDate: string;
   operatorName: string;
 
-  activeSeatCount: number;         // 1-7; editable mid-investigation, see §9/§10 (decision: seat count)
-  trackedSeats: number[];          // subset of activeSeatCount
+  occupiedSeats: number[];         // subset of 1-7 actually in play; editable mid-investigation, see §9/§10
+  trackedSeats: number[];          // subset of occupiedSeats being surveilled
   initialWagers: Record<number, number>;
 
   rounds: Round[];
@@ -63,6 +65,8 @@ interface Investigation {
   correlationScores: Record<number, CorrelationScores>; // Phase 7
 
   pausedDurationMs: number;        // accumulated paused time, for an honest elapsed-time display
+  pausedAt: string | null;         // set the instant status flips to "paused"; lets the timer reconstruct
+                                    // correctly even if the app is reloaded mid-pause (Phase 2 addition)
   createdAt: string;
   updatedAt: string;
   deviceId: string;
@@ -240,7 +244,9 @@ Unchanged from Rev. 3: near-black backgrounds, off-white (not pure white) text, 
 
 Unchanged three-step wizard (Table Setup → Seat Setup → Initial Bets → Begin) from Rev. 3, plus one addition:
 
-**Seat count is editable after setup (decision, was open question #5).** Players join and leave a table mid-shoe, so locking `activeSeatCount`/`trackedSeats` at setup would force operators to restart an investigation for a routine occurrence. `EditSeatsSheet` — reachable from a small "Edit Seats" control in the Live Entry top bar — reopens the same seat-picker UI used in Seat Setup, and always shows a brief confirmation message ("Seat 6 will be added as tracked going forward — past rounds are unaffected") before committing, since this does change the shape of an in-progress investigation even though it's not destructive.
+**Seat count is editable after setup (decision, was open question #5).** Players join and leave a table mid-shoe, so locking `occupiedSeats`/`trackedSeats` at setup would force operators to restart an investigation for a routine occurrence. `EditSeatsSheet` — reachable from a small "Edit Seats" control in the Live Entry top bar — reopens the same seat-toggle UI used in Seat Setup, and always shows a brief confirmation message ("Seat 6 will be added as tracked going forward — past rounds are unaffected") before committing, since this does change the shape of an in-progress investigation even though it's not destructive.
+
+**Phase 2 refinement:** Seat Setup marks occupancy per seat individually (`occupiedSeats: number[]`) rather than a single "highest occupied" count — real tables aren't always contiguously filled (e.g. seats 2, 4, 7 occupied with 3/5/6 empty), and per-seat toggles are exactly as fast to tap. `trackedSeats` stays a subset of `occupiedSeats`; the UI disables tracking-toggles for any seat not currently marked occupied.
 
 ---
 
@@ -283,11 +289,11 @@ Wager change stays **auto-computed** at entry time (§2), but `WagerChangeEditor
 **Phase 1 — Mobile application shell and offline storage**
 Mobile-first scaffold, dark theme tokens (§8), PWA/offline foundation, Dexie schema + repositories built around the round-based model in §2 (sync-ready fields, `isDemo` filtering at the repository layer), `useSettingsStore`, `lib/sync/localOnlyAdapter`.
 
-**Phase 2 — Seven-seat blackjack table and seat selection**
-Setup wizard (Table Setup, Seat Setup, Initial Bets), `EditSeatsSheet` for mid-investigation changes, investigation ID generation, first-use walkthrough, basic Help Center scaffold.
+**Phase 2 — Seven-seat blackjack table and seat selection** ✅ built
+4-step setup wizard (Table Setup, Seat Setup, Initial Bets, Begin Recording) with progress dots and Back/Next/Cancel; per-seat occupied/tracked toggles (`occupiedSeats`, see §2 refinement); `EditSeatsSheet` for mid-investigation changes with confirmation; investigation ID generation on finish, routing straight to Live Entry; field hints on first-touch fields (`FieldHint`, dismissible, gated by `showGuidedTips`); a clearly-labeled Practice Investigation entry point (find-or-create, `isDemo: true`, excluded from History/exports at the repository layer per Decision 3). Also shipped the Live Entry **shell**: permanent `DealerPanel` and seven-seat `SeatRail` (placeholder card/wager/result/notes controls only), plus fully functional round number, elapsed session timer, and Pause/Resume (using the new `pausedAt` field for reload-safe timer reconstruction) and Save Round/Next Round wired to the real round-based model. The first-use walkthrough overlay and full Help Center content are still outstanding — carried forward into Phase 3/5.
 
 **Phase 3 — Rapid live hand and wager entry**
-Full Live Entry loop per §10: `DealerPanel` (upcard/hole/draws/total/blackjack/bust/undo/clear), `ActiveSeatPanel` with `ActionQuickTags`, bet quick-entry with auto wager-change, result tags, pause/resume with session timer, field hints/tooltips on first touch. Practice/demo investigation ships here to exercise this exact loop.
+Fill in the Live Entry shell from Phase 2 with real interaction: `CardTapPad` (upcard/hole/draws/undo/clear/blackjack/bust with live soft/hard total), `ActiveSeatPanel` wired to real cards/actions (`ActionQuickTags`), bet quick-entry (chips/repeat/+-/keypad) with auto wager-change, result tags, deviation/observation notes, count fields, tooltips on count/score terms. First-use walkthrough overlay ships here too.
 
 **Phase 4 — Investigation history and editing**
 History list/search (demo investigations excluded at the repository layer), opening/editing past investigations and past rounds.
@@ -315,4 +321,38 @@ No open items remain blocking Phase 1.
 
 ---
 
-**Next step:** scaffold Phase 1 — Next.js/TS/Tailwind mobile-first project, dark theme tokens, PWA/offline foundation, and the round-based Dexie data layer from §2.
+## 13. Deployment & Production Readiness (Vercel)
+
+Vercel is the assumed production hosting platform from Phase 1 forward, not a later concern bolted on at ship time. This section is the standing checklist every phase gets held to.
+
+### 13.1 Architecture constraints
+
+- **No traditional Node server.** Nothing in this app should assume a long-lived process, an attached filesystem, or in-memory state that survives between requests. Vercel's Next.js runtime is serverless/edge by nature; code that needs `fs` writes, background timers outside the browser, or sticky server state doesn't belong here. EyeOnPit's architecture already satisfies this by construction — there is no backend in Phases 1-5, and all persistence is client-side (Dexie/IndexedDB), never server filesystem.
+- **App Router features Vercel fully supports** — Route Handlers, `app/manifest.ts`, `generateMetadata`/`viewport`, `instrumentation-client.ts`, Server/Client Component split — used per their intended purpose, not worked around.
+- **Static optimization by default.** Pages/segments that don't need interactivity stay Server Components and get prerendered (`○` in the build output); `"use client"` is scoped to the components that actually need browser APIs (Dexie, hooks, event handlers) rather than applied to whole route files out of convenience. Every build's route table (`npm run build` output) is a quick visual check of this — see 13.3.
+- **Secrets via Vercel Environment Variables**, never hardcoded, whenever a future phase introduces any (sync backend credentials, API keys). Nothing in the app requires secrets yet; this is a standing rule for when Phase 6+ needs them, not a retrofit.
+- **No local filesystem persistence.** Already true — Dexie/IndexedDB is browser storage, not server disk, which is also exactly what makes it compatible with Vercel's stateless request model in the first place.
+- **Responsive across iPhone, Android, tablet, and desktop breakpoints** — mobile-first base styles (§0.2) plus `md:`/`lg:` additions from Phase 6 onward; verified visually, not just assumed from the CSS.
+
+### 13.2 PWA on Vercel
+
+Vercel serves static assets (including `public/sw.js` and the files `app/manifest.ts` generates) with no special configuration required — the offline shell from §5 works unmodified on Vercel. The one thing that needs explicit config is cache headers on the service worker file itself (`no-cache, no-store, must-revalidate`, set in `next.config.ts`) so operators always get a fresh worker on deploy rather than a stale cached one silently serving an old app shell.
+
+### 13.3 Definition of done, per phase
+
+Before any phase is considered complete:
+
+1. `npm run build` succeeds with no errors.
+2. `npm run lint` passes with no errors.
+3. The build output's route table is reviewed — routes expected to be static (`○`) are static; only routes that genuinely need per-request rendering are dynamic (`ƒ`).
+4. No hydration warnings in the browser console on any screen touched by the phase (dev server, hard refresh) — values that can legitimately differ between server and first client paint (e.g. `navigator.onLine`) are read via `useSyncExternalStore` with a server snapshot, not a raw `useEffect`-then-`setState` pattern that risks a mismatch.
+5. A quick responsive check at phone, tablet, and desktop widths.
+6. Local `git commit` + `git push` to `https://github.com/thesidfather84/eyeonpit.git`, leaving the repo in a state that would deploy cleanly if connected to Vercel.
+
+### 13.4 Dependency policy
+
+New dependencies are chosen for active maintenance and compatibility with current Next.js/React/TypeScript/Vercel — and avoided altogether when the same result is achievable with what's already in the stack or the platform itself (example: Phase 2's PWA icons were generated with a small one-off script using Node's built-in `zlib`, rather than adding a native image-processing dependency like `sharp` just to produce two static PNGs once).
+
+---
+
+**Next step:** Phase 3 — fill in the Live Entry shell (§11) with real card/wager/result/note interaction.

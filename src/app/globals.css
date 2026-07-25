@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/*
+  EyeOnPit dark control-room theme — plan.md §8.
+  Deliberately a single, dark-only theme: no light mode, no
+  prefers-color-scheme branching. Near-black backgrounds, off-white (not
+  pure white) text, one muted non-alarming accent, red reserved strictly
+  for destructive actions and errors.
+*/
+:root {
+  --background: #0a0a0c;
+  --surface: #151619;
+  --surface-raised: #1c1d21;
+  --border: #2a2b30;
+
+  --foreground: #f2f2f0;
+  --muted-foreground: #9a9ca3;
+
+  --accent: #3fa9a4;
+  --accent-foreground: #05201e;
+
+  --destructive: #e5484d;
+  --destructive-foreground: #fff5f5;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+@layer utilities {
+  /* Minimum comfortable touch size for controls used one-handed, low light. */
+  .tap-target {
+    min-height: 48px;
+    min-width: 48px;
+  }
+}

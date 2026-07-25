@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Pause, Play, Redo2, Undo2 } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { completeInvestigation } from "@/lib/db/repositories/investigations";
@@ -20,9 +19,9 @@ export function RoundControlsRow() {
     newShoe,
     pause,
     resume,
+    refresh,
     busy,
   } = useInvestigationContext();
-  const router = useRouter();
   const [shoeConfirmOpen, setShoeConfirmOpen] = useState(false);
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
   const [ending, setEnding] = useState(false);
@@ -46,7 +45,11 @@ export function RoundControlsRow() {
     setEnding(true);
     try {
       await completeInvestigation(investigation.localId);
-      router.push("/");
+      // Stay on this console rather than navigating away — the operator
+      // can review Reports/Export for this investigation immediately via
+      // the Menu (LiveHeader shows a "New Investigation" way back to the
+      // empty console once they're ready to move on).
+      await refresh();
     } finally {
       setEnding(false);
       setEndConfirmOpen(false);

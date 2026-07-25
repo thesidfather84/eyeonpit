@@ -1,5 +1,6 @@
-import { SetupWizardShell } from "@/components/investigation-setup/SetupWizardShell";
+import { redirect } from "next/navigation";
 
-export default function NewInvestigationPage() {
-  return <SetupWizardShell />;
+/** Compatibility route — New Investigation is now a drawer on the main console, not a page. */
+export default function NewInvestigationRedirect() {
+  redirect("/?open=new");
 }

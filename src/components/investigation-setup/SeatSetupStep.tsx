@@ -1,6 +1,6 @@
 import { FieldHint } from "@/components/onboarding/FieldHint";
 import { SeatToggleGrid } from "./SeatToggleGrid";
-import type { WizardDraft } from "./SetupWizardShell";
+import type { WizardDraft } from "./types";
 
 interface StepProps {
   draft: WizardDraft;

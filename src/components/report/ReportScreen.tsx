@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import {
   addOperatorNote,
@@ -15,7 +14,6 @@ import { formatCard } from "@/lib/utils/cards";
 
 export function ReportScreen() {
   const { investigation, refresh } = useInvestigationContext();
-  const router = useRouter();
 
   const [summary, setSummary] = useState(investigation.executiveSummary);
   const [memo, setMemo] = useState(investigation.surveillanceMemo);
@@ -46,7 +44,9 @@ export function ReportScreen() {
     setBusy(true);
     try {
       await completeInvestigation(investigation.localId);
-      router.push("/");
+      // Stay put — the operator can keep reviewing this Reports overlay
+      // (and the rest of the now-closed console) without navigating away.
+      await refresh();
     } finally {
       setBusy(false);
       setCompleting(false);

@@ -1,4 +1,4 @@
-import type { WizardDraft } from "./SetupWizardShell";
+import type { WizardDraft } from "./types";
 
 export function BeginRecordingStep({ draft }: { draft: WizardDraft }) {
   return (

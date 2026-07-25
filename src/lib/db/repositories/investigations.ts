@@ -25,8 +25,12 @@ export interface CreateInvestigationInput {
   initialWagers: Record<number, number>;
   countingSystem: CountingSystem;
   shoeTotalDecks: number;
+  /** Defaults to 1 — matches whatever shoe count the pit is already on. */
+  startingShoeNumber?: number;
+  /** Optional, seeds the first operator note if provided. */
+  setupNotes?: string;
   isDemo?: boolean;
-  /** Defaults to "draft". The setup wizard passes "active" so the investigation is immediately the operator's active one. */
+  /** Defaults to "draft". The setup drawer passes "active" so the investigation is immediately the operator's active one. */
   status?: InvestigationStatus;
 }
 
@@ -97,13 +101,19 @@ export async function createInvestigation(
       wagerChange: { direction: "first", amount: null, overridden: false },
     };
   }
-  const round1 = createRound(1, 1, round1Seeds);
+  const startingShoeNumber = input.startingShoeNumber ?? 1;
+  const round1 = createRound(1, startingShoeNumber, round1Seeds);
   round1.eventLog.push({
     id: uuidv4(),
     timestamp: now,
     type: "round-saved",
-    message: "Round 1 started",
+    message: `Round 1 started (Shoe ${startingShoeNumber})`,
   });
+
+  const setupNotes = input.setupNotes?.trim();
+  const operatorNotes: NoteEntry[] = setupNotes
+    ? [{ id: uuidv4(), timestamp: now, text: setupNotes }]
+    : [];
 
   const investigation: Investigation = {
     localId: uuidv4(),
@@ -128,7 +138,7 @@ export async function createInvestigation(
 
     executiveSummary: "",
     surveillanceMemo: "",
-    operatorNotes: [],
+    operatorNotes,
 
     correlationScores: {},
 

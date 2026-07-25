@@ -1,6 +1,6 @@
 import { FieldHint } from "@/components/onboarding/FieldHint";
 import { todayIsoDate } from "@/lib/utils/formatters";
-import type { WizardDraft } from "./SetupWizardShell";
+import type { WizardDraft } from "./types";
 
 interface StepProps {
   draft: WizardDraft;

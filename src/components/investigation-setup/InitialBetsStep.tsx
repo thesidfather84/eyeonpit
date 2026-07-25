@@ -1,5 +1,5 @@
 import { FieldHint } from "@/components/onboarding/FieldHint";
-import type { WizardDraft } from "./SetupWizardShell";
+import type { WizardDraft } from "./types";
 
 interface StepProps {
   draft: WizardDraft;
@@ -17,16 +17,14 @@ export function InitialBetsStep({ draft, onChange }: StepProps) {
     });
   }
 
-  if (draft.trackedSeats.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        No tracked seats yet — go back to Seat Setup first.
-      </p>
-    );
-  }
-
   return (
     <div className="flex flex-col gap-5">
+      <p className="text-sm font-medium text-foreground">Initial wagers</p>
+      {draft.trackedSeats.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          Track at least one seat above to set its opening wager.
+        </p>
+      )}
       {draft.trackedSeats.map((seat) => {
         const amount = draft.initialWagers[seat] ?? 0;
         return (

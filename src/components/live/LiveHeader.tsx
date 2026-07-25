@@ -57,14 +57,25 @@ export function LiveHeader({ onLock }: { onLock: () => void }) {
           <span className="font-mono text-xs text-muted-foreground">
             {formatElapsedTime(elapsedMs)}
           </span>
-          <button
-            onClick={isPaused ? resume : pause}
-            disabled={busy || isClosed}
-            aria-label={isPaused ? "Resume" : "Pause"}
-            className="tap-target flex items-center justify-center rounded-md border border-border bg-surface-raised px-2 text-foreground disabled:opacity-40"
-          >
-            {isPaused ? <Play className="h-4 w-4" aria-hidden /> : <Pause className="h-4 w-4" aria-hidden />}
-          </button>
+          {isClosed ? (
+            <button
+              onClick={() => {
+                window.location.href = "/";
+              }}
+              className="tap-target rounded-md bg-accent px-2 text-xs font-medium text-accent-foreground"
+            >
+              + New Investigation
+            </button>
+          ) : (
+            <button
+              onClick={isPaused ? resume : pause}
+              disabled={busy}
+              aria-label={isPaused ? "Resume" : "Pause"}
+              className="tap-target flex items-center justify-center rounded-md border border-border bg-surface-raised px-2 text-foreground disabled:opacity-40"
+            >
+              {isPaused ? <Play className="h-4 w-4" aria-hidden /> : <Pause className="h-4 w-4" aria-hidden />}
+            </button>
+          )}
         </div>
       </div>
 

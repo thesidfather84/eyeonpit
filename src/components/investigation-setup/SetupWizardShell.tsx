@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/Button";
 import { TableSetupStep } from "./TableSetupStep";
 import { SeatSetupStep } from "./SeatSetupStep";
 import { InitialBetsStep } from "./InitialBetsStep";
+import { ShoeSetupStep } from "./ShoeSetupStep";
 import { BeginRecordingStep } from "./BeginRecordingStep";
+import type { CountingSystem } from "@/types/investigation";
 
 export interface WizardDraft {
   casino: string;
@@ -19,9 +21,17 @@ export interface WizardDraft {
   occupiedSeats: number[];
   trackedSeats: number[];
   initialWagers: Record<number, number>;
+  countingSystem: CountingSystem;
+  shoeTotalDecks: number;
 }
 
-const STEP_LABELS = ["Table Setup", "Seat Setup", "Initial Bets", "Begin Recording"];
+const STEP_LABELS = [
+  "Table Setup",
+  "Seat Setup",
+  "Initial Bets",
+  "Shoe Setup",
+  "Begin Recording",
+];
 const TOTAL_STEPS = STEP_LABELS.length;
 
 export function SetupWizardShell() {
@@ -45,6 +55,8 @@ export function SetupWizardShell() {
     occupiedSeats: [],
     trackedSeats: [],
     initialWagers: {},
+    countingSystem: "Hi-Lo",
+    shoeTotalDecks: 6,
   });
 
   function updateDraft(patch: Partial<WizardDraft>) {
@@ -83,6 +95,8 @@ export function SetupWizardShell() {
         occupiedSeats: draft.occupiedSeats,
         trackedSeats: draft.trackedSeats,
         initialWagers: draft.initialWagers,
+        countingSystem: draft.countingSystem,
+        shoeTotalDecks: draft.shoeTotalDecks,
         status: "active",
       });
       router.push(`/investigations/${investigation.localId}/live`);
@@ -109,7 +123,8 @@ export function SetupWizardShell() {
         {step === 1 && <TableSetupStep draft={draft} onChange={updateDraft} />}
         {step === 2 && <SeatSetupStep draft={draft} onChange={updateDraft} />}
         {step === 3 && <InitialBetsStep draft={draft} onChange={updateDraft} />}
-        {step === 4 && <BeginRecordingStep draft={draft} />}
+        {step === 4 && <ShoeSetupStep draft={draft} onChange={updateDraft} />}
+        {step === 5 && <BeginRecordingStep draft={draft} />}
 
         {error && (
           <p className="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">

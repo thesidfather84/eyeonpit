@@ -23,9 +23,30 @@ export type HandOutcome =
 
 export type WagerDirection = "up" | "down" | "same" | "first";
 
-export type PlayerAction = "hit" | "stand" | "double" | "split" | "surrender";
+export type PlayerAction =
+  | "hit" | "stand" | "double" | "split" | "insurance" | "surrender" | "blackjack" | "other";
 
 export type DealerResult = "stand" | "blackjack" | "bust" | null;
+
+export type CountingSystem = "Hi-Lo" | "KO" | "Zen" | "Omega II";
+
+export type EventType =
+  | "card"
+  | "seat-select"
+  | "bet-change"
+  | "action"
+  | "dealer-reveal"
+  | "correction"
+  | "round-saved"
+  | "note"
+  | "shoe";
+
+export interface EventLogEntry {
+  id: string;
+  timestamp: string;
+  type: EventType;
+  message: string;
+}
 
 export interface WagerChange {
   direction: WagerDirection;
@@ -61,14 +82,17 @@ export interface DealerHand {
 export interface Round {
   id: string;
   roundNumber: number;
+  shoeNumber: number;
   startTime: string; // ISO datetime, captured when the round begins
   videoTimestamp: string | null;
   dealerHand: DealerHand;
   /** Keyed 1-7; only active/tracked seats are populated. */
   seats: Partial<Record<number, SeatRoundRecord>>;
+  /** Snapshotted when the round is finalized (Next Round / New Shoe) — see lib/counting-systems. */
   runningCount: number | null;
   trueCount: number | null;
   operatorNote: string;
+  eventLog: EventLogEntry[];
   createdAt: string;
   updatedAt: string;
 }
@@ -102,6 +126,9 @@ export interface Investigation {
   occupiedSeats: number[]; // subset of 1-7 actually in play; editable mid-investigation
   trackedSeats: number[]; // subset of occupiedSeats being surveilled
   initialWagers: Record<number, number>;
+
+  countingSystem: CountingSystem;
+  shoeTotalDecks: number;
 
   rounds: Round[];
 

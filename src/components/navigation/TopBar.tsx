@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { Settings } from "lucide-react";
 import { StatusIndicator } from "@/components/ui/StatusIndicator";
 import { HelpIconButton } from "@/components/onboarding/HelpIconButton";
 
@@ -7,8 +9,15 @@ export function TopBar() {
       <span className="text-sm font-semibold tracking-wide text-foreground">
         EyeOnPit
       </span>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1">
         <StatusIndicator />
+        <Link
+          href="/settings"
+          aria-label="Settings"
+          className="tap-target flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-surface-raised"
+        >
+          <Settings className="h-5 w-5" aria-hidden />
+        </Link>
         <HelpIconButton />
       </div>
     </header>

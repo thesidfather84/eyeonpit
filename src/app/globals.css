@@ -19,6 +19,11 @@
   --accent: #3fa9a4;
   --accent-foreground: #05201e;
 
+  /* Normal tracked-seat status. */
+  --status-green: #3fb950;
+  /* Elevated behavior/correlation indicators — never used for destructive actions. */
+  --status-orange: #d9822b;
+
   --destructive: #e5484d;
   --destructive-foreground: #fff5f5;
 }
@@ -34,6 +39,9 @@
 
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+
+  --color-status-green: var(--status-green);
+  --color-status-orange: var(--status-orange);
 
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);

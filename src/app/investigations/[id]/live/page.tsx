@@ -1,9 +1,5 @@
-"use client";
-
-import { useParams } from "next/navigation";
-import { LiveEntryScreen } from "@/components/live-entry/LiveEntryScreen";
+import { LiveScreen } from "@/components/live/LiveScreen";
 
 export default function LiveEntryPage() {
-  const params = useParams<{ id: string }>();
-  return <LiveEntryScreen investigationId={params.id} />;
+  return <LiveScreen />;
 }

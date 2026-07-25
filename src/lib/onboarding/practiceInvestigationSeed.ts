@@ -29,6 +29,8 @@ export async function findOrCreatePracticeInvestigation(): Promise<Investigation
     occupiedSeats: PRACTICE_OCCUPIED_SEATS,
     trackedSeats: PRACTICE_TRACKED_SEATS,
     initialWagers: PRACTICE_INITIAL_WAGERS,
+    countingSystem: "Hi-Lo",
+    shoeTotalDecks: 6,
     isDemo: true,
     status: "active",
   });

@@ -1,8 +1,60 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, createJSONStorage, type StateStorage } from "zustand/middleware";
 import type { TerminologyLevel } from "@/lib/terminology";
 
 export type WorkflowAssistanceLevel = "off" | "basic" | "guided";
+
+/** On-disk envelope version — mostly documentation today, since `merge` below already unconditionally normalizes every field on every load regardless of what (if any) version is stored. */
+const SETTINGS_VERSION = 1;
+
+const TERMINOLOGY_LEVELS: TerminologyLevel[] = ["standard", "casino", "casinoProfessional"];
+const WORKFLOW_LEVELS: WorkflowAssistanceLevel[] = ["off", "basic", "guided"];
+
+/** localStorage can throw (quota, private browsing, disabled storage) — every call here is best-effort, same policy as lib/utils/lastGameConfig.ts. Losing a setting is never worth crashing the app over. */
+function safeLocalStorage(): StateStorage {
+  return {
+    getItem: (name) => {
+      try {
+        return localStorage.getItem(name);
+      } catch {
+        return null;
+      }
+    },
+    setItem: (name, value) => {
+      try {
+        localStorage.setItem(name, value);
+      } catch {
+        // Ignored — see above.
+      }
+    },
+    removeItem: (name) => {
+      try {
+        localStorage.removeItem(name);
+      } catch {
+        // Ignored — see above.
+      }
+    },
+  };
+}
+
+/** Rebuilds a safe settings slice from whatever was persisted — a differently-shaped or corrupted record (an old build, hand-edited devtools value, partial write) falls back field-by-field to the same defaults the store starts with, rather than trusting the stored type. */
+function normalizePersistedSettings(raw: unknown): Partial<SettingsState> {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return {
+    hasCompletedOnboarding:
+      typeof r.hasCompletedOnboarding === "boolean" ? r.hasCompletedOnboarding : false,
+    showGuidedTips: typeof r.showGuidedTips === "boolean" ? r.showGuidedTips : true,
+    dismissedHints: Array.isArray(r.dismissedHints)
+      ? r.dismissedHints.filter((h): h is string => typeof h === "string")
+      : [],
+    terminologyLevel: TERMINOLOGY_LEVELS.includes(r.terminologyLevel as TerminologyLevel)
+      ? (r.terminologyLevel as TerminologyLevel)
+      : "casinoProfessional",
+    workflowAssistance: WORKFLOW_LEVELS.includes(r.workflowAssistance as WorkflowAssistanceLevel)
+      ? (r.workflowAssistance as WorkflowAssistanceLevel)
+      : "basic",
+  };
+}
 
 interface SettingsState {
   /** Set true once the first-use walkthrough has been seen or skipped. */
@@ -41,6 +93,22 @@ export const useSettingsStore = create<SettingsState>()(
       setTerminologyLevel: (level) => set({ terminologyLevel: level }),
       setWorkflowAssistance: (level) => set({ workflowAssistance: level }),
     }),
-    { name: "eyeonpit:settings" }
+    {
+      name: "eyeonpit:settings",
+      version: SETTINGS_VERSION,
+      storage: createJSONStorage(safeLocalStorage),
+      // `merge` — not `migrate` — is the one hook zustand's persist middleware
+      // always runs on every rehydration, version match or not: `migrate` is
+      // only invoked when the stored envelope carries a numeric `version`
+      // that differs from `options.version` (see zustand/middleware.js), so a
+      // version-less legacy record (the realistic case — every write before
+      // this field existed) skips `migrate` entirely and would otherwise
+      // merge raw, untyped fields straight into the live store. Normalizing
+      // here instead of in `migrate` closes that gap unconditionally.
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...normalizePersistedSettings(persistedState),
+      }),
+    }
   )
 );

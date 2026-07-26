@@ -36,7 +36,7 @@ export function DealerTile() {
       type="button"
       onClick={() => setActiveTarget("dealer")}
       style={{ touchAction: "manipulation" }}
-      className={`tap-target relative flex min-h-[68px] flex-col justify-center gap-0.5 rounded-lg py-1.5 pl-2 pr-1 text-left ${
+      className={`tap-target relative flex min-h-[68px] flex-col justify-center gap-0.5 rounded-xl py-1.5 pl-2 pr-1 text-left ${
         isActive ? "border-2 bg-dealer/10" : "border-2 bg-surface-raised"
       } border-dealer`}
     >

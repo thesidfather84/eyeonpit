@@ -15,6 +15,16 @@ import { DealerTile } from "./DealerTile";
 
 const LONG_PRESS_MS = 500;
 
+/**
+ * Per-column vertical nudge (px) that turns the flat 4-col grid into a
+ * gentle table-edge curve — center columns sit a touch higher, outer
+ * columns a touch lower, repeating per row. Deliberately tiny: this is a
+ * softening of the existing grid, not a real arc layout, so it never
+ * changes row height enough to need extra container padding or risk
+ * overlapping a neighboring row.
+ */
+const COLUMN_CURVE_PX = [3, -1, -1, 3];
+
 const AP_DOT_CLASSES: Record<string, string> = {
   low: "bg-status-green/70",
   moderate: "bg-status-orange/70",
@@ -65,7 +75,8 @@ export function SeatTilesRow() {
   return (
     <div className="flex-none bg-surface p-1.5">
       <div className="grid grid-cols-4 gap-1.5">
-        {seats.map((seat) => {
+        {seats.map((seat, index) => {
+          const curveOffset = COLUMN_CURVE_PX[index % 4] ?? 0;
           const isOccupied = investigation.occupiedSeats.includes(seat);
           const isActive = activeTarget === (seat as CardTarget);
           const record = currentRound.seats[seat];
@@ -106,8 +117,8 @@ export function SeatTilesRow() {
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") endPress(seat);
               }}
-              style={{ touchAction: "manipulation" }}
-              className={`tap-target relative flex min-h-[68px] flex-col justify-center gap-0.5 rounded-lg py-1.5 pl-2 pr-1 ${toneClasses} ${
+              style={{ touchAction: "manipulation", transform: `translateY(${curveOffset}px)` }}
+              className={`tap-target relative flex min-h-[68px] flex-col justify-center gap-0.5 rounded-xl py-1.5 pl-2 pr-1 ${toneClasses} ${
                 isActive ? "border-2" : "border"
               }`}
             >

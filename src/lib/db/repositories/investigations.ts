@@ -4,16 +4,20 @@ import { generateInvestigationId } from "@/lib/investigation-id";
 import { getOrCreateDeviceId } from "@/lib/utils/deviceId";
 import { computeShoeStats } from "@/lib/analysis/shoeStats";
 import type {
+  BlackjackFormat,
   CountingSystem,
+  EntryDirection,
   EventType,
   Investigation,
   InvestigationStatus,
   NoteEntry,
   PlayerGroup,
   Round,
+  RuleProfile,
   SeatRoundRecord,
   WagerChange,
 } from "@/types/investigation";
+import { DEFAULT_GAME_CONFIG } from "@/types/investigation";
 
 export interface CreateInvestigationInput {
   casino: string;
@@ -30,6 +34,14 @@ export interface CreateInvestigationInput {
   isDemo?: boolean;
   /** Defaults to "draft". The setup drawer passes "active" so the investigation is immediately the operator's active one. */
   status?: InvestigationStatus;
+  /** Game-config fields — all optional, each falls back to DEFAULT_GAME_CONFIG (Fast Start Mode's "sensible defaults"). */
+  blackjackFormat?: BlackjackFormat;
+  ruleProfile?: RuleProfile;
+  entryDirection?: EntryDirection;
+  playerSpotCount?: number;
+  practiceMode?: boolean;
+  pitArea?: string;
+  investigationLabel?: string;
 }
 
 /** How many investigations already exist locally for a given date — feeds ID generation. */
@@ -128,6 +140,15 @@ export async function createInvestigation(
 
     countingSystem: input.countingSystem,
     shoeTotalDecks: input.shoeTotalDecks,
+
+    gameType: "blackjack",
+    blackjackFormat: input.blackjackFormat ?? DEFAULT_GAME_CONFIG.format,
+    ruleProfile: input.ruleProfile ?? DEFAULT_GAME_CONFIG.ruleProfile,
+    entryDirection: input.entryDirection ?? DEFAULT_GAME_CONFIG.entryDirection,
+    playerSpotCount: input.playerSpotCount ?? DEFAULT_GAME_CONFIG.playerSpotCount,
+    practiceMode: input.practiceMode ?? DEFAULT_GAME_CONFIG.practiceMode,
+    pitArea: input.pitArea?.trim() ?? "",
+    investigationLabel: input.investigationLabel?.trim() ?? "",
 
     rounds: [round1],
 
@@ -423,6 +444,59 @@ export async function createPlayerGroup(localId: string, label?: string): Promis
     playerGroups: { ...investigation.playerGroups, [group.id]: group },
   });
   return group;
+}
+
+export interface GameConfigPatch {
+  tableNumber?: string;
+  countingSystem?: CountingSystem;
+  blackjackFormat?: BlackjackFormat;
+  shoeTotalDecks?: number;
+  ruleProfile?: RuleProfile;
+  entryDirection?: EntryDirection;
+  playerSpotCount?: number;
+  practiceMode?: boolean;
+  pitArea?: string;
+  investigationLabel?: string;
+}
+
+/** Safe-field path — table label, entry direction, rule profile, seat count, etc. Never touches counting-relevant state, so it applies immediately with no confirmation. */
+export async function updateGameConfig(localId: string, patch: GameConfigPatch): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+  await updateInvestigation(localId, {
+    ...patch,
+    rounds: appendEventToRounds(investigation.rounds, {
+      type: "correction",
+      message: "Game configuration updated",
+    }),
+  });
+}
+
+/**
+ * The "Recalculate" branch of a risky config change (format/deck count/
+ * counting system). Nothing about recorded cards changes — every count is
+ * always computed live from them — so applying the new config in place is
+ * the entire recalculation; the next render of computeShoeStats() picks it
+ * up automatically.
+ */
+export async function updateGameConfigAndRecalculate(
+  localId: string,
+  patch: GameConfigPatch
+): Promise<void> {
+  await updateGameConfig(localId, patch);
+}
+
+/** The "Start New Shoe" branch of a risky config change — applies the patch, then resets the shoe exactly like a normal New Shoe, voiding the current round first if it wasn't already complete. */
+export async function updateGameConfigAndStartNewShoe(
+  localId: string,
+  patch: GameConfigPatch
+): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+  await updateInvestigation(localId, patch);
+
+  const currentRound = investigation.rounds[investigation.rounds.length - 1];
+  await advanceRound(localId, { newShoe: true, voidCurrentRound: !currentRound.completed });
 }
 
 /** Renames a player group's label (e.g. "P1" -> a short operator label). Applies to every seat sharing that group. */

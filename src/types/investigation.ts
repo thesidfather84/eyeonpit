@@ -30,6 +30,93 @@ export type DealerResult = "stand" | "blackjack" | "bust" | null;
 
 export type CountingSystem = "Hi-Lo" | "KO" | "Zen" | "Omega II";
 
+/** Reserved for future non-blackjack games — only "blackjack" is implemented, but every game-config field lives under this so a second game type never has to reshape Investigation. */
+export type GameType = "blackjack";
+
+export type BlackjackFormat = "single-deck" | "double-deck" | "shoe";
+
+export type EntryDirection = "ltr" | "rtl";
+
+export type RuleProfileId = "standard" | "3-2-h17" | "3-2-s17" | "6-5-h17" | "custom";
+
+export interface RuleProfile {
+  id: RuleProfileId;
+  label: string; // e.g. "3:2 H17" — shown in the compact header summary
+  blackjackPayout: "3:2" | "6:5" | "custom";
+  dealerHitsSoft17: boolean;
+  customNotes: string;
+}
+
+export const RULE_PROFILE_PRESETS: Record<Exclude<RuleProfileId, "custom">, RuleProfile> = {
+  standard: {
+    id: "standard",
+    label: "Standard",
+    blackjackPayout: "3:2",
+    dealerHitsSoft17: false,
+    customNotes: "",
+  },
+  "3-2-h17": {
+    id: "3-2-h17",
+    label: "3:2 H17",
+    blackjackPayout: "3:2",
+    dealerHitsSoft17: true,
+    customNotes: "",
+  },
+  "3-2-s17": {
+    id: "3-2-s17",
+    label: "3:2 S17",
+    blackjackPayout: "3:2",
+    dealerHitsSoft17: false,
+    customNotes: "",
+  },
+  "6-5-h17": {
+    id: "6-5-h17",
+    label: "6:5 H17",
+    blackjackPayout: "6:5",
+    dealerHitsSoft17: true,
+    customNotes: "",
+  },
+};
+
+/** The default deck count for each format — Shoe Game defaults to 6, but stays operator-adjustable (4/6/8/Custom). */
+export const DEFAULT_DECK_COUNT_BY_FORMAT: Record<BlackjackFormat, number> = {
+  "single-deck": 1,
+  "double-deck": 2,
+  shoe: 6,
+};
+
+/** Fast Start Mode defaults — Phase 1 sensible-defaults path, see plan.md-adjacent Quick Setup spec. */
+export const DEFAULT_GAME_CONFIG: GameConfig = {
+  gameType: "blackjack",
+  format: "shoe",
+  deckCount: 6,
+  ruleProfile: RULE_PROFILE_PRESETS.standard,
+  entryDirection: "ltr",
+  playerSpotCount: 7,
+  practiceMode: false,
+  pitArea: "",
+  investigationLabel: "",
+};
+
+/**
+ * Everything Quick Setup configures, grouped so it can be read/written as
+ * one unit both pre-creation (Fast Start / Quick Setup on the empty
+ * console) and mid-investigation (reopened from the live header) — table
+ * identity (casino/tableNumber/dealerName) stays on Investigation directly
+ * since those are operator-identity fields, not "game" fields.
+ */
+export interface GameConfig {
+  gameType: GameType;
+  format: BlackjackFormat;
+  deckCount: number;
+  ruleProfile: RuleProfile;
+  entryDirection: EntryDirection;
+  playerSpotCount: number;
+  practiceMode: boolean;
+  pitArea: string;
+  investigationLabel: string;
+}
+
 export type EventType =
   | "card"
   | "seat-select"
@@ -145,7 +232,19 @@ export interface Investigation {
   activeTarget: number | "dealer";
 
   countingSystem: CountingSystem;
+  /** Also GameConfig's "deck count" — one number, no separate duplicate field. Its meaning shifts slightly with format: exactly 1/2 for single/double deck, operator-chosen for a shoe game. */
   shoeTotalDecks: number;
+
+  /** Game configuration — everything Quick Setup edits. Reserved for future non-blackjack games via `gameType`; only "blackjack" is implemented. */
+  gameType: GameType;
+  blackjackFormat: BlackjackFormat;
+  ruleProfile: RuleProfile;
+  entryDirection: EntryDirection;
+  /** How many betting spots the console renders — SEAT tiles are generated 1..playerSpotCount, not hardcoded to 7. */
+  playerSpotCount: number;
+  practiceMode: boolean;
+  pitArea: string;
+  investigationLabel: string;
 
   rounds: Round[];
 

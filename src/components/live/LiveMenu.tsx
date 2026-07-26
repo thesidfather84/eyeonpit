@@ -24,6 +24,7 @@ import { BottomStatusBar } from "./BottomStatusBar";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { completeInvestigation, listInvestigations } from "@/lib/db/repositories/investigations";
 import { downloadInvestigationJson } from "@/lib/export/toJson";
+import { newShoeOrDeckLabel } from "@/lib/utils/gameConfig";
 import type { Investigation } from "@/types/investigation";
 
 type OverlayKey = "history" | "reports" | "export" | "settings" | "help";
@@ -170,7 +171,7 @@ export function LiveMenu() {
             disabled={busy || investigation.status !== "active"}
             className="tap-target flex items-center gap-3 rounded-lg px-3 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-40"
           >
-            <Layers className="h-5 w-5" aria-hidden /> New Shoe
+            <Layers className="h-5 w-5" aria-hidden /> {newShoeOrDeckLabel(investigation)}
           </button>
           <button
             onClick={() => {
@@ -218,9 +219,9 @@ export function LiveMenu() {
 
       <ConfirmDialog
         open={shoeConfirmOpen}
-        title="Start a new shoe?"
+        title={`Start a new ${investigation.blackjackFormat === "shoe" ? "shoe" : "deck"}?`}
         message="Start a new shoe? This will reset the running count and shoe card history. Completed rounds will remain saved."
-        confirmLabel="Start New Shoe"
+        confirmLabel={newShoeOrDeckLabel(investigation)}
         busy={busy}
         onConfirm={handleConfirmShoe}
         onCancel={() => setShoeConfirmOpen(false)}

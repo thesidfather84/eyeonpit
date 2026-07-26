@@ -3,9 +3,8 @@
 import { useState } from "react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
+import { seatNumbersFor } from "@/lib/utils/seats";
 import { SeatOptionsSheet } from "./SeatOptionsSheet";
-
-const SEATS = [1, 2, 3, 4, 5, 6, 7];
 
 /**
  * The full-table view of seat state — Add/Mark Empty/Link/Unlink/Rename for
@@ -16,12 +15,13 @@ const SEATS = [1, 2, 3, 4, 5, 6, 7];
 export function ManageSeatsSheet({ onClose }: { onClose: () => void }) {
   const { investigation } = useInvestigationContext();
   const [optionsSeat, setOptionsSeat] = useState<number | null>(null);
+  const seats = seatNumbersFor(investigation);
 
   return (
     <>
       <BottomSheet open onClose={onClose} title="Manage Seats">
         <div className="flex flex-col gap-1 pb-4">
-          {SEATS.map((seat) => {
+          {seats.map((seat) => {
             const isOccupied = investigation.occupiedSeats.includes(seat);
             const groupId = investigation.seatPlayerGroups[seat];
             const group = groupId ? investigation.playerGroups[groupId] : undefined;

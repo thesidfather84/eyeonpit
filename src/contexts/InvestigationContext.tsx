@@ -19,6 +19,7 @@ import {
   unlinkSeat as unlinkSeatRepo,
   updateInvestigation,
 } from "@/lib/db/repositories/investigations";
+import { orderedSeatNumbersFor } from "@/lib/utils/seats";
 import type { EventType, Investigation, PlayerGroup, Round, WagerChange } from "@/types/investigation";
 
 /** Which hand the next tapped card / action applies to. "dealer-hole" is a transient state entered only via the Dealer Panel's reveal control. */
@@ -528,7 +529,7 @@ export function InvestigationProvider({
 
   const advanceToNext = useCallback(() => {
     if (!investigation) return;
-    const ordered = [...investigation.occupiedSeats].sort((a, b) => a - b);
+    const ordered = orderedSeatNumbersFor(investigation);
     if (typeof activeTarget !== "number") {
       setActiveTarget(ordered[0] ?? "dealer");
       return;

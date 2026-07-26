@@ -6,8 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { seatHasCurrentRoundData } from "@/lib/db/repositories/investigations";
-
-const ALL_SEATS = [1, 2, 3, 4, 5, 6, 7];
+import { seatNumbersFor } from "@/lib/utils/seats";
 
 type Step = "menu" | "link-picker" | "additional-spot-picker" | "add-label";
 
@@ -255,7 +254,7 @@ function SeatPicker({
   onBack: () => void;
   onPick: (seatNumber: number) => void;
 }) {
-  const candidates = ALL_SEATS.filter((s) => !excludeSeats.includes(s));
+  const candidates = seatNumbersFor(investigation).filter((s) => !excludeSeats.includes(s));
 
   return (
     <div className="flex flex-col gap-1 pb-4">

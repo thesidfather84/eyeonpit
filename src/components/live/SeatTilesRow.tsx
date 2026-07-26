@@ -5,12 +5,12 @@ import { MoreVertical, Users } from "lucide-react";
 import { computeApLikelihoodBySeat } from "@/lib/analysis/apLikelihood";
 import { computeHandTotal } from "@/lib/utils/blackjackTotal";
 import { formatCard } from "@/lib/utils/cards";
+import { seatNumbersFor } from "@/lib/utils/seats";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import type { CardTarget } from "@/contexts/InvestigationContext";
 import { SeatOptionsSheet } from "./SeatOptionsSheet";
 import { ManageSeatsSheet } from "./ManageSeatsSheet";
 
-const SEATS = [1, 2, 3, 4, 5, 6, 7];
 const LONG_PRESS_MS = 500;
 
 const AP_DOT_CLASSES: Record<string, string> = {
@@ -32,6 +32,7 @@ export function SeatTilesRow() {
   const { investigation, currentRound, activeTarget, occupySeat, selectSeat } =
     useInvestigationContext();
   const apBySeat = computeApLikelihoodBySeat(investigation, currentRound.shoeNumber);
+  const seats = seatNumbersFor(investigation);
   const [optionsSeat, setOptionsSeat] = useState<number | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,7 +63,7 @@ export function SeatTilesRow() {
   return (
     <div className="flex-none border-b border-border bg-surface p-1.5">
       <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-7">
-        {SEATS.map((seat) => {
+        {seats.map((seat) => {
           const isOccupied = investigation.occupiedSeats.includes(seat);
           const isActive = activeTarget === (seat as CardTarget);
           const record = currentRound.seats[seat];

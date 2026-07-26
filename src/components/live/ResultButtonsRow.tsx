@@ -1,6 +1,7 @@
 "use client";
 
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
+import { resolveSeatTarget, updateSeatAtTarget } from "@/lib/utils/seatTarget";
 import type { HandOutcome } from "@/types/investigation";
 
 const RESULTS: { outcome: NonNullable<HandOutcome>; label: string }[] = [
@@ -12,20 +13,17 @@ const RESULTS: { outcome: NonNullable<HandOutcome>; label: string }[] = [
   { outcome: "void", label: "Void" },
 ];
 
-/** Fast result tagging for the active seat's hand — recording a result also advances to the next seat (or dealer) automatically. */
-export function ResultButtonsRow({ seatNumber }: { seatNumber: number }) {
+/** Fast result tagging for the active hand — recording a result also advances to the next seat (or dealer) automatically in Guided mode. */
+export function ResultButtonsRow({ target }: { target: number }) {
   const { investigation, currentRound, mutate, advanceToNext, busy } = useInvestigationContext();
-  const current = currentRound.seats[seatNumber]?.outcome ?? null;
+  const { seatNumber, isSplit, record } = resolveSeatTarget(currentRound, target);
+  const current = record?.outcome ?? null;
   const disabled = busy || investigation.status !== "active" || currentRound.completed;
 
   function handleResult(outcome: NonNullable<HandOutcome>, label: string) {
     mutate(
-      (round) => {
-        const seat = round.seats[seatNumber];
-        if (!seat) return round;
-        return { ...round, seats: { ...round.seats, [seatNumber]: { ...seat, outcome } } };
-      },
-      { type: "action", message: `Seat ${seatNumber}: Result — ${label}` }
+      (round) => updateSeatAtTarget(round, target, (seat) => ({ ...seat, outcome })),
+      { type: "action", message: `Seat ${seatNumber}${isSplit ? " (split)" : ""}: Result — ${label}` }
     );
     advanceToNext();
   }

@@ -2,43 +2,47 @@
 
 import { useState } from "react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
-import { computeWagerChange, findPreviousBet } from "@/lib/utils/wagerChange";
+import { computeWagerChange, findPreviousStartingWager } from "@/lib/utils/wagerChange";
+import { resolveSeatTarget, updateSeatAtTarget } from "@/lib/utils/seatTarget";
+import { useTerminology } from "@/hooks/useTerminology";
 
-const CHIPS = [5, 10, 25, 50, 100, 500];
+const CHIPS = [5, 10, 25, 100, 500, 1000];
 const BET_STEP = 25;
 
-export function QuickBetPanel({ seatNumber }: { seatNumber: number }) {
-  const { investigation, currentRound, mutate, applyBetToLinkedSpots, busy } =
+export function QuickBetPanel({ target }: { target: number }) {
+  const { investigation, currentRound, mutate, undo, canUndo, applyBetToLinkedSpots, busy } =
     useInvestigationContext();
+  const t = useTerminology();
   const [customOpen, setCustomOpen] = useState(false);
   const [customValue, setCustomValue] = useState("");
 
-  const record = currentRound.seats[seatNumber];
+  const { seatNumber, isSplit, record } = resolveSeatTarget(currentRound, target);
   const currentBet = record?.betAmount ?? 0;
+  const startingWager = record?.startingWagerAmount ?? 0;
   const priorRounds = investigation.rounds.filter((r) => r.id !== currentRound.id);
-  const previousBet = findPreviousBet(seatNumber, priorRounds);
-  const disabled = busy || investigation.status !== "active" || currentRound.completed;
+  const previousStartingWager = findPreviousStartingWager(seatNumber, priorRounds);
+  const disabled =
+    busy || investigation.status !== "active" || currentRound.completed || Boolean(record?.doubled);
 
   const groupId = investigation.seatPlayerGroups[seatNumber];
   const linkedSeatCount = groupId
     ? Object.values(investigation.seatPlayerGroups).filter((g) => g === groupId).length
     : 1;
-  const isLinked = linkedSeatCount > 1;
+  const isLinked = !isSplit && linkedSeatCount > 1;
 
   function applyBet(newAmount: number, label?: string) {
-    const wagerChange = computeWagerChange(newAmount, previousBet);
+    const wagerChange = computeWagerChange(newAmount, previousStartingWager);
     mutate(
-      (round) => {
-        const seat = round.seats[seatNumber];
-        if (!seat) return round;
-        return {
-          ...round,
-          seats: { ...round.seats, [seatNumber]: { ...seat, betAmount: newAmount, wagerChange } },
-        };
-      },
+      (round) =>
+        updateSeatAtTarget(round, target, (seat) => ({
+          ...seat,
+          betAmount: newAmount,
+          startingWagerAmount: newAmount,
+          wagerChange,
+        })),
       {
         type: "bet-change",
-        message: `Seat ${seatNumber} bet $${previousBet ?? 0} → $${newAmount}${label ? ` (${label})` : ""}`,
+        message: `Seat ${seatNumber}${isSplit ? " (split)" : ""} ${t.currentBet.toLowerCase()} $${previousStartingWager ?? 0} → $${newAmount}${label ? ` (${label})` : ""}`,
       }
     );
     setCustomOpen(false);
@@ -68,20 +72,33 @@ export function QuickBetPanel({ seatNumber }: { seatNumber: number }) {
   return (
     <div className="flex-none border-b border-border bg-surface p-1.5">
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-xs font-bold text-foreground">BET — SEAT {seatNumber}</span>
-        <span className="flex items-center gap-1 text-xs">
-          <span className="font-semibold text-foreground">${currentBet}</span>
-          {changeBadge && (
-            <span
-              className={
-                record?.wagerChange.direction === "up" ? "text-status-orange" : "text-accent"
-              }
-            >
-              {changeBadge}
-            </span>
-          )}
+        <span className="text-xs font-bold text-foreground">
+          {t.currentBet.toUpperCase()} — SEAT {seatNumber}
+          {isSplit ? " · SPLIT" : ""}
+        </span>
+        <span className="flex items-center gap-2 text-xs">
+          <span className="text-muted-foreground">
+            {t.baseBet} <span className="font-medium text-foreground">${startingWager}</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="font-semibold text-foreground">${currentBet}</span>
+            {changeBadge && (
+              <span
+                className={
+                  record?.wagerChange.direction === "up" ? "text-status-orange" : "text-accent"
+                }
+              >
+                {changeBadge}
+              </span>
+            )}
+          </span>
         </span>
       </div>
+      {record?.doubled && (
+        <p className="mb-1.5 text-[10px] font-semibold text-pending">
+          DOUBLED — wager locked, waiting for one final card
+        </p>
+      )}
 
       <div className="mb-1.5 grid grid-cols-4 gap-1 sm:grid-cols-7">
         {CHIPS.map((chip) => (
@@ -130,11 +147,11 @@ export function QuickBetPanel({ seatNumber }: { seatNumber: number }) {
 
       <div className="grid grid-cols-4 gap-1">
         <button
-          disabled={disabled || previousBet == null}
-          onClick={() => applyBet(previousBet ?? currentBet, "repeat")}
-          className="tap-target rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
+          disabled={disabled || previousStartingWager == null}
+          onClick={() => applyBet(previousStartingWager ?? currentBet, "repeat")}
+          className="tap-target rounded-md border border-border bg-surface-raised text-[10px] font-medium text-foreground disabled:opacity-40"
         >
-          Repeat
+          Repeat {t.baseBet}
         </button>
         <button
           disabled={disabled}
@@ -144,21 +161,30 @@ export function QuickBetPanel({ seatNumber }: { seatNumber: number }) {
           Clear
         </button>
         <button
-          disabled={disabled}
-          onClick={() => applyBet(Math.max(0, currentBet - BET_STEP))}
-          aria-label="Decrease bet"
-          className="tap-target rounded-md border border-border bg-surface-raised text-base font-semibold text-foreground disabled:opacity-40"
+          disabled={!canUndo || busy}
+          onClick={undo}
+          className="tap-target rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
         >
-          −
+          Undo Chip
         </button>
-        <button
-          disabled={disabled}
-          onClick={() => applyBet(currentBet + BET_STEP)}
-          aria-label="Increase bet"
-          className="tap-target rounded-md border border-accent bg-accent/15 text-base font-semibold text-accent disabled:opacity-40"
-        >
-          +
-        </button>
+        <div className="grid grid-cols-2 gap-1">
+          <button
+            disabled={disabled}
+            onClick={() => applyBet(Math.max(0, currentBet - BET_STEP))}
+            aria-label="Decrease bet"
+            className="tap-target rounded-md border border-border bg-surface-raised text-base font-semibold text-foreground disabled:opacity-40"
+          >
+            −
+          </button>
+          <button
+            disabled={disabled}
+            onClick={() => applyBet(currentBet + BET_STEP)}
+            aria-label="Increase bet"
+            className="tap-target rounded-md border border-accent bg-accent/15 text-base font-semibold text-accent disabled:opacity-40"
+          >
+            +
+          </button>
+        </div>
       </div>
 
       {isLinked && (

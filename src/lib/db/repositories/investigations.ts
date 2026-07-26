@@ -16,6 +16,7 @@ import type {
   Round,
   RuleProfile,
   SeatRoundRecord,
+  TableEventKind,
   WagerChange,
 } from "@/types/investigation";
 import { DEFAULT_GAME_CONFIG } from "@/types/investigation";
@@ -52,6 +53,29 @@ async function countInvestigationsForDate(isoDate: string): Promise<number> {
   return db.investigations.where("investigationDate").equals(isoDate).count();
 }
 
+/** A brand-new, empty hand for a seat — the one place every SeatRoundRecord's defaults are defined. */
+function createEmptySeatRecord(
+  seatNumber: number,
+  betAmount: number | null = null,
+  wagerChange: WagerChange = { direction: "first", amount: null, overridden: false },
+  startingWagerAmount: number | null = betAmount
+): SeatRoundRecord {
+  return {
+    seatNumber,
+    startingWagerAmount,
+    betAmount,
+    wagerChange,
+    insuranceAmount: null,
+    doubled: false,
+    doubledAtCardCount: null,
+    playerCards: [],
+    actions: [],
+    outcome: null,
+    deviationNote: "",
+    observationNote: "",
+  };
+}
+
 /** A fresh, empty Round. Dealer cards live once on `dealerHand`, never duplicated per seat — plan.md §0.5/§2. Starts unlocked (`completed: false`). */
 export function createRound(
   roundNumber: number,
@@ -63,17 +87,7 @@ export function createRound(
 
   for (const [seatKey, seed] of Object.entries(seedSeats)) {
     const seatNumber = Number(seatKey);
-    const record: SeatRoundRecord = {
-      seatNumber,
-      betAmount: seed.betAmount,
-      wagerChange: seed.wagerChange,
-      playerCards: [],
-      actions: [],
-      outcome: null,
-      deviationNote: "",
-      observationNote: "",
-    };
-    seats[seatNumber] = record;
+    seats[seatNumber] = createEmptySeatRecord(seatNumber, seed.betAmount, seed.wagerChange);
   }
 
   return {
@@ -90,6 +104,7 @@ export function createRound(
       result: null,
     },
     seats,
+    splitHands: {},
     runningCount: null,
     trueCount: null,
     operatorNote: "",
@@ -261,16 +276,7 @@ async function ensureSeatRecord(localId: string, seatNumber: number): Promise<vo
   const currentRound = investigation.rounds[investigation.rounds.length - 1];
   if (!currentRound || currentRound.seats[seatNumber]) return;
 
-  const record: SeatRoundRecord = {
-    seatNumber,
-    betAmount: null,
-    wagerChange: { direction: "first", amount: null, overridden: false },
-    playerCards: [],
-    actions: [],
-    outcome: null,
-    deviationNote: "",
-    observationNote: "",
-  };
+  const record = createEmptySeatRecord(seatNumber);
   const rounds = investigation.rounds.map((round) =>
     round.id === currentRound.id
       ? { ...round, seats: { ...round.seats, [seatNumber]: record } }
@@ -335,8 +341,7 @@ export async function occupySeat(localId: string, seatNumber: number): Promise<v
 }
 
 /** True if the current round already has a bet, cards, actions, or a result recorded for this seat — the gate for whether Mark Empty needs confirmation. */
-export function seatHasCurrentRoundData(round: Round, seatNumber: number): boolean {
-  const seat = round.seats[seatNumber];
+function seatRecordHasData(seat: SeatRoundRecord | undefined): boolean {
   if (!seat) return false;
   return (
     seat.betAmount != null ||
@@ -344,6 +349,10 @@ export function seatHasCurrentRoundData(round: Round, seatNumber: number): boole
     seat.actions.length > 0 ||
     seat.outcome != null
   );
+}
+
+export function seatHasCurrentRoundData(round: Round, seatNumber: number): boolean {
+  return seatRecordHasData(round.seats[seatNumber]) || seatRecordHasData(round.splitHands[seatNumber]);
 }
 
 /**
@@ -365,7 +374,9 @@ export async function markSeatEmpty(localId: string, seatNumber: number): Promis
         if (round.id !== currentRound.id) return round;
         const seats = { ...round.seats };
         delete seats[seatNumber];
-        return { ...round, seats };
+        const splitHands = { ...round.splitHands };
+        delete splitHands[seatNumber];
+        return { ...round, seats, splitHands };
       })
     : investigation.rounds;
 
@@ -534,11 +545,105 @@ export async function updateSeatBet(
       if (!seat) return round;
       return {
         ...round,
-        seats: { ...round.seats, [seatNumber]: { ...seat, betAmount: amount, wagerChange } },
+        seats: {
+          ...round.seats,
+          [seatNumber]: { ...seat, betAmount: amount, startingWagerAmount: amount, wagerChange },
+        },
       };
     },
     { type: "bet-change", message: `Seat ${seatNumber} bet set to $${amount}` }
   );
+}
+
+/** Creates a seat's second hand after Split — standard rule: the new hand starts with its own copy of the current wager, no cards of its own yet. Tracked entirely independently from the primary hand from this point on. */
+export async function splitSeat(
+  investigationLocalId: string,
+  roundId: string,
+  seatNumber: number
+): Promise<Round> {
+  return mutateRound(
+    investigationLocalId,
+    roundId,
+    (round) => {
+      const seat = round.seats[seatNumber];
+      if (!seat || round.splitHands[seatNumber]) return round;
+      const secondHand = createEmptySeatRecord(
+        seatNumber,
+        seat.betAmount,
+        { direction: "same", amount: 0, overridden: false },
+        seat.startingWagerAmount
+      );
+      return { ...round, splitHands: { ...round.splitHands, [seatNumber]: secondHand } };
+    },
+    { type: "action", message: `Seat ${seatNumber}: Split` }
+  );
+}
+
+/**
+ * Misdeal — distinct from voiding a whole round: the current hand's
+ * outcomes are voided but its already-exposed cards stay exactly as
+ * recorded (running count and shoe stay correct off them), and play
+ * continues in the same shoe. Locks the round the same way Complete Round
+ * does, since the hand is over either way.
+ */
+export async function misdealRound(localId: string, roundId: string): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+  const now = new Date().toISOString();
+
+  const rounds = investigation.rounds.map((round) => {
+    if (round.id !== roundId) return round;
+
+    const seats = { ...round.seats };
+    for (const seatNumber of investigation.occupiedSeats) {
+      const seat = seats[seatNumber];
+      if (seat) seats[seatNumber] = { ...seat, outcome: "void" };
+    }
+
+    const splitHands = { ...round.splitHands };
+    for (const [seatKey, hand] of Object.entries(splitHands)) {
+      if (hand) splitHands[Number(seatKey)] = { ...hand, outcome: "void" };
+    }
+
+    return {
+      ...round,
+      seats,
+      splitHands,
+      completed: true,
+      eventLog: [
+        ...round.eventLog,
+        { id: uuidv4(), timestamp: now, type: "misdeal" as EventType, message: "Misdeal — hand voided" },
+      ],
+      updatedAt: now,
+    };
+  });
+
+  await updateInvestigation(localId, { rounds });
+}
+
+const TABLE_EVENT_LABELS: Record<TableEventKind, string> = {
+  "dealer-change": "Dealer change",
+  shuffle: "Shuffle",
+  "seat-opens": "Seat opens",
+  "seat-closes": "Seat closes",
+  "player-joins": "Player joins",
+  "player-leaves": "Player leaves",
+  "table-closed": "Table closed",
+};
+
+/** Logs a table event to the current round — not tied to any one seat's hand (dealer change, shuffle, seats opening/closing, players joining/leaving, table closed). */
+export async function logTableEvent(
+  localId: string,
+  kind: TableEventKind,
+  detail?: string
+): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+  const label = TABLE_EVENT_LABELS[kind];
+  const message = detail?.trim() ? `${label} — ${detail.trim()}` : label;
+  await updateInvestigation(localId, {
+    rounds: appendEventToRounds(investigation.rounds, { type: "table-event", message }),
+  });
 }
 
 /** Locks a round from further entry — set by "Complete Round", the only stored (not derived) round lock. */
@@ -652,12 +757,15 @@ export async function advanceRound(
 
   const nextRoundNumber = finalizedRounds.length + 1;
 
+  // Next Hand always restores the *starting* wager, not whatever the
+  // current wager ended at — a Double in the completed hand never carries
+  // forward.
   const seedSeats: Record<number, { betAmount: number | null; wagerChange: WagerChange }> = {};
   for (const seatNumber of investigation.occupiedSeats) {
-    const previousBet = currentRound.seats[seatNumber]?.betAmount ?? null;
+    const previousStartingWager = currentRound.seats[seatNumber]?.startingWagerAmount ?? null;
     seedSeats[seatNumber] = options.newShoe
-      ? { betAmount: previousBet, wagerChange: { direction: "first", amount: null, overridden: false } }
-      : { betAmount: previousBet, wagerChange: { direction: "same", amount: 0, overridden: false } };
+      ? { betAmount: previousStartingWager, wagerChange: { direction: "first", amount: null, overridden: false } }
+      : { betAmount: previousStartingWager, wagerChange: { direction: "same", amount: 0, overridden: false } };
   }
 
   const nextRound = createRound(nextRoundNumber, nextShoeNumber, seedSeats);

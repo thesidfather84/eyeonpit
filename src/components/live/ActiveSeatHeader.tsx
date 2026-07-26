@@ -1,6 +1,8 @@
 "use client";
 
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
+import { resolveSeatTarget } from "@/lib/utils/seatTarget";
+import { useTerminology } from "@/hooks/useTerminology";
 
 /**
  * The one place that states, unambiguously, what the keypad and every
@@ -9,10 +11,11 @@ import { useInvestigationContext } from "@/contexts/InvestigationContext";
  * OF 2 / BET $50". Never confusable with mere occupancy, which has no
  * strong border and no "ACTIVE" label anywhere.
  */
-export function ActiveSeatHeader({ seatNumber }: { seatNumber: number }) {
+export function ActiveSeatHeader({ target }: { target: number }) {
   const { investigation, currentRound } = useInvestigationContext();
+  const t = useTerminology();
 
-  const record = currentRound.seats[seatNumber];
+  const { seatNumber, isSplit, record } = resolveSeatTarget(currentRound, target);
   const groupId = investigation.seatPlayerGroups[seatNumber];
   const group = groupId ? investigation.playerGroups[groupId] : undefined;
   const linkedSeatNumbers = groupId
@@ -26,9 +29,9 @@ export function ActiveSeatHeader({ seatNumber }: { seatNumber: number }) {
   const bet = record?.betAmount;
 
   const parts = [
-    `SEAT ${seatNumber}`,
+    `SEAT ${seatNumber}${isSplit ? " · SPLIT HAND" : ""}`,
     group ? `${group.label}${spotCount > 1 ? ` · SPOT ${spotIndex} OF ${spotCount}` : ""}` : null,
-    `BET ${bet != null ? `$${bet}` : "—"}`,
+    `${t.currentBet.toUpperCase()} ${bet != null ? `$${bet}` : "—"}`,
   ].filter(Boolean);
 
   return (

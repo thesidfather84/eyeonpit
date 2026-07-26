@@ -27,17 +27,20 @@ export function computeWagerChange(
 }
 
 /**
- * Finds the seat's most recent bet from prior rounds (in round order),
- * for feeding into computeWagerChange when a new round starts.
+ * Finds the seat's most recent *starting* wager from prior rounds (in
+ * round order) — what "Repeat Starting Wager" reapplies, and the baseline
+ * computeWagerChange compares a new bet against. Deliberately reads
+ * startingWagerAmount, not betAmount: a Double in a prior hand should
+ * never leak into "what did they normally wager".
  */
-export function findPreviousBet(
+export function findPreviousStartingWager(
   seatNumber: number,
-  priorRounds: { seats: Partial<Record<number, { betAmount: number | null }>> }[]
+  priorRounds: { seats: Partial<Record<number, { startingWagerAmount: number | null }>> }[]
 ): number | null {
   for (let i = priorRounds.length - 1; i >= 0; i -= 1) {
     const seatRecord = priorRounds[i].seats[seatNumber];
-    if (seatRecord && seatRecord.betAmount !== null) {
-      return seatRecord.betAmount;
+    if (seatRecord && seatRecord.startingWagerAmount !== null) {
+      return seatRecord.startingWagerAmount;
     }
   }
   return null;

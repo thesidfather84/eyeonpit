@@ -9,18 +9,28 @@ import {
   createPlayerGroup as createPlayerGroupRepo,
   getInvestigation,
   linkSeats as linkSeatsRepo,
+  logTableEvent as logTableEventRepo,
   markSeatEmpty as markSeatEmptyRepo,
+  misdealRound as misdealRoundRepo,
   mutateRound,
   occupySeat as occupySeatRepo,
   pauseInvestigation,
   renamePlayerGroup as renamePlayerGroupRepo,
   reopenRound as reopenRoundRepo,
   resumeInvestigation,
+  splitSeat as splitSeatRepo,
   unlinkSeat as unlinkSeatRepo,
   updateInvestigation,
 } from "@/lib/db/repositories/investigations";
 import { orderedSeatNumbersFor } from "@/lib/utils/seats";
-import type { EventType, Investigation, PlayerGroup, Round, WagerChange } from "@/types/investigation";
+import type {
+  EventType,
+  Investigation,
+  PlayerGroup,
+  Round,
+  TableEventKind,
+  WagerChange,
+} from "@/types/investigation";
 
 /** Which hand the next tapped card / action applies to. "dealer-hole" is a transient state entered only via the Dealer Panel's reveal control. */
 export type CardTarget = "dealer" | "dealer-hole" | number;
@@ -106,6 +116,12 @@ interface InvestigationContextValue {
   clearActiveEntry: () => void;
   /** Clears one seat's current-round hand (cards/actions/result) by seat number, independent of what's currently active. Keeps its bet. */
   clearSeatHand: (seatNumber: number) => Promise<void>;
+  /** Creates the seat's second hand after Split. No-op if the seat has no primary hand yet or is already split. */
+  splitSeat: (seatNumber: number) => Promise<void>;
+  /** Voids the current hand's outcomes (keeping its exposed cards, so the count stays correct) and immediately begins the next hand in the same shoe. Bypasses canCompleteRound()'s validation — a misdeal is an explicit declaration, not a normal resolution. */
+  misdealAndAdvance: () => Promise<void>;
+  /** Logs a table event (dealer change, shuffle, seat/player joins-leaves, table closed) to the current round. */
+  logTableEvent: (kind: TableEventKind, detail?: string) => Promise<void>;
 }
 
 const InvestigationContext = createContext<InvestigationContextValue | null>(null);
@@ -546,6 +562,50 @@ export function InvestigationProvider({
     [investigation, mutate, updateSeatBet]
   );
 
+  const splitSeat = useCallback(
+    async (seatNumber: number) => {
+      if (!investigation || !currentRound) return;
+      setBusy(true);
+      try {
+        pushHistory({ kind: "round", round: currentRound });
+        await splitSeatRepo(investigation.localId, currentRound.id, seatNumber);
+        await refresh();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [investigation, currentRound, refresh, pushHistory]
+  );
+
+  const misdealAndAdvance = useCallback(async () => {
+    if (!investigation || !currentRound) return;
+    setBusy(true);
+    try {
+      pushHistory({ kind: "rounds-snapshot", rounds: investigation.rounds });
+      await misdealRoundRepo(investigation.localId, currentRound.id);
+      await advanceRoundRepo(investigation.localId, { newShoe: false });
+      const ordered = orderedSeatNumbersFor(investigation);
+      setActiveTarget(investigation.entryMode === "guided" ? (ordered[0] ?? "dealer") : "dealer");
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }, [investigation, currentRound, refresh, pushHistory, setActiveTarget]);
+
+  const logTableEvent = useCallback(
+    async (kind: TableEventKind, detail?: string) => {
+      if (!investigation) return;
+      setBusy(true);
+      try {
+        await logTableEventRepo(investigation.localId, kind, detail);
+        await refresh();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [investigation, refresh]
+  );
+
   const clearSeatHand = useCallback(
     (seatNumber: number) => {
       return mutate(
@@ -649,6 +709,9 @@ export function InvestigationProvider({
         advanceToNext,
         clearActiveEntry,
         clearSeatHand,
+        splitSeat,
+        misdealAndAdvance,
+        logTableEvent,
       }}
     >
       {children}

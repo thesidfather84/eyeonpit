@@ -1,17 +1,35 @@
 "use client";
 
+import { Undo2 } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { deriveDealerResult } from "@/lib/utils/blackjackTotal";
 import { formatCard } from "@/lib/utils/cards";
+import { resolveSeatTarget, updateSeatAtTarget } from "@/lib/utils/seatTarget";
+import { isSeatLocked } from "@/lib/utils/seatLock";
 import type { CardCode, Rank } from "@/types/investigation";
 
 const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 
-/** Large rank-only buttons — suits are skipped for entry speed. Applies to whichever target (dealer / dealer hole / seat) is currently active, always visible in the lower-central portion of the console. */
+/** Large rank-only buttons — suits are skipped for entry speed. Applies to whichever target (dealer / dealer hole / seat / split hand) is currently active, always visible in the lower-central portion of the console. */
 export function CardEntryPad() {
-  const { investigation, currentRound, activeTarget, setActiveTarget, mutate, advanceToNext, busy } =
-    useInvestigationContext();
-  const disabled = busy || investigation.status !== "active" || currentRound.completed;
+  const {
+    investigation,
+    currentRound,
+    activeTarget,
+    setActiveTarget,
+    mutate,
+    advanceToNext,
+    undo,
+    canUndo,
+    busy,
+  } = useInvestigationContext();
+  const isDealerTarget = activeTarget === "dealer" || activeTarget === "dealer-hole";
+  const seatResolved =
+    !isDealerTarget && typeof activeTarget === "number"
+      ? resolveSeatTarget(currentRound, activeTarget)
+      : null;
+  const locked = seatResolved ? isSeatLocked(seatResolved.record) : false;
+  const disabled = busy || investigation.status !== "active" || currentRound.completed || locked;
 
   const targetLabel =
     activeTarget === "dealer"
@@ -20,7 +38,9 @@ export function CardEntryPad() {
         : "DEALER UPCARD"
       : activeTarget === "dealer-hole"
         ? "DEALER HOLE CARD"
-        : `SEAT ${activeTarget}`;
+        : `SEAT ${seatResolved?.seatNumber}${seatResolved?.isSplit ? " · SPLIT" : ""}`;
+
+  const lastCardEvent = [...currentRound.eventLog].reverse().find((e) => e.type === "card");
 
   function handleTap(rank: Rank) {
     const card: CardCode = { rank, suit: "unspecified" };
@@ -54,25 +74,46 @@ export function CardEntryPad() {
       return;
     }
 
-    const seatNumber = activeTarget;
+    if (typeof activeTarget !== "number" || !seatResolved) return;
+    const target = activeTarget;
     mutate(
-      (round) => {
-        const seat = round.seats[seatNumber];
-        if (!seat) return round;
-        return {
-          ...round,
-          seats: { ...round.seats, [seatNumber]: { ...seat, playerCards: [...seat.playerCards, card] } },
-        };
-      },
-      { type: "card", message: `Seat ${seatNumber}: ${formatCard(card)}` }
+      (round) =>
+        updateSeatAtTarget(round, target, (seat) => ({
+          ...seat,
+          playerCards: [...seat.playerCards, card],
+        })),
+      {
+        type: "card",
+        message: `Seat ${seatResolved.seatNumber}${seatResolved.isSplit ? " (split)" : ""}: ${formatCard(card)}`,
+      }
     );
   }
 
   return (
     <div className="flex-none border-b border-border bg-surface p-1.5">
-      <p className="mb-1.5 text-center text-sm font-bold text-accent">
-        ENTER CARD → {targetLabel}
-      </p>
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <p className="text-center text-sm font-bold text-accent-secondary">
+          ENTER CARD → {targetLabel}
+        </p>
+        <button
+          onClick={undo}
+          disabled={!canUndo || busy}
+          aria-label="Undo last card"
+          className="tap-target flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface-raised px-2 text-[10px] font-medium text-foreground disabled:opacity-40"
+        >
+          <Undo2 className="h-3 w-3" aria-hidden /> Undo Last Card
+        </button>
+      </div>
+      {lastCardEvent && (
+        <p className="mb-1.5 text-center text-[10px] text-muted-foreground">
+          Last: {lastCardEvent.message}
+        </p>
+      )}
+      {locked && (
+        <p className="mb-1.5 text-center text-[10px] font-semibold text-pending">
+          Hand locked — no further cards
+        </p>
+      )}
       <div className="grid grid-cols-5 gap-1.5">
         {RANKS.map((rank) => (
           <button

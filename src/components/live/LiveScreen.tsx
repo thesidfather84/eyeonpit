@@ -34,10 +34,10 @@ export function LiveScreen() {
 
         {activeSeat != null && (
           <>
-            <ActiveSeatHeader seatNumber={activeSeat} />
-            <QuickBetPanel seatNumber={activeSeat} />
-            <PlayerActionsRow seatNumber={activeSeat} />
-            <ResultButtonsRow seatNumber={activeSeat} />
+            <ActiveSeatHeader target={activeSeat} />
+            <QuickBetPanel target={activeSeat} />
+            <PlayerActionsRow target={activeSeat} />
+            <ResultButtonsRow target={activeSeat} />
           </>
         )}
 

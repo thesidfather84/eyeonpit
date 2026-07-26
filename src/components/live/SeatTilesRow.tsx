@@ -6,6 +6,7 @@ import { computeApLikelihoodBySeat } from "@/lib/analysis/apLikelihood";
 import { computeHandTotal } from "@/lib/utils/blackjackTotal";
 import { formatCard } from "@/lib/utils/cards";
 import { seatNumbersFor } from "@/lib/utils/seats";
+import { splitTargetFor } from "@/lib/utils/seatTarget";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import type { CardTarget } from "@/contexts/InvestigationContext";
 import { SeatOptionsSheet } from "./SeatOptionsSheet";
@@ -29,7 +30,7 @@ const AP_DOT_CLASSES: Record<string, string> = {
  * to reach anything destructive or structural (link/unlink/mark empty).
  */
 export function SeatTilesRow() {
-  const { investigation, currentRound, activeTarget, occupySeat, selectSeat } =
+  const { investigation, currentRound, activeTarget, occupySeat, selectSeat, setActiveTarget } =
     useInvestigationContext();
   const apBySeat = computeApLikelihoodBySeat(investigation, currentRound.shoeNumber);
   const seats = seatNumbersFor(investigation);
@@ -67,6 +68,8 @@ export function SeatTilesRow() {
           const isOccupied = investigation.occupiedSeats.includes(seat);
           const isActive = activeTarget === (seat as CardTarget);
           const record = currentRound.seats[seat];
+          const splitRecord = currentRound.splitHands[seat];
+          const isSplitActive = activeTarget === splitTargetFor(seat);
           const ap = apBySeat[seat];
           const total =
             record && record.playerCards.length > 0 ? computeHandTotal(record.playerCards) : null;
@@ -141,8 +144,14 @@ export function SeatTilesRow() {
                       {spotCount > 1 ? ` · ${spotIndex} OF ${spotCount}` : ""}
                     </span>
                   </span>
-                  <span className="text-sm font-semibold leading-tight">
+                  <span className="flex items-center gap-1 text-sm font-semibold leading-tight">
                     {record?.betAmount != null ? `$${record.betAmount}` : "—"}
+                    {record?.doubled && (
+                      <span className="rounded bg-pending/20 px-1 text-[8px] font-bold text-pending">2X</span>
+                    )}
+                    {(record?.insuranceAmount ?? 0) > 0 && (
+                      <span className="rounded bg-accent/20 px-1 text-[8px] font-bold text-accent">INS</span>
+                    )}
                   </span>
                   <span className="text-[10px] leading-tight">
                     {record && record.playerCards.length > 0
@@ -157,6 +166,26 @@ export function SeatTilesRow() {
                 </>
               ) : (
                 <span className="text-[10px] text-muted-foreground">EMPTY</span>
+              )}
+
+              {splitRecord && (
+                <button
+                  type="button"
+                  aria-label={`Seat ${seat} split hand`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    cancelPress();
+                    setActiveTarget(splitTargetFor(seat));
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className={`absolute bottom-0.5 left-0.5 flex h-5 w-5 items-center justify-center rounded text-[9px] font-bold ${
+                    isSplitActive
+                      ? "bg-accent-secondary text-accent-secondary-foreground"
+                      : "bg-surface-raised text-muted-foreground"
+                  }`}
+                >
+                  H2
+                </button>
               )}
             </div>
           );

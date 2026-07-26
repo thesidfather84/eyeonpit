@@ -167,8 +167,16 @@ export interface WagerChange {
 
 export interface SeatRoundRecord {
   seatNumber: number; // 1-7
+  /** The hand's reference wager — what "Repeat Starting Wager" reapplies, and what Next Hand resets betAmount to. Untouched by Double. */
+  startingWagerAmount: number | null;
+  /** The hand's current wager — equals startingWagerAmount until Double doubles it. */
   betAmount: number | null;
   wagerChange: WagerChange;
+  /** Separate side wager, independent of the main hand's bet. */
+  insuranceAmount: number | null;
+  doubled: boolean;
+  /** playerCards.length at the moment Double was pressed — the hand locks once one more card has been added past this point. Null unless doubled. */
+  doubledAtCardCount: number | null;
   playerCards: CardCode[];
   actions: PlayerAction[];
   outcome: HandOutcome; // "Result"
@@ -198,6 +206,8 @@ export interface Round {
   dealerHand: DealerHand;
   /** Keyed 1-7; only occupied seats are populated. */
   seats: Partial<Record<number, SeatRoundRecord>>;
+  /** A seat's second hand after Split — same shape as `seats`, keyed by the same seat number. Absent unless that seat has split this round. */
+  splitHands: Partial<Record<number, SeatRoundRecord>>;
   /** Snapshotted when the round is finalized (Next Round / New Shoe) — see lib/counting-systems. */
   runningCount: number | null;
   trueCount: number | null;

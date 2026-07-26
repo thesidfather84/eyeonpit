@@ -1,26 +1,42 @@
 @import "tailwindcss";
 
 /*
-  EyeOnPit dark control-room theme — plan.md §8.
+  EyeOnPit professional surveillance-workstation theme.
   Deliberately a single, dark-only theme: no light mode, no
-  prefers-color-scheme branching. Near-black backgrounds, off-white (not
-  pure white) text, one muted non-alarming accent, red reserved strictly
-  for destructive actions and errors.
+  prefers-color-scheme branching. Deep charcoal (not pure black)
+  background, bright blue primary actions, a cyan secondary accent for
+  informational/active-state highlights, orange for pending/attention
+  states, red reserved strictly for the dealer, errors, and busts, green
+  for confirmed/completed states. Not flashy — muted saturation, high
+  contrast text.
 */
 :root {
-  --background: #0a0a0c;
-  --surface: #151619;
-  --surface-raised: #1c1d21;
-  --border: #2a2b30;
+  --background: #0d1117;
+  --surface: #151b23;
+  --surface-raised: #1c232d;
+  --border: #2d3746;
 
-  --foreground: #f2f2f0;
-  --muted-foreground: #9a9ca3;
+  --foreground: #eef1f5;
+  --muted-foreground: #8a94a3;
 
-  --accent: #3fa9a4;
-  --accent-foreground: #05201e;
+  /* Primary actions — bright blue. */
+  --accent: #2f7de1;
+  --accent-foreground: #f5f9ff;
 
-  /* Normal tracked-seat status. */
-  --status-green: #3fb950;
+  /* Secondary/informational highlight — active seat, live indicators. */
+  --accent-secondary: #22b8c8;
+  --accent-secondary-foreground: #04262a;
+
+  /* Dealer-specific highlight — kept separate from the destructive red so a dealer hand isn't visually read as an error. */
+  --dealer: #e5484d;
+  --dealer-foreground: #fff5f5;
+
+  /* Pending/attention states — doubled hand, insurance available, etc. */
+  --pending: #d97a2b;
+  --pending-foreground: #241300;
+
+  /* Confirmed/completed status. */
+  --status-green: #2fb35c;
   /* Elevated behavior/correlation indicators — never used for destructive actions. */
   --status-orange: #d9822b;
 
@@ -39,6 +55,15 @@
 
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+
+  --color-accent-secondary: var(--accent-secondary);
+  --color-accent-secondary-foreground: var(--accent-secondary-foreground);
+
+  --color-dealer: var(--dealer);
+  --color-dealer-foreground: var(--dealer-foreground);
+
+  --color-pending: var(--pending);
+  --color-pending-foreground: var(--pending-foreground);
 
   --color-status-green: var(--status-green);
   --color-status-orange: var(--status-orange);

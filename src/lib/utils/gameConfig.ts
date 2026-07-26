@@ -1,3 +1,4 @@
+import type { TerminologyDictionary } from "@/lib/terminology";
 import type { GameConfig, Investigation } from "@/types/investigation";
 
 /** The unified GameConfig shape QuickSetupSheet edits, read back out of an Investigation's flat fields — nothing is duplicated in storage. */
@@ -8,6 +9,7 @@ export function gameConfigFromInvestigation(investigation: Investigation): GameC
     deckCount: investigation.shoeTotalDecks,
     ruleProfile: investigation.ruleProfile,
     entryDirection: investigation.entryDirection,
+    entryMode: investigation.entryMode,
     playerSpotCount: investigation.playerSpotCount,
     practiceMode: investigation.practiceMode,
     pitArea: investigation.pitArea,
@@ -35,7 +37,7 @@ export function formatGameConfigSummary(investigation: Investigation, shoeOrDeck
   ].join(" · ");
 }
 
-/** "New Shoe" for shoe games, "New Deck" for single/double deck — same reset action underneath (advanceRound), just labeled for what the format actually is. */
-export function newShoeOrDeckLabel(investigation: Investigation): string {
-  return investigation.blackjackFormat === "shoe" ? "New Shoe" : "New Deck";
+/** t.resetShoe for shoe games, "New Deck" for single/double deck — same reset action underneath (advanceRound), just labeled for what the format actually is. Deck resets have no separate terminology mapping, so that label stays fixed across every language level. */
+export function newShoeOrDeckLabel(investigation: Investigation, t: TerminologyDictionary): string {
+  return investigation.blackjackFormat === "shoe" ? t.resetShoe : "New Deck";
 }

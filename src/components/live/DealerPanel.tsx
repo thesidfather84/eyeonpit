@@ -57,7 +57,7 @@ export function DealerPanel() {
   return (
     <div
       className={`flex-none border-b border-border bg-surface p-1.5 ${
-        isDealerTarget || isHoleTarget ? "ring-1 ring-inset ring-accent" : ""
+        isDealerTarget || isHoleTarget ? "ring-1 ring-inset ring-dealer" : ""
       }`}
     >
       <div className="mb-1 flex items-center justify-between">
@@ -66,12 +66,12 @@ export function DealerPanel() {
           onClick={() => setActiveTarget("dealer")}
           className="text-left"
         >
-          <span className="text-xs font-bold text-foreground">DEALER</span>
+          <span className="text-xs font-bold text-dealer">DEALER</span>
           <span className="ml-2 text-xs text-muted-foreground">
             {cardParts.length > 0 ? cardParts.join(" · ") : "Not entered"}
           </span>
         </button>
-        <span className="text-sm font-semibold text-foreground">
+        <span className={`text-sm font-semibold ${total?.bust ? "text-dealer" : "text-foreground"}`}>
           {dealerHand.result
             ? RESULT_LABEL[dealerHand.result]
             : total

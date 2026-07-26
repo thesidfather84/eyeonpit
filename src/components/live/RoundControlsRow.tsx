@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Redo2, StickyNote, Undo2, XCircle } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { canCompleteRound } from "@/lib/utils/roundValidation";
+import { useTerminology } from "@/hooks/useTerminology";
 import { AddNoteSheet } from "./AddNoteSheet";
 
 /**
@@ -27,6 +28,7 @@ export function RoundControlsRow() {
     busy,
   } = useInvestigationContext();
   const [noteOpen, setNoteOpen] = useState(false);
+  const t = useTerminology();
 
   const isActive = investigation.status === "active";
   const check = canCompleteRound(investigation, currentRound);
@@ -74,7 +76,7 @@ export function RoundControlsRow() {
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
         className="tap-target w-full rounded-lg bg-accent text-sm font-bold text-accent-foreground disabled:opacity-40"
       >
-        Complete Round
+        {t.completeRound}
       </button>
       {!check.canComplete && (
         <p className="mt-1 text-center text-[10px] text-muted-foreground">{check.reasons[0]}</p>

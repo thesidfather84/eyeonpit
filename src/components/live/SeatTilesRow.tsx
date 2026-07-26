@@ -87,7 +87,7 @@ export function SeatTilesRow() {
             toneClasses = "border-border bg-surface-raised text-foreground";
           }
           if (isActive) {
-            toneClasses = "border-accent bg-accent/10 text-foreground";
+            toneClasses = "border-accent-secondary bg-accent-secondary/10 text-foreground";
           }
 
           return (
@@ -149,8 +149,10 @@ export function SeatTilesRow() {
                       ? record.playerCards.map(formatCard).join(" · ")
                       : " "}
                   </span>
-                  <span className="text-[10px] font-medium leading-tight">
-                    {total ? `${total.soft ? "S" : ""}${total.value}` : " "}
+                  <span
+                    className={`text-[10px] font-medium leading-tight ${total?.bust ? "text-dealer" : ""}`}
+                  >
+                    {total ? `${total.bust ? "BUST " : total.soft ? "S" : ""}${total.value}` : " "}
                   </span>
                 </>
               ) : (

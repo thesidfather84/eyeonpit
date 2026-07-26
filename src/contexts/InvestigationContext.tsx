@@ -336,8 +336,11 @@ export function InvestigationProvider({
       pushHistory({ kind: "rounds-snapshot", rounds: investigation.rounds });
       await completeRoundRepo(investigation.localId, currentRound.id);
       await advanceRoundRepo(investigation.localId, { newShoe: false });
+      // Guided mode starts the new hand on the first seat in entry-direction
+      // order; Free Entry always starts back at the dealer — waiting for the
+      // dealer up card is the one universal first step regardless of order.
       const ordered = orderedSeatNumbersFor(investigation);
-      setActiveTarget(ordered[0] ?? "dealer");
+      setActiveTarget(investigation.entryMode === "guided" ? (ordered[0] ?? "dealer") : "dealer");
       await refresh();
     } finally {
       setBusy(false);
@@ -565,6 +568,11 @@ export function InvestigationProvider({
 
   const advanceToNext = useCallback(() => {
     if (!investigation) return;
+    // Free Entry mode never auto-advances — the operator selects each seat
+    // manually as it becomes observable (pitch/face-down games have no
+    // forced order). A direct tap on a seat still works either way, since
+    // that goes through selectSeat/occupySeat, not this function.
+    if (investigation.entryMode === "free") return;
     const ordered = orderedSeatNumbersFor(investigation);
     if (typeof activeTarget !== "number") {
       setActiveTarget(ordered[0] ?? "dealer");

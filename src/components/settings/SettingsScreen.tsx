@@ -2,15 +2,39 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSettingsStore } from "@/store/useSettingsStore";
+import { useSettingsStore, type WorkflowAssistanceLevel } from "@/store/useSettingsStore";
+import type { TerminologyLevel } from "@/lib/terminology";
 import { listInvestigations, resetAllData } from "@/lib/db/repositories/investigations";
 import { findOrCreatePracticeInvestigation } from "@/lib/onboarding/practiceInvestigationSeed";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
+const LANGUAGE_OPTIONS: { value: TerminologyLevel; label: string; hint: string }[] = [
+  { value: "standard", label: "Standard", hint: "Generic software terms" },
+  { value: "casino", label: "Casino", hint: "Casino-floor terms (Wager, Seat, Next Hand)" },
+  {
+    value: "casinoProfessional",
+    label: "Casino Professional",
+    hint: "Full surveillance/regulatory vocabulary",
+  },
+];
+
+const ASSISTANCE_OPTIONS: { value: WorkflowAssistanceLevel; label: string; hint: string }[] = [
+  { value: "off", label: "Off", hint: "No messages" },
+  { value: "basic", label: "Basic", hint: "Show only the next recommended step" },
+  { value: "guided", label: "Guided", hint: "Add explanations for new operators" },
+];
+
 export function SettingsScreen() {
   const router = useRouter();
-  const { showGuidedTips, setShowGuidedTips } = useSettingsStore();
+  const {
+    showGuidedTips,
+    setShowGuidedTips,
+    terminologyLevel,
+    setTerminologyLevel,
+    workflowAssistance,
+    setWorkflowAssistance,
+  } = useSettingsStore();
   const [practiceLoading, setPracticeLoading] = useState(false);
   const [resetConfirming, setResetConfirming] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -74,6 +98,50 @@ export function SettingsScreen() {
           <span className="text-sm font-medium text-foreground">Dark theme</span>
           <span className="text-xs text-muted-foreground">Always on</span>
         </div>
+      </section>
+
+      <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
+        <h2 className="text-sm font-semibold text-foreground">Language</h2>
+        {LANGUAGE_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            onClick={() => setTerminologyLevel(opt.value)}
+            className="flex items-center justify-between gap-3 rounded-lg px-1 py-1 text-left hover:bg-surface-raised"
+          >
+            <span>
+              <span className="block text-sm font-medium text-foreground">{opt.label}</span>
+              <span className="block text-xs text-muted-foreground">{opt.hint}</span>
+            </span>
+            <span
+              className={`h-4 w-4 flex-none rounded-full border-2 ${
+                terminologyLevel === opt.value ? "border-accent bg-accent" : "border-border"
+              }`}
+              aria-hidden
+            />
+          </button>
+        ))}
+      </section>
+
+      <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
+        <h2 className="text-sm font-semibold text-foreground">Workflow Assistance</h2>
+        {ASSISTANCE_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            onClick={() => setWorkflowAssistance(opt.value)}
+            className="flex items-center justify-between gap-3 rounded-lg px-1 py-1 text-left hover:bg-surface-raised"
+          >
+            <span>
+              <span className="block text-sm font-medium text-foreground">{opt.label}</span>
+              <span className="block text-xs text-muted-foreground">{opt.hint}</span>
+            </span>
+            <span
+              className={`h-4 w-4 flex-none rounded-full border-2 ${
+                workflowAssistance === opt.value ? "border-accent bg-accent" : "border-border"
+              }`}
+              aria-hidden
+            />
+          </button>
+        ))}
       </section>
 
       <Button variant="secondary" disabled={practiceLoading} onClick={handlePractice}>

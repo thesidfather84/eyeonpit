@@ -26,17 +26,21 @@ import { completeInvestigation, listInvestigations } from "@/lib/db/repositories
 import { downloadInvestigationJson } from "@/lib/export/toJson";
 import { newShoeOrDeckLabel } from "@/lib/utils/gameConfig";
 import { canCompleteRound } from "@/lib/utils/roundValidation";
+import { useTerminology } from "@/hooks/useTerminology";
+import type { TerminologyDictionary } from "@/lib/terminology";
 import type { Investigation } from "@/types/investigation";
 
 type OverlayKey = "history" | "reports" | "export" | "settings" | "help";
 
-const MENU_ITEMS: { key: OverlayKey; label: string; icon: typeof HistoryIcon }[] = [
-  { key: "history", label: "History", icon: HistoryIcon },
-  { key: "reports", label: "Reports", icon: FileText },
-  { key: "export", label: "Export", icon: Download },
-  { key: "settings", label: "Settings", icon: Settings },
-  { key: "help", label: "Help", icon: HelpCircle },
-];
+function menuItems(t: TerminologyDictionary): { key: OverlayKey; label: string; icon: typeof HistoryIcon }[] {
+  return [
+    { key: "history", label: t.history, icon: HistoryIcon },
+    { key: "reports", label: t.report, icon: FileText },
+    { key: "export", label: t.export, icon: Download },
+    { key: "settings", label: "Settings", icon: Settings },
+    { key: "help", label: "Help", icon: HelpCircle },
+  ];
+}
 
 function HistoryOverlayContent() {
   const [investigations, setInvestigations] = useState<Investigation[] | null>(null);
@@ -105,6 +109,7 @@ export function LiveMenu() {
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
   const [ending, setEnding] = useState(false);
   const completeCheck = canCompleteRound(investigation, currentRound);
+  const t = useTerminology();
 
   function openOverlay(key: OverlayKey) {
     setMenuOpen(false);
@@ -159,7 +164,7 @@ export function LiveMenu() {
 
       <BottomSheet open={menuOpen} onClose={() => setMenuOpen(false)} title="Menu">
         <div className="flex flex-col gap-1 pb-4">
-          {MENU_ITEMS.map(({ key, label, icon: Icon }) => (
+          {menuItems(t).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               onClick={() => openOverlay(key)}
@@ -173,7 +178,7 @@ export function LiveMenu() {
             disabled={busy || investigation.status !== "active"}
             className="tap-target flex items-center gap-3 rounded-lg px-3 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-40"
           >
-            <Layers className="h-5 w-5" aria-hidden /> {newShoeOrDeckLabel(investigation)}
+            <Layers className="h-5 w-5" aria-hidden /> {newShoeOrDeckLabel(investigation, t)}
           </button>
           <button
             onClick={() => {
@@ -188,11 +193,11 @@ export function LiveMenu() {
         </div>
       </BottomSheet>
 
-      <BottomSheet open={overlay === "history"} onClose={() => setOverlay(null)} title="History">
+      <BottomSheet open={overlay === "history"} onClose={() => setOverlay(null)} title={t.history}>
         <HistoryOverlayContent />
       </BottomSheet>
 
-      <BottomSheet open={overlay === "reports"} onClose={() => setOverlay(null)} title="Reports">
+      <BottomSheet open={overlay === "reports"} onClose={() => setOverlay(null)} title={t.report}>
         <div className="flex flex-col gap-4 pb-4">
           <EventLogPanel />
           <div className="border-t border-border pt-4">
@@ -207,7 +212,7 @@ export function LiveMenu() {
         </div>
       </BottomSheet>
 
-      <BottomSheet open={overlay === "export"} onClose={() => setOverlay(null)} title="Export">
+      <BottomSheet open={overlay === "export"} onClose={() => setOverlay(null)} title={t.export}>
         <ExportOverlayContent />
       </BottomSheet>
 
@@ -223,7 +228,7 @@ export function LiveMenu() {
         open={shoeConfirmOpen}
         title={`Start a new ${investigation.blackjackFormat === "shoe" ? "shoe" : "deck"}?`}
         message="Start a new shoe? This will reset the running count and shoe card history. Completed rounds will remain saved."
-        confirmLabel={newShoeOrDeckLabel(investigation)}
+        confirmLabel={newShoeOrDeckLabel(investigation, t)}
         busy={busy}
         onConfirm={handleConfirmShoe}
         onCancel={() => setShoeConfirmOpen(false)}
@@ -250,7 +255,7 @@ export function LiveMenu() {
                 disabled={busy || !completeCheck.canComplete}
                 onClick={handleCompleteRoundFirst}
               >
-                Complete Round First
+                {t.completeRound} First
               </Button>
               {!completeCheck.canComplete && (
                 <p className="text-center text-[10px] text-muted-foreground">

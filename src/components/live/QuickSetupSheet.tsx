@@ -103,6 +103,7 @@ export function QuickSetupSheet({
       shoeTotalDecks: config.deckCount,
       ruleProfile: config.ruleProfile,
       entryDirection: config.entryDirection,
+      entryMode: config.entryMode,
       playerSpotCount: config.playerSpotCount,
       practiceMode: config.practiceMode,
       pitArea: config.pitArea.trim(),
@@ -150,6 +151,7 @@ export function QuickSetupSheet({
         blackjackFormat: config.format,
         ruleProfile: config.ruleProfile,
         entryDirection: config.entryDirection,
+        entryMode: config.entryMode,
         playerSpotCount: config.playerSpotCount,
         practiceMode: config.practiceMode,
         pitArea: config.pitArea,
@@ -313,15 +315,40 @@ export function QuickSetupSheet({
           </div>
 
           <div>
-            <p className="mb-2 text-sm font-medium text-foreground">Entry Direction</p>
+            <p className="mb-2 text-sm font-medium text-foreground">Entry Mode</p>
             <div className="grid grid-cols-2 gap-2">
-              {(["ltr", "rtl"] as EntryDirection[]).map((dir) => (
-                <button key={dir} onClick={() => update({ entryDirection: dir })} className={optionButton(config.entryDirection === dir)}>
-                  {dir === "ltr" ? "Left to Right" : "Right to Left"}
-                </button>
-              ))}
+              <button
+                onClick={() => update({ entryMode: "guided" })}
+                className={optionButton(config.entryMode === "guided")}
+              >
+                Guided (face-up)
+              </button>
+              <button
+                onClick={() => update({ entryMode: "free" })}
+                className={optionButton(config.entryMode === "free")}
+              >
+                Free Entry (pitch)
+              </button>
             </div>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {config.entryMode === "guided"
+                ? "Automatically advances to the next seat after each card or result. Tap any seat to override instantly."
+                : "No forced order — select each seat manually as it becomes observable."}
+            </p>
           </div>
+
+          {config.entryMode === "guided" && (
+            <div>
+              <p className="mb-2 text-sm font-medium text-foreground">Entry Direction</p>
+              <div className="grid grid-cols-2 gap-2">
+                {(["ltr", "rtl"] as EntryDirection[]).map((dir) => (
+                  <button key={dir} onClick={() => update({ entryDirection: dir })} className={optionButton(config.entryDirection === dir)}>
+                    {dir === "ltr" ? "Left to Right" : "Right to Left"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div>
             <p className="mb-2 text-sm font-medium text-foreground">Player Spots</p>

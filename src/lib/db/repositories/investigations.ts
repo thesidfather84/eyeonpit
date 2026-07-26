@@ -7,6 +7,7 @@ import type {
   BlackjackFormat,
   CountingSystem,
   EntryDirection,
+  EntryMode,
   EventType,
   Investigation,
   InvestigationStatus,
@@ -38,6 +39,7 @@ export interface CreateInvestigationInput {
   blackjackFormat?: BlackjackFormat;
   ruleProfile?: RuleProfile;
   entryDirection?: EntryDirection;
+  entryMode?: EntryMode;
   playerSpotCount?: number;
   practiceMode?: boolean;
   pitArea?: string;
@@ -145,6 +147,7 @@ export async function createInvestigation(
     blackjackFormat: input.blackjackFormat ?? DEFAULT_GAME_CONFIG.format,
     ruleProfile: input.ruleProfile ?? DEFAULT_GAME_CONFIG.ruleProfile,
     entryDirection: input.entryDirection ?? DEFAULT_GAME_CONFIG.entryDirection,
+    entryMode: input.entryMode ?? DEFAULT_GAME_CONFIG.entryMode,
     playerSpotCount: input.playerSpotCount ?? DEFAULT_GAME_CONFIG.playerSpotCount,
     practiceMode: input.practiceMode ?? DEFAULT_GAME_CONFIG.practiceMode,
     pitArea: input.pitArea?.trim() ?? "",
@@ -453,6 +456,7 @@ export interface GameConfigPatch {
   shoeTotalDecks?: number;
   ruleProfile?: RuleProfile;
   entryDirection?: EntryDirection;
+  entryMode?: EntryMode;
   playerSpotCount?: number;
   practiceMode?: boolean;
   pitArea?: string;

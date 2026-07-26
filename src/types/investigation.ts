@@ -37,6 +37,15 @@ export type BlackjackFormat = "single-deck" | "double-deck" | "shoe";
 
 export type EntryDirection = "ltr" | "rtl";
 
+/**
+ * Guided: automatic progression through seats (in entryDirection order)
+ * after each card/result, for face-up games. Free: never auto-advances —
+ * the operator selects each seat manually as it becomes observable, for
+ * pitch/face-down games where surveillance has no forced order to follow.
+ * A tap on any seat always overrides progression instantly in either mode.
+ */
+export type EntryMode = "free" | "guided";
+
 export type RuleProfileId = "standard" | "3-2-h17" | "3-2-s17" | "6-5-h17" | "custom";
 
 export interface RuleProfile {
@@ -92,6 +101,7 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
   deckCount: 6,
   ruleProfile: RULE_PROFILE_PRESETS.standard,
   entryDirection: "ltr",
+  entryMode: "guided",
   playerSpotCount: 7,
   practiceMode: false,
   pitArea: "",
@@ -111,6 +121,7 @@ export interface GameConfig {
   deckCount: number;
   ruleProfile: RuleProfile;
   entryDirection: EntryDirection;
+  entryMode: EntryMode;
   playerSpotCount: number;
   practiceMode: boolean;
   pitArea: string;
@@ -126,7 +137,19 @@ export type EventType =
   | "correction"
   | "round-saved"
   | "note"
-  | "shoe";
+  | "shoe"
+  | "misdeal"
+  | "table-event";
+
+/** Table Events — logged, operator-triggered, not tied to any one seat's hand. */
+export type TableEventKind =
+  | "dealer-change"
+  | "shuffle"
+  | "seat-opens"
+  | "seat-closes"
+  | "player-joins"
+  | "player-leaves"
+  | "table-closed";
 
 export interface EventLogEntry {
   id: string;
@@ -240,6 +263,7 @@ export interface Investigation {
   blackjackFormat: BlackjackFormat;
   ruleProfile: RuleProfile;
   entryDirection: EntryDirection;
+  entryMode: EntryMode;
   /** How many betting spots the console renders — SEAT tiles are generated 1..playerSpotCount, not hardcoded to 7. */
   playerSpotCount: number;
   practiceMode: boolean;

@@ -1,5 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { TerminologyLevel } from "@/lib/terminology";
+
+export type WorkflowAssistanceLevel = "off" | "basic" | "guided";
 
 interface SettingsState {
   /** Set true once the first-use walkthrough has been seen or skipped. */
@@ -8,9 +11,15 @@ interface SettingsState {
   showGuidedTips: boolean;
   /** Field-level hint ids the operator has individually dismissed with the hint's own "x". */
   dismissedHints: string[];
+  /** Which label set the UI uses app-wide. Defaults to full surveillance/regulatory vocabulary — this is professional surveillance software first. */
+  terminologyLevel: TerminologyLevel;
+  /** Governs the Operator Assistant bar. Off = no bar at all; Basic = next-step message only; Guided = message plus a fuller explanation for new operators. */
+  workflowAssistance: WorkflowAssistanceLevel;
   completeOnboarding: () => void;
   setShowGuidedTips: (value: boolean) => void;
   dismissHint: (id: string) => void;
+  setTerminologyLevel: (level: TerminologyLevel) => void;
+  setWorkflowAssistance: (level: WorkflowAssistanceLevel) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -19,6 +28,8 @@ export const useSettingsStore = create<SettingsState>()(
       hasCompletedOnboarding: false,
       showGuidedTips: true,
       dismissedHints: [],
+      terminologyLevel: "casinoProfessional",
+      workflowAssistance: "basic",
       completeOnboarding: () => set({ hasCompletedOnboarding: true }),
       setShowGuidedTips: (value) => set({ showGuidedTips: value }),
       dismissHint: (id) =>
@@ -27,6 +38,8 @@ export const useSettingsStore = create<SettingsState>()(
             ? state
             : { dismissedHints: [...state.dismissedHints, id] }
         ),
+      setTerminologyLevel: (level) => set({ terminologyLevel: level }),
+      setWorkflowAssistance: (level) => set({ workflowAssistance: level }),
     }),
     { name: "eyeonpit:settings" }
   )

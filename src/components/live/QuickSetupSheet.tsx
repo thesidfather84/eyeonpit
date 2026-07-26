@@ -44,12 +44,12 @@ const RULE_PROFILE_OPTIONS: RuleProfileId[] = ["standard", "3-2-h17", "3-2-s17",
 const SPOT_PRESETS = [5, 6, 7];
 
 const optionButton = (active: boolean) =>
-  `tap-target rounded-lg border text-xs font-semibold ${
-    active ? "border-accent bg-accent/15 text-accent" : "border-border bg-surface text-foreground"
+  `tap-target rounded-xl border text-xs font-semibold ${
+    active ? "border-accent bg-accent text-accent-foreground" : "border-border bg-surface-raised text-foreground"
   }`;
 
 const textInputClasses =
-  "tap-target w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none";
+  "tap-target w-full rounded-xl border border-border bg-surface-raised px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none";
 
 /**
  * Compact, in-console game configuration — replaces a long upfront wizard.

@@ -174,12 +174,12 @@ export function LiveMenu() {
       </button>
 
       <BottomSheet open={menuOpen} onClose={() => setMenuOpen(false)} title="Menu">
-        <div className="flex flex-col gap-1 pb-4">
+        <div className="flex flex-col gap-2 pb-4">
           {menuItems(t).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               onClick={() => openOverlay(key)}
-              className="tap-target flex items-center gap-3 rounded-lg px-3 text-sm font-medium text-foreground hover:bg-surface-raised"
+              className="tap-target flex items-center gap-3 rounded-xl border border-border bg-surface-raised px-3 text-sm font-medium text-foreground hover:bg-surface"
             >
               <Icon className="h-5 w-5" aria-hidden /> {label}
             </button>
@@ -187,7 +187,7 @@ export function LiveMenu() {
           <button
             onClick={handleNewShoeSelected}
             disabled={busy || investigation.status !== "active"}
-            className="tap-target flex items-center gap-3 rounded-lg px-3 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-40"
+            className="tap-target flex items-center gap-3 rounded-xl border border-border bg-surface-raised px-3 text-sm font-medium text-foreground hover:bg-surface disabled:opacity-40"
           >
             <Layers className="h-5 w-5" aria-hidden /> {newShoeOrDeckLabel(investigation, t)}
           </button>
@@ -197,7 +197,7 @@ export function LiveMenu() {
               setTableEventsOpen(true);
             }}
             disabled={busy || investigation.status !== "active"}
-            className="tap-target flex items-center gap-3 rounded-lg px-3 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-40"
+            className="tap-target flex items-center gap-3 rounded-xl border border-border bg-surface-raised px-3 text-sm font-medium text-foreground hover:bg-surface disabled:opacity-40"
           >
             <ListPlus className="h-5 w-5" aria-hidden /> Log Table Event
           </button>
@@ -207,7 +207,7 @@ export function LiveMenu() {
               setMisdealConfirmOpen(true);
             }}
             disabled={busy || investigation.status !== "active"}
-            className="tap-target flex items-center gap-3 rounded-lg px-3 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-40"
+            className="tap-target flex items-center gap-3 rounded-xl border border-pending/50 bg-pending/10 px-3 text-sm font-medium text-pending hover:bg-pending/15 disabled:opacity-40"
           >
             <AlertTriangle className="h-5 w-5" aria-hidden /> Misdeal
           </button>
@@ -217,7 +217,7 @@ export function LiveMenu() {
               setEndConfirmOpen(true);
             }}
             disabled={busy || investigation.status === "closed"}
-            className="tap-target flex items-center gap-3 rounded-lg px-3 text-sm font-medium text-destructive hover:bg-surface-raised disabled:opacity-40"
+            className="tap-target flex items-center gap-3 rounded-xl border border-destructive/50 bg-destructive/10 px-3 text-sm font-medium text-destructive hover:bg-destructive/15 disabled:opacity-40"
           >
             <XOctagon className="h-5 w-5" aria-hidden /> End Investigation
           </button>

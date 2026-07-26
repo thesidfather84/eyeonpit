@@ -232,7 +232,7 @@ function MenuButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`tap-target rounded-lg px-3 text-left text-sm font-medium hover:bg-surface-raised disabled:opacity-40 ${
+      className={`tap-target rounded-xl border border-border bg-surface-raised px-3 text-left text-sm font-medium hover:bg-surface disabled:opacity-40 ${
         muted ? "text-muted-foreground" : "text-foreground"
       }`}
     >

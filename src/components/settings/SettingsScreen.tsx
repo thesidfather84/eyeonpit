@@ -106,18 +106,20 @@ export function SettingsScreen() {
           <button
             key={opt.value}
             onClick={() => setTerminologyLevel(opt.value)}
-            className="flex items-center justify-between gap-3 rounded-lg px-1 py-1 text-left hover:bg-surface-raised"
+            className={`w-full rounded-xl border px-4 py-2.5 text-left ${
+              terminologyLevel === opt.value
+                ? "border-accent bg-accent text-accent-foreground"
+                : "border-border bg-surface-raised text-foreground"
+            }`}
           >
-            <span>
-              <span className="block text-sm font-medium text-foreground">{opt.label}</span>
-              <span className="block text-xs text-muted-foreground">{opt.hint}</span>
-            </span>
+            <span className="block text-sm font-medium">{opt.label}</span>
             <span
-              className={`h-4 w-4 flex-none rounded-full border-2 ${
-                terminologyLevel === opt.value ? "border-accent bg-accent" : "border-border"
+              className={`block text-xs ${
+                terminologyLevel === opt.value ? "text-accent-foreground/80" : "text-muted-foreground"
               }`}
-              aria-hidden
-            />
+            >
+              {opt.hint}
+            </span>
           </button>
         ))}
       </section>
@@ -128,18 +130,20 @@ export function SettingsScreen() {
           <button
             key={opt.value}
             onClick={() => setWorkflowAssistance(opt.value)}
-            className="flex items-center justify-between gap-3 rounded-lg px-1 py-1 text-left hover:bg-surface-raised"
+            className={`w-full rounded-xl border px-4 py-2.5 text-left ${
+              workflowAssistance === opt.value
+                ? "border-accent bg-accent text-accent-foreground"
+                : "border-border bg-surface-raised text-foreground"
+            }`}
           >
-            <span>
-              <span className="block text-sm font-medium text-foreground">{opt.label}</span>
-              <span className="block text-xs text-muted-foreground">{opt.hint}</span>
-            </span>
+            <span className="block text-sm font-medium">{opt.label}</span>
             <span
-              className={`h-4 w-4 flex-none rounded-full border-2 ${
-                workflowAssistance === opt.value ? "border-accent bg-accent" : "border-border"
+              className={`block text-xs ${
+                workflowAssistance === opt.value ? "text-accent-foreground/80" : "text-muted-foreground"
               }`}
-              aria-hidden
-            />
+            >
+              {opt.hint}
+            </span>
           </button>
         ))}
       </section>

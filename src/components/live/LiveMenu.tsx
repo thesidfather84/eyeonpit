@@ -25,6 +25,7 @@ import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { completeInvestigation, listInvestigations } from "@/lib/db/repositories/investigations";
 import { downloadInvestigationJson } from "@/lib/export/toJson";
 import { newShoeOrDeckLabel } from "@/lib/utils/gameConfig";
+import { canCompleteRound } from "@/lib/utils/roundValidation";
 import type { Investigation } from "@/types/investigation";
 
 type OverlayKey = "history" | "reports" | "export" | "settings" | "help";
@@ -103,6 +104,7 @@ export function LiveMenu() {
   const [incompletePromptOpen, setIncompletePromptOpen] = useState(false);
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
   const [ending, setEnding] = useState(false);
+  const completeCheck = canCompleteRound(investigation, currentRound);
 
   function openOverlay(key: OverlayKey) {
     setMenuOpen(false);
@@ -242,9 +244,19 @@ export function LiveMenu() {
               <Button variant="secondary" fullWidth onClick={() => setIncompletePromptOpen(false)}>
                 Cancel
               </Button>
-              <Button variant="primary" fullWidth disabled={busy} onClick={handleCompleteRoundFirst}>
+              <Button
+                variant="primary"
+                fullWidth
+                disabled={busy || !completeCheck.canComplete}
+                onClick={handleCompleteRoundFirst}
+              >
                 Complete Round First
               </Button>
+              {!completeCheck.canComplete && (
+                <p className="text-center text-[10px] text-muted-foreground">
+                  {completeCheck.reasons[0]} — void the round instead, or cancel and finish entry.
+                </p>
+              )}
               <Button
                 variant="destructive"
                 fullWidth

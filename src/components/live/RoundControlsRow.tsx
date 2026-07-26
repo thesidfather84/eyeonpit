@@ -3,13 +3,16 @@
 import { useState } from "react";
 import { Redo2, StickyNote, Undo2, XCircle } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
+import { canCompleteRound } from "@/lib/utils/roundValidation";
 import { AddNoteSheet } from "./AddNoteSheet";
 
 /**
- * Fixed bottom action bar — never falls below the viewport. One dynamic
- * primary action: "Complete Round" while the dealer/seats aren't fully
- * resolved yet, "Start Next Round" once they are — a single button instead
- * of two that could be tapped in a confusing order.
+ * Fixed bottom action bar — never falls below the viewport. One primary
+ * action, "Complete Round": disabled until canCompleteRound() passes, and
+ * on tap it saves the round and begins the next one in the same shoe
+ * immediately — no separate "Start Next Round" tap, nothing else to ask.
+ * An accidental completion is corrected with the same Undo used for every
+ * other mistake, not a special-case button.
  */
 export function RoundControlsRow() {
   const {
@@ -20,14 +23,13 @@ export function RoundControlsRow() {
     undo,
     redo,
     clearActiveEntry,
-    completeRound,
-    reopenRound,
-    nextRound,
+    completeRoundAndAdvance,
     busy,
   } = useInvestigationContext();
   const [noteOpen, setNoteOpen] = useState(false);
 
   const isActive = investigation.status === "active";
+  const check = canCompleteRound(investigation, currentRound);
 
   return (
     <div className="flex-none border-t border-border bg-surface p-1.5">
@@ -66,33 +68,16 @@ export function RoundControlsRow() {
         </button>
       </div>
 
-      {currentRound.completed ? (
-        <>
-          <button
-            onClick={nextRound}
-            disabled={busy || !isActive}
-            style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-            className="tap-target w-full rounded-lg bg-accent text-sm font-bold text-accent-foreground disabled:opacity-40"
-          >
-            Start Next Round ▶▶
-          </button>
-          <button
-            onClick={reopenRound}
-            disabled={busy || !isActive}
-            className="mt-1 w-full text-center text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-40"
-          >
-            Round locked — Reopen Round
-          </button>
-        </>
-      ) : (
-        <button
-          onClick={completeRound}
-          disabled={busy || !isActive}
-          style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-          className="tap-target w-full rounded-lg bg-accent text-sm font-bold text-accent-foreground disabled:opacity-40"
-        >
-          Complete Round
-        </button>
+      <button
+        onClick={completeRoundAndAdvance}
+        disabled={busy || !isActive || !check.canComplete}
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        className="tap-target w-full rounded-lg bg-accent text-sm font-bold text-accent-foreground disabled:opacity-40"
+      >
+        Complete Round
+      </button>
+      {!check.canComplete && (
+        <p className="mt-1 text-center text-[10px] text-muted-foreground">{check.reasons[0]}</p>
       )}
 
       {noteOpen && <AddNoteSheet onClose={() => setNoteOpen(false)} />}

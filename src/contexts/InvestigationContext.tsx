@@ -38,7 +38,8 @@ type HistoryEntry =
       occupiedSeats: number[];
       playerGroups: Record<string, PlayerGroup>;
       seatPlayerGroups: Partial<Record<number, string>>;
-    };
+    }
+  | { kind: "rounds-snapshot"; rounds: Round[] };
 
 function snapshotSeatConfig(investigation: Investigation): HistoryEntry {
   return {
@@ -72,6 +73,8 @@ interface InvestigationContextValue {
   reopenRound: () => Promise<void>;
   /** Advances to the next round within the same shoe. Requires the current round to already be completed. */
   nextRound: () => Promise<void>;
+  /** The Complete Round button's action — completes and immediately advances in one step. Caller must gate on canCompleteRound() first. */
+  completeRoundAndAdvance: () => Promise<void>;
   /** Starts a new shoe. Assumes the current round is already completed (or empty) — callers must check `currentRound.completed` first and route through completeRoundAndStartNewShoe / voidRoundAndStartNewShoe otherwise. */
   startNewShoe: () => Promise<void>;
   /** "Complete Round First" branch of the New Shoe prompt when a round is still open. */
@@ -214,13 +217,18 @@ export function InvestigationProvider({
       })
         .then(refresh)
         .finally(() => setBusy(false));
-    } else {
+    } else if (entry.kind === "seat-config") {
       setFuture((f) => [snapshotSeatConfig(investigation), ...f]);
       updateInvestigation(investigation.localId, {
         occupiedSeats: entry.occupiedSeats,
         playerGroups: entry.playerGroups,
         seatPlayerGroups: entry.seatPlayerGroups,
       })
+        .then(refresh)
+        .finally(() => setBusy(false));
+    } else {
+      setFuture((f) => [{ kind: "rounds-snapshot", rounds: investigation.rounds }, ...f]);
+      updateInvestigation(investigation.localId, { rounds: entry.rounds })
         .then(refresh)
         .finally(() => setBusy(false));
     }
@@ -240,13 +248,18 @@ export function InvestigationProvider({
       })
         .then(refresh)
         .finally(() => setBusy(false));
-    } else {
+    } else if (entry.kind === "seat-config") {
       setHistory((h) => [...h, snapshotSeatConfig(investigation)]);
       updateInvestigation(investigation.localId, {
         occupiedSeats: entry.occupiedSeats,
         playerGroups: entry.playerGroups,
         seatPlayerGroups: entry.seatPlayerGroups,
       })
+        .then(refresh)
+        .finally(() => setBusy(false));
+    } else {
+      setHistory((h) => [...h, { kind: "rounds-snapshot", rounds: investigation.rounds }]);
+      updateInvestigation(investigation.localId, { rounds: entry.rounds })
         .then(refresh)
         .finally(() => setBusy(false));
     }
@@ -307,6 +320,29 @@ export function InvestigationProvider({
       setBusy(false);
     }
   }, [investigation, currentRound, refresh, setActiveTarget]);
+
+  /**
+   * The primary bottom-bar action, gated by canCompleteRound(): saves and
+   * locks the current round, then immediately begins the next one in the
+   * same shoe — no intermediate "locked, waiting to advance" state, so
+   * there's nothing else to tap. Captured as one undoable step (the whole
+   * pre-advance `rounds` array) so an accidental tap can be reverted in one
+   * Undo rather than needing a separate Reopen Round action.
+   */
+  const completeRoundAndAdvance = useCallback(async () => {
+    if (!investigation || !currentRound) return;
+    setBusy(true);
+    try {
+      pushHistory({ kind: "rounds-snapshot", rounds: investigation.rounds });
+      await completeRoundRepo(investigation.localId, currentRound.id);
+      await advanceRoundRepo(investigation.localId, { newShoe: false });
+      const ordered = orderedSeatNumbersFor(investigation);
+      setActiveTarget(ordered[0] ?? "dealer");
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }, [investigation, currentRound, refresh, pushHistory, setActiveTarget]);
 
   const startNewShoe = useCallback(async () => {
     if (!investigation) return;
@@ -588,6 +624,7 @@ export function InvestigationProvider({
         completeRound,
         reopenRound,
         nextRound,
+        completeRoundAndAdvance,
         startNewShoe,
         completeRoundAndStartNewShoe,
         voidRoundAndStartNewShoe,

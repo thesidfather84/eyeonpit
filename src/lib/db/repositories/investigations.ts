@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db/client";
 import { generateInvestigationId } from "@/lib/investigation-id";
 import { getOrCreateDeviceId } from "@/lib/utils/deviceId";
 import { computeShoeStats } from "@/lib/analysis/shoeStats";
+import { normalizeInvestigation } from "@/lib/db/normalizeInvestigation";
 import type {
   BlackjackFormat,
   CountingSystem,
@@ -19,7 +20,7 @@ import type {
   TableEventKind,
   WagerChange,
 } from "@/types/investigation";
-import { DEFAULT_GAME_CONFIG } from "@/types/investigation";
+import { DEFAULT_GAME_CONFIG, INVESTIGATION_SCHEMA_VERSION } from "@/types/investigation";
 
 export interface CreateInvestigationInput {
   casino: string;
@@ -183,16 +184,28 @@ export async function createInvestigation(
     deviceId: getOrCreateDeviceId(),
     syncStatus: "local-only",
     deletedAt: null,
+    schemaVersion: INVESTIGATION_SCHEMA_VERSION,
   };
 
   await db.investigations.add(investigation);
   return investigation;
 }
 
+/** Applies normalizeInvestigation() to a raw Dexie record and, if the stored shape was behind current, persists the upgraded version so future reads skip the migration. Never throws on malformed input — that's the entire point of routing every read through here. */
+async function normalizeAndPersist(raw: unknown): Promise<Investigation> {
+  const { investigation, migrated } = normalizeInvestigation(raw);
+  if (migrated) {
+    await getDb().investigations.put(investigation);
+  }
+  return investigation;
+}
+
 export async function getInvestigation(
   localId: string
 ): Promise<Investigation | undefined> {
-  return getDb().investigations.get(localId);
+  const raw = await getDb().investigations.get(localId);
+  if (!raw) return undefined;
+  return normalizeAndPersist(raw);
 }
 
 export interface ListInvestigationsOptions {
@@ -205,7 +218,8 @@ export async function listInvestigations(
   options: ListInvestigationsOptions = {}
 ): Promise<Investigation[]> {
   const db = getDb();
-  const all = await db.investigations.toArray();
+  const rawAll = await db.investigations.toArray();
+  const all = await Promise.all(rawAll.map(normalizeAndPersist));
 
   return all
     .filter((investigation) => investigation.deletedAt === null)

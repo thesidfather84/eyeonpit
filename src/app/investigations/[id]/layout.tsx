@@ -1,4 +1,5 @@
 import { LockProvider } from "@/contexts/LockContext";
+import { EntryLockProvider } from "@/contexts/EntryLockContext";
 import { InvestigationProvider } from "@/contexts/InvestigationContext";
 import { InvestigationChrome } from "@/components/navigation/InvestigationChrome";
 
@@ -13,9 +14,11 @@ export default async function InvestigationLayout({
 
   return (
     <LockProvider>
-      <InvestigationProvider investigationId={id}>
-        <InvestigationChrome>{children}</InvestigationChrome>
-      </InvestigationProvider>
+      <EntryLockProvider>
+        <InvestigationProvider investigationId={id}>
+          <InvestigationChrome>{children}</InvestigationChrome>
+        </InvestigationProvider>
+      </EntryLockProvider>
     </LockProvider>
   );
 }

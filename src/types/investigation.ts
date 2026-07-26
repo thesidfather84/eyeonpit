@@ -296,6 +296,9 @@ export interface Investigation {
   deviceId: string;
   syncStatus: SyncStatus;
   deletedAt: string | null;
+
+  /** On-disk shape version. Absent/lower on legacy records — see lib/db/normalizeInvestigation.ts, the only place that should ever read a record without trusting this field first. */
+  schemaVersion: number;
 }
 
 /** The current on-disk shape version, for future Dexie migrations. */

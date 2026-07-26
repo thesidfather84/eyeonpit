@@ -8,6 +8,7 @@ import {
   mutateRound,
   pauseInvestigation,
   resumeInvestigation,
+  updateSeatConfiguration,
 } from "@/lib/db/repositories/investigations";
 import type { EventType, Investigation, Round } from "@/types/investigation";
 
@@ -33,6 +34,12 @@ interface InvestigationContextValue {
   resume: () => Promise<void>;
   nextRound: () => Promise<void>;
   newShoe: () => Promise<void>;
+  /** Marks a seat occupied + tracked (if it wasn't already), ensures the current round has a record for it, and makes it the active target — one tap covers all of it. */
+  activateSeat: (seatNumber: number) => Promise<void>;
+  /** Moves to the next tracked seat in ascending order, or to the dealer once the last seat is passed. */
+  advanceToNext: () => void;
+  /** Clears the active target's current-round entry — a seat's cards, or the dealer's whole hand. */
+  clearActiveEntry: () => void;
 }
 
 const InvestigationContext = createContext<InvestigationContextValue | null>(null);
@@ -179,6 +186,100 @@ export function InvestigationProvider({
     }
   }, [investigation, refresh]);
 
+  const activateSeat = useCallback(
+    async (seatNumber: number) => {
+      if (!investigation) return;
+      const needsOccupied = !investigation.occupiedSeats.includes(seatNumber);
+      const needsTracked = !investigation.trackedSeats.includes(seatNumber);
+
+      if (needsOccupied || needsTracked) {
+        const nextOccupied = needsOccupied
+          ? [...investigation.occupiedSeats, seatNumber].sort((a, b) => a - b)
+          : investigation.occupiedSeats;
+        const nextTracked = needsTracked
+          ? [...investigation.trackedSeats, seatNumber].sort((a, b) => a - b)
+          : investigation.trackedSeats;
+        await updateSeatConfiguration(investigation.localId, nextOccupied, nextTracked);
+      }
+
+      if (needsTracked) {
+        await mutate(
+          (round) => {
+            if (round.seats[seatNumber]) return round;
+            return {
+              ...round,
+              seats: {
+                ...round.seats,
+                [seatNumber]: {
+                  seatNumber,
+                  betAmount: null,
+                  wagerChange: { direction: "first", amount: null, overridden: false },
+                  playerCards: [],
+                  actions: [],
+                  outcome: null,
+                  deviationNote: "",
+                  observationNote: "",
+                },
+              },
+            };
+          },
+          { type: "seat-select", message: `Seat ${seatNumber} added to table` }
+        );
+      } else if (needsOccupied) {
+        await refresh();
+      }
+
+      setActiveTarget(seatNumber);
+    },
+    [investigation, mutate, refresh]
+  );
+
+  const advanceToNext = useCallback(() => {
+    if (!investigation) return;
+    const ordered = [...investigation.trackedSeats].sort((a, b) => a - b);
+    if (typeof activeTarget !== "number") {
+      setActiveTarget(ordered[0] ?? "dealer");
+      return;
+    }
+    const idx = ordered.indexOf(activeTarget);
+    if (idx === -1 || idx === ordered.length - 1) {
+      setActiveTarget("dealer");
+      return;
+    }
+    setActiveTarget(ordered[idx + 1]);
+  }, [investigation, activeTarget]);
+
+  const clearActiveEntry = useCallback(() => {
+    if (typeof activeTarget === "number") {
+      const seatNumber = activeTarget;
+      mutate(
+        (round) => {
+          const seat = round.seats[seatNumber];
+          if (!seat) return round;
+          return {
+            ...round,
+            seats: { ...round.seats, [seatNumber]: { ...seat, playerCards: [] } },
+          };
+        },
+        { type: "correction", message: `Seat ${seatNumber} cards cleared` }
+      );
+    } else {
+      mutate(
+        (round) => ({
+          ...round,
+          dealerHand: {
+            upcard: null,
+            holeCard: null,
+            holeCardRevealed: false,
+            drawCards: [],
+            result: null,
+          },
+        }),
+        { type: "correction", message: "Dealer cards cleared" }
+      );
+    }
+  }, [activeTarget, mutate]);
+
   if (loading) {
     return <div className="p-4 text-sm text-muted-foreground">Loading investigation…</div>;
   }
@@ -204,6 +305,9 @@ export function InvestigationProvider({
         resume,
         nextRound,
         newShoe,
+        activateSeat,
+        advanceToNext,
+        clearActiveEntry,
       }}
     >
       {children}

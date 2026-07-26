@@ -4,42 +4,29 @@ import { useState } from "react";
 import { Pencil } from "lucide-react";
 import { computeApLikelihoodBySeat } from "@/lib/analysis/apLikelihood";
 import { computeHandTotal } from "@/lib/utils/blackjackTotal";
+import { formatCard } from "@/lib/utils/cards";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import type { CardTarget } from "@/contexts/InvestigationContext";
 import { EditSeatsSheet } from "@/components/investigation-setup/EditSeatsSheet";
-import type { HandOutcome } from "@/types/investigation";
 
 const SEATS = [1, 2, 3, 4, 5, 6, 7];
 
-const OUTCOME_ABBR: Record<NonNullable<HandOutcome>, string> = {
-  win: "WIN",
-  loss: "LOSS",
-  push: "PUSH",
-  blackjack: "BJ",
-  surrender: "SUR",
-  void: "VOID",
-};
-
-/** "SEVEN SEAT GRID" — tapping a tracked seat selects it for bet changes, card entry, actions, and results. Always shows all 7 seats. */
+/**
+ * Player seats — first and most prominent. Tapping an empty seat marks it
+ * occupied and active in one tap; tapping any occupied seat selects it,
+ * promoting it to tracked on the fly if it wasn't already. No separate
+ * "edit mode" gates normal interaction — the pencil icon is only for
+ * removing/bulk-adjusting seats.
+ */
 export function SeatTilesRow() {
-  const { investigation, currentRound, activeTarget, setActiveTarget, refresh } =
+  const { investigation, currentRound, activeTarget, activateSeat, refresh } =
     useInvestigationContext();
   const apBySeat = computeApLikelihoodBySeat(investigation, currentRound.shoeNumber);
   const [editOpen, setEditOpen] = useState(false);
 
   return (
-    <div className="flex-none border-b border-border bg-surface p-2">
-      <div className="mb-1.5 flex items-center justify-between px-1">
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Seven Seat Grid</p>
-        <button
-          onClick={() => setEditOpen(true)}
-          aria-label="Edit seat tracking"
-          className="tap-target flex items-center justify-center text-muted-foreground hover:text-foreground"
-        >
-          <Pencil className="h-3.5 w-3.5" aria-hidden />
-        </button>
-      </div>
-      <div className="flex gap-1.5 overflow-x-auto pb-1">
+    <div className="flex-none border-b border-border bg-surface p-1.5">
+      <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-7">
         {SEATS.map((seat) => {
           const isOccupied = investigation.occupiedSeats.includes(seat);
           const isTracked = investigation.trackedSeats.includes(seat);
@@ -49,43 +36,56 @@ export function SeatTilesRow() {
           const total =
             record && record.playerCards.length > 0 ? computeHandTotal(record.playerCards) : null;
 
-          let toneClasses = "border-border/40 bg-transparent text-muted-foreground/40";
-          let statusLabel = "—";
+          let toneClasses = "border-border bg-surface-raised text-muted-foreground";
           if (isTracked) {
             const elevated = ap && ap.level !== "low";
             toneClasses = elevated
-              ? "border-status-orange/50 bg-status-orange/15 text-status-orange"
-              : "border-status-green/50 bg-status-green/15 text-status-green";
-            statusLabel = elevated ? "ORANGE" : "GREEN";
+              ? "border-status-orange/60 bg-status-orange/10 text-foreground"
+              : "border-status-green/60 bg-status-green/10 text-foreground";
           } else if (isOccupied) {
-            toneClasses = "border-border bg-surface-raised text-muted-foreground";
-            statusLabel = "OCCUPIED";
+            toneClasses = "border-border bg-surface-raised text-foreground";
           }
-
-          const displayLabel = record?.outcome ? OUTCOME_ABBR[record.outcome] : statusLabel;
 
           return (
             <button
               key={seat}
               type="button"
-              disabled={!isTracked}
-              onClick={() => setActiveTarget(seat)}
-              className={`tap-target flex w-[72px] shrink-0 flex-col items-center justify-center rounded-lg border py-1.5 ${toneClasses} ${
-                isActive ? "ring-2 ring-accent" : ""
+              onClick={() => activateSeat(seat)}
+              className={`tap-target flex min-h-[68px] flex-col items-center justify-center rounded-lg border py-1.5 ${toneClasses} ${
+                isActive ? "border-[3px] border-accent bg-accent/20" : ""
               }`}
             >
-              <span className="text-xs font-bold">{seat}</span>
-              <span className="text-xs font-semibold">
-                {record?.betAmount != null ? `$${record.betAmount}` : "—"}
-              </span>
-              <span className="text-[9px] text-muted-foreground">
-                {total ? `${total.soft ? "S" : ""}${total.value}` : " "}
-              </span>
-              <span className="text-[8px] font-medium tracking-wide">{displayLabel}</span>
+              <span className="text-xs font-bold">SEAT {seat}</span>
+              {isOccupied ? (
+                <>
+                  <span className="text-sm font-semibold">
+                    {record?.betAmount != null ? `$${record.betAmount}` : "—"}
+                  </span>
+                  <span className="text-[10px] leading-tight">
+                    {record && record.playerCards.length > 0
+                      ? record.playerCards.map(formatCard).join(" · ")
+                      : " "}
+                  </span>
+                  <span className="text-[10px] font-medium leading-tight">
+                    {total ? `${total.soft ? "S" : ""}${total.value}` : " "}
+                  </span>
+                </>
+              ) : (
+                <span className="text-[10px] text-muted-foreground">EMPTY</span>
+              )}
             </button>
           );
         })}
       </div>
+
+      <button
+        onClick={() => setEditOpen(true)}
+        aria-label="Edit seats"
+        className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+      >
+        <Pencil className="h-3 w-3" aria-hidden />
+        Edit Seats
+      </button>
 
       {editOpen && (
         <EditSeatsSheet

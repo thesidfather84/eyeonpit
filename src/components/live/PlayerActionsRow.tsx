@@ -6,11 +6,11 @@ import type { PlayerAction } from "@/types/investigation";
 const ACTIONS: { action: PlayerAction; label: string }[] = [
   { action: "hit", label: "Hit" },
   { action: "stand", label: "Stand" },
-  { action: "double", label: "Double Down" },
+  { action: "double", label: "Double" },
   { action: "split", label: "Split" },
-  { action: "insurance", label: "Insurance" },
-  { action: "surrender", label: "Surrender" },
-  { action: "blackjack", label: "Blackjack" },
+  { action: "insurance", label: "Insur." },
+  { action: "surrender", label: "Surr." },
+  { action: "blackjack", label: "BJ" },
   { action: "other", label: "Other" },
 ];
 
@@ -39,22 +39,17 @@ export function PlayerActionsRow({ seatNumber }: { seatNumber: number }) {
   }
 
   return (
-    <div className="flex-none border-b border-border bg-surface p-3">
-      <p className="mb-2 text-[10px] uppercase tracking-wide text-muted-foreground">
-        Player Actions — Seat {seatNumber}
-      </p>
-      <div className="grid grid-cols-4 gap-2">
-        {ACTIONS.map(({ action, label }) => (
-          <button
-            key={action}
-            disabled={disabled}
-            onClick={() => handleAction(action, label)}
-            className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+    <div className="grid grid-cols-4 gap-1 border-b border-border bg-surface p-1.5">
+      {ACTIONS.map(({ action, label }) => (
+        <button
+          key={action}
+          disabled={disabled}
+          onClick={() => handleAction(action, label)}
+          className="tap-target rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
+        >
+          {label}
+        </button>
+      ))}
     </div>
   );
 }

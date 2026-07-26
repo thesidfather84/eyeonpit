@@ -1,6 +1,6 @@
 import { computeHandTotal, dealerVisibleCards } from "@/lib/utils/blackjackTotal";
+import { formatCard } from "@/lib/utils/cards";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
-import { CardTile } from "./CardTile";
 
 const RESULT_LABEL: Record<string, string> = {
   stand: "STAND",
@@ -9,15 +9,13 @@ const RESULT_LABEL: Record<string, string> = {
 };
 
 /**
- * Permanent, always-visible dealer panel — one shared DealerHand per round,
- * never duplicated into seat records. Tapping the upcard/draw area or the
- * hidden hole-card slot sets the shared card-entry target (CardEntryPad
- * applies the next tapped rank to whichever target is active). Blackjack,
- * Bust, and Stand are explicit taps — the total still auto-calculates live,
- * but the result is the operator's call, not a silent auto-derivation.
+ * Permanent, compact dealer panel — one shared DealerHand per round, never
+ * duplicated into seat records. The cards line is the tap target for the
+ * upcard/draws; Reveal is the explicit, discoverable way into the hole
+ * card. Blackjack/Bust/Stand are explicit taps, not silent auto-derivation.
  */
 export function DealerPanel() {
-  const { investigation, currentRound, activeTarget, setActiveTarget, mutate, undo, canUndo, busy } =
+  const { investigation, currentRound, activeTarget, setActiveTarget, mutate, busy } =
     useInvestigationContext();
   const dealerHand = currentRound.dealerHand;
   const visible = dealerVisibleCards(dealerHand);
@@ -30,6 +28,15 @@ export function DealerPanel() {
   const canDeclareResult = dealerHand.holeCardRevealed && dealerHand.result === null;
   const canStand = canDeclareResult && total !== null && !total.bust && total.value >= 17;
 
+  const cardParts: string[] = [];
+  if (dealerHand.upcard) cardParts.push(formatCard(dealerHand.upcard));
+  if (dealerHand.holeCardRevealed && dealerHand.holeCard) {
+    cardParts.push(formatCard(dealerHand.holeCard));
+  } else if (dealerHand.upcard) {
+    cardParts.push("Hidden");
+  }
+  cardParts.push(...dealerHand.drawCards.map(formatCard));
+
   function setResult(result: "blackjack" | "bust" | "stand", label: string) {
     mutate((round) => ({ ...round, dealerHand: { ...round.dealerHand, result } }), {
       type: "dealer-reveal",
@@ -37,17 +44,34 @@ export function DealerPanel() {
     });
   }
 
+  function clearDealer() {
+    mutate(
+      (round) => ({
+        ...round,
+        dealerHand: { upcard: null, holeCard: null, holeCardRevealed: false, drawCards: [], result: null },
+      }),
+      { type: "correction", message: "Dealer cards cleared" }
+    );
+  }
+
   return (
     <div
-      className={`flex-none border-b border-border bg-surface p-3 ${
+      className={`flex-none border-b border-border bg-surface p-1.5 ${
         isDealerTarget || isHoleTarget ? "ring-1 ring-inset ring-accent" : ""
       }`}
     >
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Dealer
-        </span>
-        <span className="text-sm font-medium text-foreground">
+      <div className="mb-1 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => setActiveTarget("dealer")}
+          className="text-left"
+        >
+          <span className="text-xs font-bold text-foreground">DEALER</span>
+          <span className="ml-2 text-xs text-muted-foreground">
+            {cardParts.length > 0 ? cardParts.join(" · ") : "Not entered"}
+          </span>
+        </button>
+        <span className="text-sm font-semibold text-foreground">
           {dealerHand.result
             ? RESULT_LABEL[dealerHand.result]
             : total
@@ -56,69 +80,41 @@ export function DealerPanel() {
         </span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="grid grid-cols-5 gap-1">
         <button
-          type="button"
-          onClick={() => setActiveTarget("dealer")}
-          className={`rounded-md ${isDealerTarget ? "ring-2 ring-accent" : ""}`}
-        >
-          {dealerHand.upcard ? (
-            <CardTile card={dealerHand.upcard} />
-          ) : (
-            <span className="flex h-9 min-w-9 items-center justify-center rounded-md border border-dashed border-border px-2 text-xs text-muted-foreground">
-              Upcard
-            </span>
-          )}
-        </button>
-
-        <button
-          type="button"
-          disabled={!canRevealHole && !isHoleTarget}
           onClick={() => setActiveTarget("dealer-hole")}
-          className={`rounded-md disabled:cursor-default ${isHoleTarget ? "ring-2 ring-accent" : ""}`}
+          disabled={!canRevealHole}
+          className="tap-target rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
         >
-          {dealerHand.holeCardRevealed && dealerHand.holeCard ? (
-            <CardTile card={dealerHand.holeCard} />
-          ) : (
-            <span className="flex h-9 min-w-9 items-center justify-center rounded-md border border-dashed border-border px-2 text-xs text-muted-foreground">
-              {isHoleTarget ? "Tap value" : "Hidden"}
-            </span>
-          )}
-        </button>
-
-        {dealerHand.drawCards.map((card, index) => (
-          <CardTile key={index} card={card} />
-        ))}
-      </div>
-
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        <button
-          onClick={() => setResult("blackjack", "Blackjack")}
-          disabled={!canDeclareResult || disabled}
-          className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
-        >
-          Dealer Blackjack
-        </button>
-        <button
-          onClick={() => setResult("bust", "Bust")}
-          disabled={!canDeclareResult || disabled}
-          className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
-        >
-          Dealer Bust
+          Reveal
         </button>
         <button
           onClick={() => setResult("stand", "Stands")}
           disabled={!canStand || disabled}
-          className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
+          className="tap-target rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
         >
-          Dealer Stands
+          Stand
         </button>
         <button
-          onClick={undo}
-          disabled={!canUndo || busy}
-          className="tap-target rounded-lg border border-border bg-surface-raised text-xs font-medium text-foreground disabled:opacity-40"
+          onClick={() => setResult("blackjack", "Blackjack")}
+          disabled={!canDeclareResult || disabled}
+          className="tap-target rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
         >
-          Undo Dealer Card
+          BJ
+        </button>
+        <button
+          onClick={() => setResult("bust", "Bust")}
+          disabled={!canDeclareResult || disabled}
+          className="tap-target rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
+        >
+          Bust
+        </button>
+        <button
+          onClick={clearDealer}
+          disabled={disabled || cardParts.length === 0}
+          className="tap-target rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
+        >
+          Clear
         </button>
       </div>
     </div>

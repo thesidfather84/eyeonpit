@@ -1,59 +1,49 @@
 "use client";
 
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
-import { useLockContext } from "@/contexts/LockContext";
 import { LiveHeader } from "./LiveHeader";
 import { CountSummaryPanel } from "./CountSummaryPanel";
-import { DealerPanel } from "./DealerPanel";
 import { SeatTilesRow } from "./SeatTilesRow";
-import { CardEntryPad } from "./CardEntryPad";
+import { QuickBetPanel } from "./QuickBetPanel";
 import { PlayerActionsRow } from "./PlayerActionsRow";
 import { ResultButtonsRow } from "./ResultButtonsRow";
-import { QuickBetPanel } from "./QuickBetPanel";
+import { DealerPanel } from "./DealerPanel";
+import { CardEntryPad } from "./CardEntryPad";
 import { RoundControlsRow } from "./RoundControlsRow";
-import { EventLogPanel } from "./EventLogPanel";
-import { BottomStatusBar } from "./BottomStatusBar";
 
 /**
- * The one operational screen. Everything needed during a live investigation
- * lives here, in this order: header, count summary, dealer panel, seven
- * seat grid, card entry, player actions/results, bet controls, round
- * controls, event log, bottom status. History/Reports/Export/Settings/Help
- * open as overlays from the header's Menu (see LiveMenu) — the operator
- * never navigates away from this screen during a live investigation.
+ * The one operational screen — a fixed console, not a scrolling page.
+ * Order: fixed header, fixed count strip, then Player Seats → Bet Entry →
+ * Dealer → Card Keypad in a middle area sized to fit without scrolling on
+ * typical phones, then a fixed bottom round-controls bar. History, Reports,
+ * Export, Settings, and Help open as overlays from the header's Menu — the
+ * operator never leaves this screen during a live investigation.
  */
 export function LiveScreen() {
-  const { investigation, activeTarget } = useInvestigationContext();
-  const { lock } = useLockContext();
+  const { activeTarget } = useInvestigationContext();
   const activeSeat = typeof activeTarget === "number" ? activeTarget : null;
-  const showSeatControls = activeSeat != null && investigation.trackedSeats.includes(activeSeat);
 
   return (
-    <div className="flex flex-col">
-      <div className="sticky top-0 z-10">
-        <LiveHeader onLock={lock} />
+    <div className="flex h-full flex-col overflow-hidden">
+      <LiveHeader />
+      <CountSummaryPanel />
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <SeatTilesRow />
+
+        {activeSeat != null && (
+          <>
+            <QuickBetPanel seatNumber={activeSeat} />
+            <PlayerActionsRow seatNumber={activeSeat} />
+            <ResultButtonsRow seatNumber={activeSeat} />
+          </>
+        )}
+
+        <DealerPanel />
+        <CardEntryPad />
       </div>
 
-      <CountSummaryPanel />
-      <DealerPanel />
-      <SeatTilesRow />
-      <CardEntryPad />
-
-      {showSeatControls ? (
-        <>
-          <PlayerActionsRow seatNumber={activeSeat} />
-          <ResultButtonsRow seatNumber={activeSeat} />
-          <QuickBetPanel seatNumber={activeSeat} />
-        </>
-      ) : (
-        <p className="border-b border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
-          Select a tracked seat above to enter actions, results, and bets.
-        </p>
-      )}
-
       <RoundControlsRow />
-      <EventLogPanel />
-      <BottomStatusBar />
     </div>
   );
 }

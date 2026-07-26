@@ -7,22 +7,26 @@ import type { CardCode, Rank } from "@/types/investigation";
 
 const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 
-/** Large rank-only buttons — suits are skipped in this build for entry speed. Applies to whichever target (dealer / dealer hole / seat) is currently active. */
+/** Large rank-only buttons — suits are skipped for entry speed. Applies to whichever target (dealer / dealer hole / seat) is currently active, always visible in the lower-central portion of the console. */
 export function CardEntryPad() {
-  const { investigation, activeTarget, setActiveTarget, mutate, busy } = useInvestigationContext();
+  const { investigation, currentRound, activeTarget, setActiveTarget, mutate, advanceToNext, busy } =
+    useInvestigationContext();
   const disabled = busy || investigation.status !== "active";
 
   const targetLabel =
     activeTarget === "dealer"
-      ? "Dealer"
+      ? currentRound.dealerHand.upcard
+        ? "DEALER"
+        : "DEALER UPCARD"
       : activeTarget === "dealer-hole"
-        ? "Dealer hole card"
-        : `Seat ${activeTarget}`;
+        ? "DEALER HOLE CARD"
+        : `SEAT ${activeTarget}`;
 
   function handleTap(rank: Rank) {
     const card: CardCode = { rank, suit: "unspecified" };
 
     if (activeTarget === "dealer") {
+      const isUpcard = !currentRound.dealerHand.upcard;
       mutate(
         (round) => {
           const dh = round.dealerHand;
@@ -33,6 +37,8 @@ export function CardEntryPad() {
         },
         { type: "card", message: `Dealer: ${formatCard(card)}` }
       );
+      // Upcard entered — automatically move to the first tracked seat.
+      if (isUpcard) advanceToNext();
       return;
     }
 
@@ -63,11 +69,11 @@ export function CardEntryPad() {
   }
 
   return (
-    <div className="flex-none border-b border-border bg-surface p-3">
-      <p className="mb-2 text-[10px] uppercase tracking-wide text-muted-foreground">
-        Tap card as it appears — target: <span className="text-accent">{targetLabel}</span>
+    <div className="flex-none border-b border-border bg-surface p-1.5">
+      <p className="mb-1.5 text-center text-sm font-bold text-accent">
+        ENTER CARD → {targetLabel}
       </p>
-      <div className="grid grid-cols-5 gap-2">
+      <div className="grid grid-cols-5 gap-1.5">
         {RANKS.map((rank) => (
           <button
             key={rank}

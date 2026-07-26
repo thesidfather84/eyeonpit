@@ -2,15 +2,27 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Download, FileText, HelpCircle, History as HistoryIcon, Menu as MenuIcon, Settings } from "lucide-react";
+import {
+  Download,
+  FileText,
+  HelpCircle,
+  History as HistoryIcon,
+  Layers,
+  Menu as MenuIcon,
+  Settings,
+  XOctagon,
+} from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SettingsScreen } from "@/components/settings/SettingsScreen";
 import { WorkflowHelpContent } from "@/components/settings/WorkflowHelpContent";
 import { AnalysisScreen } from "@/components/analysis/AnalysisScreen";
 import { ReportScreen } from "@/components/report/ReportScreen";
+import { EventLogPanel } from "./EventLogPanel";
+import { BottomStatusBar } from "./BottomStatusBar";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
-import { listInvestigations } from "@/lib/db/repositories/investigations";
+import { completeInvestigation, listInvestigations } from "@/lib/db/repositories/investigations";
 import { downloadInvestigationJson } from "@/lib/export/toJson";
 import type { Investigation } from "@/types/investigation";
 
@@ -70,17 +82,38 @@ function ExportOverlayContent() {
 /**
  * The sole way to reach History/Reports/Export/Settings/Help from the Live
  * screen — everything renders as an overlay on top of Live, which stays
- * mounted underneath. The operator never navigates away to see this
- * content. Reports combines the former Analysis and Report screens into
- * one scrollable overlay.
+ * mounted underneath. New Shoe / End Investigation live here too (moved out
+ * of the fixed bottom bar to keep that bar to routine round actions only);
+ * both still require confirmation.
  */
 export function LiveMenu() {
+  const { investigation, newShoe, refresh, busy } = useInvestigationContext();
   const [menuOpen, setMenuOpen] = useState(false);
   const [overlay, setOverlay] = useState<OverlayKey | null>(null);
+  const [shoeConfirmOpen, setShoeConfirmOpen] = useState(false);
+  const [endConfirmOpen, setEndConfirmOpen] = useState(false);
+  const [ending, setEnding] = useState(false);
 
   function openOverlay(key: OverlayKey) {
     setMenuOpen(false);
     setOverlay(key);
+  }
+
+  async function handleConfirmShoe() {
+    await newShoe();
+    setShoeConfirmOpen(false);
+  }
+
+  async function handleEndInvestigation() {
+    setEnding(true);
+    try {
+      await completeInvestigation(investigation.localId);
+      await refresh();
+    } finally {
+      setEnding(false);
+      setEndConfirmOpen(false);
+      setMenuOpen(false);
+    }
   }
 
   return (
@@ -104,6 +137,26 @@ export function LiveMenu() {
               <Icon className="h-5 w-5" aria-hidden /> {label}
             </button>
           ))}
+          <button
+            onClick={() => {
+              setMenuOpen(false);
+              setShoeConfirmOpen(true);
+            }}
+            disabled={busy || investigation.status !== "active"}
+            className="tap-target flex items-center gap-3 rounded-lg px-3 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-40"
+          >
+            <Layers className="h-5 w-5" aria-hidden /> New Shoe
+          </button>
+          <button
+            onClick={() => {
+              setMenuOpen(false);
+              setEndConfirmOpen(true);
+            }}
+            disabled={busy || investigation.status === "closed"}
+            className="tap-target flex items-center gap-3 rounded-lg px-3 text-sm font-medium text-destructive hover:bg-surface-raised disabled:opacity-40"
+          >
+            <XOctagon className="h-5 w-5" aria-hidden /> End Investigation
+          </button>
         </div>
       </BottomSheet>
 
@@ -113,7 +166,13 @@ export function LiveMenu() {
 
       <BottomSheet open={overlay === "reports"} onClose={() => setOverlay(null)} title="Reports">
         <div className="flex flex-col gap-4 pb-4">
-          <AnalysisScreen />
+          <EventLogPanel />
+          <div className="border-t border-border pt-4">
+            <BottomStatusBar />
+          </div>
+          <div className="border-t border-border pt-4">
+            <AnalysisScreen />
+          </div>
           <div className="border-t border-border pt-4">
             <ReportScreen />
           </div>
@@ -131,6 +190,27 @@ export function LiveMenu() {
       <BottomSheet open={overlay === "help"} onClose={() => setOverlay(null)} title="Help">
         <WorkflowHelpContent />
       </BottomSheet>
+
+      <ConfirmDialog
+        open={shoeConfirmOpen}
+        title="Start a new shoe?"
+        message="Running and true count reset to zero for the new shoe, across every counting system. Every round already recorded stays in history."
+        confirmLabel="Start New Shoe"
+        busy={busy}
+        onConfirm={handleConfirmShoe}
+        onCancel={() => setShoeConfirmOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={endConfirmOpen}
+        title="End this investigation?"
+        message={`${investigation.rounds.length} rounds recorded across ${investigation.trackedSeats.length} tracked seat(s). You can still reopen it later from History.`}
+        confirmLabel="End Investigation"
+        destructive
+        busy={ending}
+        onConfirm={handleEndInvestigation}
+        onCancel={() => setEndConfirmOpen(false)}
+      />
     </>
   );
 }

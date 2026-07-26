@@ -1,4 +1,5 @@
 import { LockProvider } from "@/contexts/LockContext";
+import { EntryLockProvider } from "@/contexts/EntryLockContext";
 import { InvestigationProvider } from "@/contexts/InvestigationContext";
 import { InvestigationChrome } from "@/components/navigation/InvestigationChrome";
 import { LiveScreen } from "./LiveScreen";
@@ -13,11 +14,13 @@ import { LiveScreen } from "./LiveScreen";
 export function InvestigationConsole({ investigationId }: { investigationId: string }) {
   return (
     <LockProvider>
-      <InvestigationProvider investigationId={investigationId}>
-        <InvestigationChrome>
-          <LiveScreen />
-        </InvestigationChrome>
-      </InvestigationProvider>
+      <EntryLockProvider>
+        <InvestigationProvider investigationId={investigationId}>
+          <InvestigationChrome>
+            <LiveScreen />
+          </InvestigationChrome>
+        </InvestigationProvider>
+      </EntryLockProvider>
     </LockProvider>
   );
 }

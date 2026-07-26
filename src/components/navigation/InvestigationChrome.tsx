@@ -16,5 +16,8 @@ export function InvestigationChrome({ children }: { children: ReactNode }) {
     return <LockOverlay />;
   }
 
-  return <div className="flex flex-1 flex-col overflow-y-auto">{children}</div>;
+  // No outer scroll — the console itself (LiveScreen) manages a fixed
+  // header/strip/bar shell with one internal scroll region, so the whole
+  // page never scrolls as a normal document. See plan/console layout.
+  return <div className="flex flex-1 flex-col overflow-hidden">{children}</div>;
 }

@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  AlertTriangle,
   Download,
   FileText,
   HelpCircle,
   History as HistoryIcon,
   Layers,
+  ListPlus,
   Menu as MenuIcon,
   Settings,
   XOctagon,
@@ -21,6 +23,7 @@ import { AnalysisScreen } from "@/components/analysis/AnalysisScreen";
 import { ReportScreen } from "@/components/report/ReportScreen";
 import { EventLogPanel } from "./EventLogPanel";
 import { BottomStatusBar } from "./BottomStatusBar";
+import { TableEventsSheet } from "./TableEventsSheet";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { completeInvestigation, listInvestigations } from "@/lib/db/repositories/investigations";
 import { downloadInvestigationJson } from "@/lib/export/toJson";
@@ -99,6 +102,7 @@ export function LiveMenu() {
     startNewShoe,
     completeRoundAndStartNewShoe,
     voidRoundAndStartNewShoe,
+    misdealAndAdvance,
     refresh,
     busy,
   } = useInvestigationContext();
@@ -107,6 +111,8 @@ export function LiveMenu() {
   const [shoeConfirmOpen, setShoeConfirmOpen] = useState(false);
   const [incompletePromptOpen, setIncompletePromptOpen] = useState(false);
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
+  const [misdealConfirmOpen, setMisdealConfirmOpen] = useState(false);
+  const [tableEventsOpen, setTableEventsOpen] = useState(false);
   const [ending, setEnding] = useState(false);
   const completeCheck = canCompleteRound(investigation, currentRound);
   const t = useTerminology();
@@ -138,6 +144,11 @@ export function LiveMenu() {
   async function handleVoidAndStartNewShoe() {
     await voidRoundAndStartNewShoe();
     setIncompletePromptOpen(false);
+  }
+
+  async function handleMisdeal() {
+    await misdealAndAdvance();
+    setMisdealConfirmOpen(false);
   }
 
   async function handleEndInvestigation() {
@@ -179,6 +190,26 @@ export function LiveMenu() {
             className="tap-target flex items-center gap-3 rounded-lg px-3 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-40"
           >
             <Layers className="h-5 w-5" aria-hidden /> {newShoeOrDeckLabel(investigation, t)}
+          </button>
+          <button
+            onClick={() => {
+              setMenuOpen(false);
+              setTableEventsOpen(true);
+            }}
+            disabled={busy || investigation.status !== "active"}
+            className="tap-target flex items-center gap-3 rounded-lg px-3 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-40"
+          >
+            <ListPlus className="h-5 w-5" aria-hidden /> Log Table Event
+          </button>
+          <button
+            onClick={() => {
+              setMenuOpen(false);
+              setMisdealConfirmOpen(true);
+            }}
+            disabled={busy || investigation.status !== "active"}
+            className="tap-target flex items-center gap-3 rounded-lg px-3 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-40"
+          >
+            <AlertTriangle className="h-5 w-5" aria-hidden /> Misdeal
           </button>
           <button
             onClick={() => {
@@ -274,6 +305,19 @@ export function LiveMenu() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={misdealConfirmOpen}
+        title="Declare a misdeal?"
+        message="Voids this hand's outcomes and moves on to the next hand in the same shoe. Cards already exposed stay recorded — the running count and shoe history are unaffected."
+        confirmLabel="Misdeal"
+        destructive
+        busy={busy}
+        onConfirm={handleMisdeal}
+        onCancel={() => setMisdealConfirmOpen(false)}
+      />
+
+      {tableEventsOpen && <TableEventsSheet onClose={() => setTableEventsOpen(false)} />}
 
       <ConfirmDialog
         open={endConfirmOpen}

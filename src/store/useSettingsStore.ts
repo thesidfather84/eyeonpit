@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage, type StateStorage } from "zustand/middleware";
 import type { TerminologyLevel } from "@/lib/terminology";
+import { diagnostics } from "@/lib/diagnostics/logger";
 
 export type WorkflowAssistanceLevel = "off" | "basic" | "guided";
 
@@ -40,7 +41,7 @@ function safeLocalStorage(): StateStorage {
 /** Rebuilds a safe settings slice from whatever was persisted — a differently-shaped or corrupted record (an old build, hand-edited devtools value, partial write) falls back field-by-field to the same defaults the store starts with, rather than trusting the stored type. */
 function normalizePersistedSettings(raw: unknown): Partial<SettingsState> {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  return {
+  const result = {
     hasCompletedOnboarding:
       typeof r.hasCompletedOnboarding === "boolean" ? r.hasCompletedOnboarding : false,
     showGuidedTips: typeof r.showGuidedTips === "boolean" ? r.showGuidedTips : true,
@@ -54,6 +55,20 @@ function normalizePersistedSettings(raw: unknown): Partial<SettingsState> {
       ? (r.workflowAssistance as WorkflowAssistanceLevel)
       : "basic",
   };
+
+  const looksMalformed =
+    raw != null &&
+    (typeof raw !== "object" ||
+      typeof r.terminologyLevel !== typeof result.terminologyLevel ||
+      !TERMINOLOGY_LEVELS.includes(r.terminologyLevel as TerminologyLevel) ||
+      !WORKFLOW_LEVELS.includes(r.workflowAssistance as WorkflowAssistanceLevel));
+  if (looksMalformed) {
+    diagnostics.warn("localstorage-corruption", "eyeonpit:settings had an invalid shape — fell back to defaults field-by-field", {
+      rawSample: JSON.stringify(raw).slice(0, 300),
+    });
+  }
+
+  return result;
 }
 
 interface SettingsState {

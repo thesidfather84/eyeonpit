@@ -26,6 +26,7 @@ import { BottomStatusBar } from "./BottomStatusBar";
 import { TableEventsSheet } from "./TableEventsSheet";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { completeInvestigation, listInvestigations } from "@/lib/db/repositories/investigations";
+import { diagnostics } from "@/lib/diagnostics/logger";
 import { downloadInvestigationJson } from "@/lib/export/toJson";
 import { newShoeOrDeckLabel } from "@/lib/utils/gameConfig";
 import { canCompleteRound } from "@/lib/utils/roundValidation";
@@ -103,7 +104,6 @@ export function LiveMenu() {
     completeRoundAndStartNewShoe,
     voidRoundAndStartNewShoe,
     misdealAndAdvance,
-    refresh,
     busy,
   } = useInvestigationContext();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -154,8 +154,22 @@ export function LiveMenu() {
   async function handleEndInvestigation() {
     setEnding(true);
     try {
+      diagnostics.info("investigation-lifecycle", "End Investigation pressed", {
+        investigationId: investigation.localId,
+        statusBefore: investigation.status,
+      });
       await completeInvestigation(investigation.localId);
-      await refresh();
+      diagnostics.info("investigation-lifecycle", "status written to closed, navigating to / to force ConsoleShell to re-resolve", {
+        investigationId: investigation.localId,
+      });
+      // ConsoleShell resolves the active investigation via useActiveInvestigation,
+      // which fetches once on mount and never re-queries — refresh() alone updates
+      // this context's own copy in place but leaves ConsoleShell pointed at the
+      // now-closed investigation forever, since its resolved id never becomes
+      // null again. A full navigation back to "/" forces ConsoleShell to remount
+      // and re-resolve against Dexie's current (closed) status, landing on
+      // EmptyConsole instead of leaving the operator stuck on a closed console.
+      window.location.assign("/");
     } finally {
       setEnding(false);
       setEndConfirmOpen(false);

@@ -7,6 +7,14 @@ const nextConfig: NextConfig = {
     root: __dirname,
   },
 
+  // Surfaces the deployed commit to the client (Settings > Export
+  // Diagnostics, the recovery screen) so a bug report can be tied to an
+  // exact build — Vercel sets VERCEL_GIT_COMMIT_SHA at build time, but
+  // only NEXT_PUBLIC_-prefixed vars ship to the browser bundle.
+  env: {
+    NEXT_PUBLIC_BUILD_ID: process.env.VERCEL_GIT_COMMIT_SHA ?? "local",
+  },
+
   // Vercel-readiness baseline security headers, plus a no-cache rule for
   // the offline service worker so operators always get a fresh worker on
   // deploy rather than a stale one silently serving an old app shell.

@@ -23,6 +23,8 @@ import {
   updateInvestigation,
 } from "@/lib/db/repositories/investigations";
 import { orderedSeatNumbersFor } from "@/lib/utils/seats";
+import { computeShoeStats } from "@/lib/analysis/shoeStats";
+import { diagnostics } from "@/lib/diagnostics/logger";
 import type {
   EventType,
   Investigation,
@@ -210,13 +212,32 @@ export function InvestigationProvider({
       setBusy(true);
       try {
         pushHistory({ kind: "round", round: currentRound });
-        await mutateRound(investigation.localId, currentRound.id, updater, event);
+        const before =
+          event.type === "card" ? computeShoeStats(investigation, currentRound.shoeNumber) : null;
+        const updatedRound = await mutateRound(investigation.localId, currentRound.id, updater, event);
+        if (before) {
+          const afterInvestigation = { ...investigation, rounds: investigation.rounds.map((r) => (r.id === updatedRound.id ? updatedRound : r)) };
+          const after = computeShoeStats(afterInvestigation, updatedRound.shoeNumber);
+          diagnostics.debug("count-engine", event.message, {
+            investigationId: investigation.localId,
+            shoeNumber: updatedRound.shoeNumber,
+            roundNumber: updatedRound.roundNumber,
+            activeTarget,
+            countingSystem: investigation.countingSystem,
+            hiLoBefore: before.counts["Hi-Lo"].runningCount,
+            hiLoAfter: after.counts["Hi-Lo"].runningCount,
+            koAfter: after.counts.KO.runningCount,
+            zenAfter: after.counts.Zen.runningCount,
+            omegaIIAfter: after.counts["Omega II"].runningCount,
+            cardsSeenAfter: after.cardsSeen,
+          });
+        }
         await refresh();
       } finally {
         setBusy(false);
       }
     },
-    [investigation, currentRound, refresh, pushHistory]
+    [investigation, currentRound, activeTarget, refresh, pushHistory]
   );
 
   const undo = useCallback(() => {

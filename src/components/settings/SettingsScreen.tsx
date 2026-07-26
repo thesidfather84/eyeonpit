@@ -6,6 +6,7 @@ import { useSettingsStore, type WorkflowAssistanceLevel } from "@/store/useSetti
 import type { TerminologyLevel } from "@/lib/terminology";
 import { listInvestigations, resetAllData } from "@/lib/db/repositories/investigations";
 import { findOrCreatePracticeInvestigation } from "@/lib/onboarding/practiceInvestigationSeed";
+import { downloadDiagnostics, exportDiagnostics } from "@/lib/diagnostics/logger";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
@@ -39,6 +40,7 @@ export function SettingsScreen() {
   const [resetConfirming, setResetConfirming] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
 
   async function handlePractice() {
     setPracticeLoading(true);
@@ -65,6 +67,15 @@ export function SettingsScreen() {
       URL.revokeObjectURL(url);
     } finally {
       setExporting(false);
+    }
+  }
+
+  async function handleExportDiagnostics() {
+    setExportingDiagnostics(true);
+    try {
+      downloadDiagnostics(await exportDiagnostics());
+    } finally {
+      setExportingDiagnostics(false);
     }
   }
 
@@ -159,6 +170,16 @@ export function SettingsScreen() {
         </Button>
         <Button variant="destructive" onClick={() => setResetConfirming(true)}>
           Reset All Local Data
+        </Button>
+      </section>
+
+      <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
+        <h2 className="text-sm font-semibold text-foreground">Diagnostics</h2>
+        <p className="text-xs text-muted-foreground">
+          Build {process.env.NEXT_PUBLIC_BUILD_ID?.slice(0, 7) ?? "local"}
+        </p>
+        <Button variant="secondary" disabled={exportingDiagnostics} onClick={handleExportDiagnostics}>
+          {exportingDiagnostics ? "Exporting…" : "Export Diagnostics"}
         </Button>
       </section>
 

@@ -4,6 +4,7 @@ import { generateInvestigationId } from "@/lib/investigation-id";
 import { getOrCreateDeviceId } from "@/lib/utils/deviceId";
 import { computeShoeStats } from "@/lib/analysis/shoeStats";
 import { normalizeInvestigation } from "@/lib/db/normalizeInvestigation";
+import { diagnostics } from "@/lib/diagnostics/logger";
 import type {
   BlackjackFormat,
   CountingSystem,
@@ -195,6 +196,11 @@ export async function createInvestigation(
 async function normalizeAndPersist(raw: unknown): Promise<Investigation> {
   const { investigation, migrated } = normalizeInvestigation(raw);
   if (migrated) {
+    diagnostics.warn("investigation-migration", "record normalized/migrated on read", {
+      investigationId: investigation.localId,
+      incomingSchemaVersion: (raw as { schemaVersion?: unknown })?.schemaVersion,
+      currentSchemaVersion: investigation.schemaVersion,
+    });
     await getDb().investigations.put(investigation);
   }
   return investigation;

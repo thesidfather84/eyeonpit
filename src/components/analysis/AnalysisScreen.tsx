@@ -47,7 +47,7 @@ export function AnalysisScreen() {
       <section>
         <h2 className="mb-2 text-sm font-semibold text-foreground">Seat-by-Seat Timelines</h2>
         <div className="flex flex-col gap-3">
-          {investigation.trackedSeats.map((seatNumber) => {
+          {investigation.occupiedSeats.map((seatNumber) => {
             const ap = apBySeat[seatNumber];
             const seatRounds = rounds.filter((r) => r.seats[seatNumber]);
             return (

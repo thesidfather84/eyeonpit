@@ -8,7 +8,8 @@ const CHIPS = [5, 10, 25, 50, 100, 500];
 const BET_STEP = 25;
 
 export function QuickBetPanel({ seatNumber }: { seatNumber: number }) {
-  const { investigation, currentRound, mutate, busy } = useInvestigationContext();
+  const { investigation, currentRound, mutate, applyBetToLinkedSpots, busy } =
+    useInvestigationContext();
   const [customOpen, setCustomOpen] = useState(false);
   const [customValue, setCustomValue] = useState("");
 
@@ -16,7 +17,13 @@ export function QuickBetPanel({ seatNumber }: { seatNumber: number }) {
   const currentBet = record?.betAmount ?? 0;
   const priorRounds = investigation.rounds.filter((r) => r.id !== currentRound.id);
   const previousBet = findPreviousBet(seatNumber, priorRounds);
-  const disabled = busy || investigation.status !== "active";
+  const disabled = busy || investigation.status !== "active" || currentRound.completed;
+
+  const groupId = investigation.seatPlayerGroups[seatNumber];
+  const linkedSeatCount = groupId
+    ? Object.values(investigation.seatPlayerGroups).filter((g) => g === groupId).length
+    : 1;
+  const isLinked = linkedSeatCount > 1;
 
   function applyBet(newAmount: number, label?: string) {
     const wagerChange = computeWagerChange(newAmount, previousBet);
@@ -41,6 +48,14 @@ export function QuickBetPanel({ seatNumber }: { seatNumber: number }) {
   function handleCustomCommit() {
     const parsed = Number(customValue);
     if (Number.isFinite(parsed) && parsed >= 0) applyBet(parsed, "custom");
+  }
+
+  function handleApplyToLinked() {
+    applyBetToLinkedSpots(
+      seatNumber,
+      currentBet,
+      record?.wagerChange ?? { direction: "first", amount: null, overridden: false }
+    );
   }
 
   const changeBadge =
@@ -145,6 +160,16 @@ export function QuickBetPanel({ seatNumber }: { seatNumber: number }) {
           +
         </button>
       </div>
+
+      {isLinked && (
+        <button
+          disabled={disabled || currentBet <= 0}
+          onClick={handleApplyToLinked}
+          className="tap-target mt-1 w-full rounded-md border border-border bg-surface-raised text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-40"
+        >
+          Apply ${currentBet} to all {linkedSeatCount} linked spots
+        </button>
+      )}
     </div>
   );
 }

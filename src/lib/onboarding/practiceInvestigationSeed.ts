@@ -1,9 +1,12 @@
-import { createInvestigation, listInvestigations } from "@/lib/db/repositories/investigations";
+import {
+  createInvestigation,
+  listInvestigations,
+  occupySeat,
+  updateSeatBet,
+} from "@/lib/db/repositories/investigations";
 import type { Investigation } from "@/types/investigation";
 
-const PRACTICE_OCCUPIED_SEATS = [1, 3, 5];
-const PRACTICE_TRACKED_SEATS = [3, 5];
-const PRACTICE_INITIAL_WAGERS = { 3: 25, 5: 25 };
+const PRACTICE_SEATS_WITH_BETS: Record<number, number> = { 3: 25, 5: 25 };
 
 /**
  * One fixed, clearly-labeled (`isDemo: true`) practice investigation —
@@ -20,18 +23,29 @@ export async function findOrCreatePracticeInvestigation(): Promise<Investigation
   );
   if (openDemo) return openDemo;
 
-  return createInvestigation({
+  const investigation = await createInvestigation({
     casino: "Demo Casino (Practice)",
     tableNumber: "PRACTICE",
     dealerName: "Sample Dealer",
     investigationDate: new Date().toISOString().slice(0, 10),
     operatorName: "Practice Operator",
-    occupiedSeats: PRACTICE_OCCUPIED_SEATS,
-    trackedSeats: PRACTICE_TRACKED_SEATS,
-    initialWagers: PRACTICE_INITIAL_WAGERS,
     countingSystem: "Hi-Lo",
     shoeTotalDecks: 6,
     isDemo: true,
     status: "active",
   });
+
+  for (const [seatKey, betAmount] of Object.entries(PRACTICE_SEATS_WITH_BETS)) {
+    const seatNumber = Number(seatKey);
+    await occupySeat(investigation.localId, seatNumber);
+    const round = investigation.rounds[investigation.rounds.length - 1];
+    await updateSeatBet(investigation.localId, round.id, seatNumber, betAmount, {
+      direction: "first",
+      amount: null,
+      overridden: false,
+    });
+  }
+
+  const withSeats = await listInvestigations({ includeDemo: true });
+  return withSeats.find((inv) => inv.localId === investigation.localId) ?? investigation;
 }

@@ -4,6 +4,7 @@ import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { LiveHeader } from "./LiveHeader";
 import { CountSummaryPanel } from "./CountSummaryPanel";
 import { SeatTilesRow } from "./SeatTilesRow";
+import { ActiveSeatHeader } from "./ActiveSeatHeader";
 import { QuickBetPanel } from "./QuickBetPanel";
 import { PlayerActionsRow } from "./PlayerActionsRow";
 import { ResultButtonsRow } from "./ResultButtonsRow";
@@ -33,6 +34,7 @@ export function LiveScreen() {
 
         {activeSeat != null && (
           <>
+            <ActiveSeatHeader seatNumber={activeSeat} />
             <QuickBetPanel seatNumber={activeSeat} />
             <PlayerActionsRow seatNumber={activeSeat} />
             <ResultButtonsRow seatNumber={activeSeat} />

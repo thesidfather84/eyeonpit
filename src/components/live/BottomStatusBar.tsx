@@ -18,7 +18,7 @@ export function BottomStatusBar() {
     { label: "Penetration", value: `${stats.penetrationPct.toFixed(0)}%` },
     { label: "Rounds", value: String(investigation.rounds.length) },
     { label: "Hands", value: String(totalHands) },
-    { label: "Tracked Seats", value: investigation.trackedSeats.join(", ") || "none" },
+    { label: "Occupied Seats", value: investigation.occupiedSeats.join(", ") || "none" },
   ];
 
   return (

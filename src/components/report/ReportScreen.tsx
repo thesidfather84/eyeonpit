@@ -149,7 +149,7 @@ export function ReportScreen() {
       <ConfirmDialog
         open={completing}
         title="Complete this investigation?"
-        message={`${investigation.rounds.length} rounds recorded across ${investigation.trackedSeats.length} tracked seat(s). You can still reopen it later from History.`}
+        message={`${investigation.rounds.length} rounds recorded across ${investigation.occupiedSeats.length} occupied seat(s). You can still reopen it later from History.`}
         confirmLabel="Complete"
         destructive
         busy={busy}

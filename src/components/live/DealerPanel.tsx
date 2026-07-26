@@ -20,7 +20,7 @@ export function DealerPanel() {
   const dealerHand = currentRound.dealerHand;
   const visible = dealerVisibleCards(dealerHand);
   const total = visible.length > 0 ? computeHandTotal(visible) : null;
-  const disabled = busy || investigation.status !== "active";
+  const disabled = busy || investigation.status !== "active" || currentRound.completed;
 
   const isDealerTarget = activeTarget === "dealer";
   const isHoleTarget = activeTarget === "dealer-hole";
@@ -83,7 +83,7 @@ export function DealerPanel() {
       <div className="grid grid-cols-5 gap-1">
         <button
           onClick={() => setActiveTarget("dealer-hole")}
-          disabled={!canRevealHole}
+          disabled={!canRevealHole || disabled}
           className="tap-target rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
         >
           Reveal

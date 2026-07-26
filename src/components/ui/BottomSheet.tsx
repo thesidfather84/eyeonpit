@@ -12,7 +12,7 @@ interface BottomSheetProps {
 
 /**
  * Minimal bottom-anchored overlay used for things that shouldn't cost a full
- * page navigation (e.g. EditSeatsSheet) — plan.md §12: routine adjustments
+ * page navigation (e.g. ManageSeatsSheet) — plan.md §12: routine adjustments
  * stay in place. Portaled to document.body so it stacks above the bottom
  * nav; the portal target is only touched after mount to stay SSR-safe.
  */

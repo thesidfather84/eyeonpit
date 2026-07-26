@@ -53,7 +53,7 @@ export function computeApLikelihoodBySeat(
 
   const bySeat: Record<number, ApLikelihood> = {};
 
-  for (const seatNumber of investigation.trackedSeats) {
+  for (const seatNumber of investigation.occupiedSeats) {
     const bets: number[] = [];
     const countsGoingIn: number[] = [];
     let priorTrueCount = 0;

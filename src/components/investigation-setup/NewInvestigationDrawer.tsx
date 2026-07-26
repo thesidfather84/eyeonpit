@@ -5,8 +5,6 @@ import { BottomSheet } from "@/components/ui/BottomSheet";
 import { Button } from "@/components/ui/Button";
 import { createInvestigation } from "@/lib/db/repositories/investigations";
 import { TableSetupStep } from "./TableSetupStep";
-import { SeatSetupStep } from "./SeatSetupStep";
-import { InitialBetsStep } from "./InitialBetsStep";
 import { ShoeSetupStep } from "./ShoeSetupStep";
 import type { WizardDraft } from "./types";
 
@@ -21,9 +19,6 @@ const INITIAL_DRAFT: WizardDraft = {
   dealerName: "",
   operatorName: "",
   investigationDate: "",
-  occupiedSeats: [],
-  trackedSeats: [],
-  initialWagers: {},
   countingSystem: "Hi-Lo",
   shoeTotalDecks: 6,
   startingShoeNumber: 1,
@@ -31,11 +26,9 @@ const INITIAL_DRAFT: WizardDraft = {
 };
 
 /**
- * One scrollable sheet, not a paginated wizard — the operator completes
- * setup without leaving the console. Casino/Table/Dealer/Operator/Date,
- * seat occupancy + tracking, initial wagers, shoe number/size, and optional
- * notes are all here at once; Start Investigation stays disabled until
- * every required field is filled.
+ * Identity + shoe basics only — never leaves the operator staring at a long
+ * form. Seats are populated live, straight from the console (tap a seat to
+ * occupy it), so there's nothing seat-related to ask up front.
  */
 export function NewInvestigationDrawer({ onClose, onCreated }: NewInvestigationDrawerProps) {
   const [draft, setDraft] = useState<WizardDraft>(INITIAL_DRAFT);
@@ -51,10 +44,7 @@ export function NewInvestigationDrawer({ onClose, onCreated }: NewInvestigationD
       draft.tableNumber.trim() &&
       draft.dealerName.trim() &&
       draft.operatorName.trim() &&
-      draft.investigationDate &&
-      draft.occupiedSeats.length > 0 &&
-      draft.trackedSeats.length > 0 &&
-      draft.trackedSeats.every((seat) => (draft.initialWagers[seat] ?? 0) > 0)
+      draft.investigationDate
   );
 
   async function handleStart() {
@@ -67,9 +57,6 @@ export function NewInvestigationDrawer({ onClose, onCreated }: NewInvestigationD
         dealerName: draft.dealerName.trim(),
         investigationDate: draft.investigationDate,
         operatorName: draft.operatorName.trim(),
-        occupiedSeats: draft.occupiedSeats,
-        trackedSeats: draft.trackedSeats,
-        initialWagers: draft.initialWagers,
         countingSystem: draft.countingSystem,
         shoeTotalDecks: draft.shoeTotalDecks,
         startingShoeNumber: draft.startingShoeNumber,
@@ -89,12 +76,6 @@ export function NewInvestigationDrawer({ onClose, onCreated }: NewInvestigationD
     <BottomSheet open onClose={onClose} title="New Investigation">
       <div className="flex flex-col gap-5 pb-4">
         <TableSetupStep draft={draft} onChange={updateDraft} />
-        <div className="border-t border-border pt-4">
-          <SeatSetupStep draft={draft} onChange={updateDraft} />
-        </div>
-        <div className="border-t border-border pt-4">
-          <InitialBetsStep draft={draft} onChange={updateDraft} />
-        </div>
         <div className="border-t border-border pt-4">
           <ShoeSetupStep draft={draft} onChange={updateDraft} />
         </div>

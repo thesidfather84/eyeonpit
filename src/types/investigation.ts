@@ -86,13 +86,15 @@ export interface Round {
   startTime: string; // ISO datetime, captured when the round begins
   videoTimestamp: string | null;
   dealerHand: DealerHand;
-  /** Keyed 1-7; only active/tracked seats are populated. */
+  /** Keyed 1-7; only occupied seats are populated. */
   seats: Partial<Record<number, SeatRoundRecord>>;
   /** Snapshotted when the round is finalized (Next Round / New Shoe) — see lib/counting-systems. */
   runningCount: number | null;
   trueCount: number | null;
   operatorNote: string;
   eventLog: EventLogEntry[];
+  /** Explicit lock, not derived — set by "Complete Round", cleared by "Reopen Round". While true, no further entry is allowed for this round. */
+  completed: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -101,6 +103,17 @@ export interface NoteEntry {
   id: string;
   timestamp: string;
   text: string;
+}
+
+/**
+ * A player, identified only by a lightweight label — never a full profile.
+ * Seats sharing a playerGroupId are the same person occupying multiple
+ * betting spots; each seat still keeps its own bet/cards/actions/result.
+ */
+export interface PlayerGroup {
+  id: string;
+  label: string; // e.g. "P1" — operator-editable
+  description?: string;
 }
 
 export interface CorrelationScores {
@@ -123,9 +136,13 @@ export interface Investigation {
   investigationDate: string; // ISO date
   operatorName: string;
 
-  occupiedSeats: number[]; // subset of 1-7 actually in play; editable mid-investigation
-  trackedSeats: number[]; // subset of occupiedSeats being surveilled
-  initialWagers: Record<number, number>;
+  /** The single occupancy gate — any occupied seat can take bets/cards. Distinct from `activeTarget` below and from player grouping. */
+  occupiedSeats: number[];
+  playerGroups: Record<string, PlayerGroup>;
+  /** seatNumber -> playerGroupId, only present for occupied seats. */
+  seatPlayerGroups: Partial<Record<number, string>>;
+  /** The live entry-target selection, persisted so a refresh lands back on the same seat/dealer instead of resetting. "dealer-hole" is never stored here — it collapses to "dealer", since it's a momentary sub-state of the reveal flow, not a place a reload should ever land. */
+  activeTarget: number | "dealer";
 
   countingSystem: CountingSystem;
   shoeTotalDecks: number;

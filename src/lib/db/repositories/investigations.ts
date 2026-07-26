@@ -9,6 +9,7 @@ import type {
   Investigation,
   InvestigationStatus,
   NoteEntry,
+  PlayerGroup,
   Round,
   SeatRoundRecord,
   WagerChange,
@@ -20,9 +21,6 @@ export interface CreateInvestigationInput {
   dealerName: string;
   investigationDate: string; // ISO date, "2026-07-25"
   operatorName: string;
-  occupiedSeats: number[];
-  trackedSeats: number[];
-  initialWagers: Record<number, number>;
   countingSystem: CountingSystem;
   shoeTotalDecks: number;
   /** Defaults to 1 — matches whatever shoe count the pit is already on. */
@@ -40,11 +38,11 @@ async function countInvestigationsForDate(isoDate: string): Promise<number> {
   return db.investigations.where("investigationDate").equals(isoDate).count();
 }
 
-/** A fresh, empty Round. Dealer cards live once on `dealerHand`, never duplicated per seat — plan.md §0.5/§2. */
+/** A fresh, empty Round. Dealer cards live once on `dealerHand`, never duplicated per seat — plan.md §0.5/§2. Starts unlocked (`completed: false`). */
 export function createRound(
   roundNumber: number,
   shoeNumber: number,
-  seedSeats: Record<number, { betAmount: number | null; wagerChange: WagerChange }>
+  seedSeats: Record<number, { betAmount: number | null; wagerChange: WagerChange }> = {}
 ): Round {
   const now = new Date().toISOString();
   const seats: Round["seats"] = {};
@@ -82,6 +80,7 @@ export function createRound(
     trueCount: null,
     operatorNote: "",
     eventLog: [],
+    completed: false,
     createdAt: now,
     updatedAt: now,
   };
@@ -94,15 +93,10 @@ export async function createInvestigation(
   const now = new Date().toISOString();
   const existingCount = await countInvestigationsForDate(input.investigationDate);
 
-  const round1Seeds: Record<number, { betAmount: number | null; wagerChange: WagerChange }> = {};
-  for (const seat of input.trackedSeats) {
-    round1Seeds[seat] = {
-      betAmount: input.initialWagers[seat] ?? null,
-      wagerChange: { direction: "first", amount: null, overridden: false },
-    };
-  }
   const startingShoeNumber = input.startingShoeNumber ?? 1;
-  const round1 = createRound(1, startingShoeNumber, round1Seeds);
+  // No seats are seeded here — every seat starts empty and is populated
+  // live via occupySeat()/assignSeatToPlayerGroup() from the console.
+  const round1 = createRound(1, startingShoeNumber);
   round1.eventLog.push({
     id: uuidv4(),
     timestamp: now,
@@ -127,9 +121,10 @@ export async function createInvestigation(
     investigationDate: input.investigationDate,
     operatorName: input.operatorName,
 
-    occupiedSeats: input.occupiedSeats,
-    trackedSeats: input.trackedSeats,
-    initialWagers: input.initialWagers,
+    occupiedSeats: [],
+    playerGroups: {},
+    seatPlayerGroups: {},
+    activeTarget: "dealer",
 
     countingSystem: input.countingSystem,
     shoeTotalDecks: input.shoeTotalDecks,
@@ -235,25 +230,279 @@ export async function mutateRound(
   return result;
 }
 
+/** Ensures the current round has a SeatRoundRecord for a newly-occupied/assigned seat, without disturbing any existing data. */
+async function ensureSeatRecord(localId: string, seatNumber: number): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) return;
+  const currentRound = investigation.rounds[investigation.rounds.length - 1];
+  if (!currentRound || currentRound.seats[seatNumber]) return;
+
+  const record: SeatRoundRecord = {
+    seatNumber,
+    betAmount: null,
+    wagerChange: { direction: "first", amount: null, overridden: false },
+    playerCards: [],
+    actions: [],
+    outcome: null,
+    deviationNote: "",
+    observationNote: "",
+  };
+  const rounds = investigation.rounds.map((round) =>
+    round.id === currentRound.id
+      ? { ...round, seats: { ...round.seats, [seatNumber]: record } }
+      : round
+  );
+  await updateInvestigation(localId, { rounds });
+}
+
 /** Soft delete only — see plan.md §5, deletions must be propagatable by a future sync backend. */
 export async function softDeleteInvestigation(localId: string): Promise<void> {
   await updateInvestigation(localId, { deletedAt: new Date().toISOString() });
 }
 
-/**
- * Mid-investigation seat changes (plan.md §9 decision 5 — players join/leave
- * a table routinely). Tracked seats are pruned to stay a subset of occupied.
- */
-export async function updateSeatConfiguration(
-  localId: string,
-  occupiedSeats: number[],
-  trackedSeats: number[]
-): Promise<void> {
-  const prunedTracked = trackedSeats.filter((seat) => occupiedSeats.includes(seat));
+// ---------------------------------------------------------------------------
+// Seat occupancy, active selection, and player grouping are three separate
+// concepts (never conflated): occupancy below persists at the investigation
+// level across rounds; "active selection" lives only in InvestigationContext
+// (never persisted); player grouping is its own map, independent of both.
+// ---------------------------------------------------------------------------
+
+/** Appends one event to the current (last) round's log, alongside whatever investigation-level fields also changed in the same write. */
+function appendEventToRounds(
+  rounds: Round[],
+  event: { type: EventType; message: string }
+): Round[] {
+  if (rounds.length === 0) return rounds;
+  const now = new Date().toISOString();
+  const lastIndex = rounds.length - 1;
+  return rounds.map((round, i) =>
+    i === lastIndex
+      ? {
+          ...round,
+          eventLog: [
+            ...round.eventLog,
+            { id: uuidv4(), timestamp: now, type: event.type, message: event.message },
+          ],
+          updatedAt: now,
+        }
+      : round
+  );
+}
+
+/** Normal tap on an empty seat: occupy it and auto-create a brand-new player group for it. No-ops if already occupied. */
+export async function occupySeat(localId: string, seatNumber: number): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+  if (investigation.occupiedSeats.includes(seatNumber)) return;
+
+  const groupNumber = Object.keys(investigation.playerGroups).length + 1;
+  const group: PlayerGroup = { id: uuidv4(), label: `P${groupNumber}` };
+
   await updateInvestigation(localId, {
-    occupiedSeats,
-    trackedSeats: prunedTracked,
+    occupiedSeats: [...investigation.occupiedSeats, seatNumber].sort((a, b) => a - b),
+    playerGroups: { ...investigation.playerGroups, [group.id]: group },
+    seatPlayerGroups: { ...investigation.seatPlayerGroups, [seatNumber]: group.id },
+    rounds: appendEventToRounds(investigation.rounds, {
+      type: "seat-select",
+      message: `Seat ${seatNumber} occupied — ${group.label}`,
+    }),
   });
+  await ensureSeatRecord(localId, seatNumber);
+}
+
+/** True if the current round already has a bet, cards, actions, or a result recorded for this seat — the gate for whether Mark Empty needs confirmation. */
+export function seatHasCurrentRoundData(round: Round, seatNumber: number): boolean {
+  const seat = round.seats[seatNumber];
+  if (!seat) return false;
+  return (
+    seat.betAmount != null ||
+    seat.playerCards.length > 0 ||
+    seat.actions.length > 0 ||
+    seat.outcome != null
+  );
+}
+
+/**
+ * Removes a seat from play. Only the *current* round's seat record is
+ * cleared — every completed round already in history keeps its own,
+ * untouched. Occupancy and player-group assignment are investigation-level,
+ * so this is the only place that needs to drop them.
+ */
+export async function markSeatEmpty(localId: string, seatNumber: number): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+
+  const nextSeatGroups = { ...investigation.seatPlayerGroups };
+  delete nextSeatGroups[seatNumber];
+
+  const currentRound = investigation.rounds[investigation.rounds.length - 1];
+  const rounds = currentRound
+    ? investigation.rounds.map((round) => {
+        if (round.id !== currentRound.id) return round;
+        const seats = { ...round.seats };
+        delete seats[seatNumber];
+        return { ...round, seats };
+      })
+    : investigation.rounds;
+
+  await updateInvestigation(localId, {
+    occupiedSeats: investigation.occupiedSeats.filter((s) => s !== seatNumber),
+    seatPlayerGroups: nextSeatGroups,
+    rounds: appendEventToRounds(rounds, {
+      type: "seat-select",
+      message: `Seat ${seatNumber} marked empty`,
+    }),
+  });
+}
+
+/** Assigns a seat to an *existing* player group — occupies the seat first if it wasn't already. Used by both "Add as Additional Spot" (empty seat) and "Link to Another Seat" (occupied seat). */
+export async function assignSeatToPlayerGroup(
+  localId: string,
+  seatNumber: number,
+  playerGroupId: string
+): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+
+  const nextOccupied = investigation.occupiedSeats.includes(seatNumber)
+    ? investigation.occupiedSeats
+    : [...investigation.occupiedSeats, seatNumber].sort((a, b) => a - b);
+  const group = investigation.playerGroups[playerGroupId];
+
+  await updateInvestigation(localId, {
+    occupiedSeats: nextOccupied,
+    seatPlayerGroups: { ...investigation.seatPlayerGroups, [seatNumber]: playerGroupId },
+    rounds: appendEventToRounds(investigation.rounds, {
+      type: "seat-select",
+      message: `Seat ${seatNumber} linked to ${group?.label ?? "player group"}`,
+    }),
+  });
+  await ensureSeatRecord(localId, seatNumber);
+}
+
+/** Links targetSeatNumber to sourceSeatNumber's existing player group. */
+export async function linkSeats(
+  localId: string,
+  sourceSeatNumber: number,
+  targetSeatNumber: number
+): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+  const groupId = investigation.seatPlayerGroups[sourceSeatNumber];
+  if (!groupId) throw new Error(`Seat ${sourceSeatNumber} has no player group to link to.`);
+  await assignSeatToPlayerGroup(localId, targetSeatNumber, groupId);
+}
+
+/** Detaches a seat from whatever group it's in, giving it a brand-new group of its own. */
+export async function unlinkSeat(localId: string, seatNumber: number): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+
+  const groupNumber = Object.keys(investigation.playerGroups).length + 1;
+  const group: PlayerGroup = { id: uuidv4(), label: `P${groupNumber}` };
+
+  await updateInvestigation(localId, {
+    playerGroups: { ...investigation.playerGroups, [group.id]: group },
+    seatPlayerGroups: { ...investigation.seatPlayerGroups, [seatNumber]: group.id },
+    rounds: appendEventToRounds(investigation.rounds, {
+      type: "seat-select",
+      message: `Seat ${seatNumber} unlinked — now ${group.label}`,
+    }),
+  });
+}
+
+/** Creates a new, unassigned player group — for flows that need a group id before any seat is linked to it. Most seat actions (occupySeat, unlinkSeat) create their own group inline and never need this directly. */
+export async function createPlayerGroup(localId: string, label?: string): Promise<PlayerGroup> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+
+  const groupNumber = Object.keys(investigation.playerGroups).length + 1;
+  const group: PlayerGroup = { id: uuidv4(), label: label?.trim() || `P${groupNumber}` };
+
+  await updateInvestigation(localId, {
+    playerGroups: { ...investigation.playerGroups, [group.id]: group },
+  });
+  return group;
+}
+
+/** Renames a player group's label (e.g. "P1" -> a short operator label). Applies to every seat sharing that group. */
+export async function renamePlayerGroup(
+  localId: string,
+  playerGroupId: string,
+  label: string
+): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+  const group = investigation.playerGroups[playerGroupId];
+  if (!group) return;
+  await updateInvestigation(localId, {
+    playerGroups: { ...investigation.playerGroups, [playerGroupId]: { ...group, label } },
+  });
+}
+
+/** Sets a seat's bet for the current round — independent of any other seat, including ones sharing the same player group. */
+export async function updateSeatBet(
+  investigationLocalId: string,
+  roundId: string,
+  seatNumber: number,
+  amount: number,
+  wagerChange: WagerChange
+): Promise<Round> {
+  return mutateRound(
+    investigationLocalId,
+    roundId,
+    (round) => {
+      const seat = round.seats[seatNumber];
+      if (!seat) return round;
+      return {
+        ...round,
+        seats: { ...round.seats, [seatNumber]: { ...seat, betAmount: amount, wagerChange } },
+      };
+    },
+    { type: "bet-change", message: `Seat ${seatNumber} bet set to $${amount}` }
+  );
+}
+
+/** Locks a round from further entry — set by "Complete Round", the only stored (not derived) round lock. */
+export async function completeRound(localId: string, roundId: string): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+  const now = new Date().toISOString();
+  const rounds = investigation.rounds.map((round) =>
+    round.id === roundId
+      ? {
+          ...round,
+          completed: true,
+          eventLog: [
+            ...round.eventLog,
+            { id: uuidv4(), timestamp: now, type: "round-saved" as EventType, message: `Round ${round.roundNumber} completed` },
+          ],
+          updatedAt: now,
+        }
+      : round
+  );
+  await updateInvestigation(localId, { rounds });
+}
+
+/** Unlocks a completed round so the operator can correct it — the "Reopen Round" action. */
+export async function reopenRound(localId: string, roundId: string): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+  const now = new Date().toISOString();
+  const rounds = investigation.rounds.map((round) =>
+    round.id === roundId
+      ? {
+          ...round,
+          completed: false,
+          eventLog: [
+            ...round.eventLog,
+            { id: uuidv4(), timestamp: now, type: "correction" as EventType, message: `Round ${round.roundNumber} reopened` },
+          ],
+          updatedAt: now,
+        }
+      : round
+  );
+  await updateInvestigation(localId, { rounds });
 }
 
 /** Pause stops the session timer only — all round data is preserved untouched. Plan.md §10 decision 1. */
@@ -278,16 +527,22 @@ export async function resumeInvestigation(localId: string): Promise<void> {
 
 /**
  * Finalizes the current (last) round — snapshots its final running/true
- * count for the historical timeline — then starts the next one. Tracked
+ * count for the historical timeline — then starts the next one. Occupied
  * seats' bets carry forward unchanged by default ("same", 0) unless the
  * operator changes them once the new round is live. Pass `newShoe: true`
  * to also bump the shoe number, which is all "New Shoe" needs to do: a
  * fresh shoeNumber makes computeShoeStats start counting from zero for
- * everything tagged with it.
+ * everything tagged with it. Occupancy and player-group relationships are
+ * investigation-level and are never touched here.
+ *
+ * `voidCurrentRound: true` is the "Void Current Round and Start New Shoe"
+ * path — the still-incomplete current round is dropped instead of kept in
+ * history, and the next round reuses its round number, since it never
+ * actually happened.
  */
 export async function advanceRound(
   investigationLocalId: string,
-  options: { newShoe: boolean }
+  options: { newShoe: boolean; voidCurrentRound?: boolean }
 ): Promise<Round> {
   const investigation = await getInvestigation(investigationLocalId);
   if (!investigation) {
@@ -297,24 +552,30 @@ export async function advanceRound(
   const currentRound = investigation.rounds[investigation.rounds.length - 1];
   const now = new Date().toISOString();
 
-  const stats = computeShoeStats(investigation, currentRound.shoeNumber);
-  const snapshot = stats.counts[investigation.countingSystem];
-  const finalizedRounds = investigation.rounds.map((round) =>
-    round.id === currentRound.id
-      ? {
-          ...round,
-          runningCount: snapshot.runningCount,
-          trueCount: snapshot.trueCount,
-          updatedAt: now,
-        }
-      : round
-  );
-
   const nextShoeNumber = options.newShoe ? currentRound.shoeNumber + 1 : currentRound.shoeNumber;
-  const nextRoundNumber = investigation.rounds.length + 1;
+
+  let finalizedRounds: Round[];
+  if (options.voidCurrentRound) {
+    finalizedRounds = investigation.rounds.slice(0, -1);
+  } else {
+    const stats = computeShoeStats(investigation, currentRound.shoeNumber);
+    const snapshot = stats.counts[investigation.countingSystem];
+    finalizedRounds = investigation.rounds.map((round) =>
+      round.id === currentRound.id
+        ? {
+            ...round,
+            runningCount: snapshot.runningCount,
+            trueCount: snapshot.trueCount,
+            updatedAt: now,
+          }
+        : round
+    );
+  }
+
+  const nextRoundNumber = finalizedRounds.length + 1;
 
   const seedSeats: Record<number, { betAmount: number | null; wagerChange: WagerChange }> = {};
-  for (const seatNumber of investigation.trackedSeats) {
+  for (const seatNumber of investigation.occupiedSeats) {
     const previousBet = currentRound.seats[seatNumber]?.betAmount ?? null;
     seedSeats[seatNumber] = options.newShoe
       ? { betAmount: previousBet, wagerChange: { direction: "first", amount: null, overridden: false } }
@@ -326,9 +587,11 @@ export async function advanceRound(
     id: uuidv4(),
     timestamp: now,
     type: options.newShoe ? "shoe" : "round-saved",
-    message: options.newShoe
-      ? `New shoe started (Shoe ${nextShoeNumber}) — Round ${nextRoundNumber}`
-      : `Round ${nextRoundNumber} started`,
+    message: options.voidCurrentRound
+      ? `Round ${currentRound.roundNumber} voided — new shoe started (Shoe ${nextShoeNumber})`
+      : options.newShoe
+        ? `New shoe started (Shoe ${nextShoeNumber}) — Round ${nextRoundNumber}`
+        : `Round ${nextRoundNumber} started`,
   });
 
   await updateInvestigation(investigationLocalId, {

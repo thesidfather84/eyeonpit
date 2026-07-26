@@ -11,7 +11,7 @@ const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 export function CardEntryPad() {
   const { investigation, currentRound, activeTarget, setActiveTarget, mutate, advanceToNext, busy } =
     useInvestigationContext();
-  const disabled = busy || investigation.status !== "active";
+  const disabled = busy || investigation.status !== "active" || currentRound.completed;
 
   const targetLabel =
     activeTarget === "dealer"

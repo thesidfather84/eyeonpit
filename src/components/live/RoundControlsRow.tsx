@@ -20,15 +20,14 @@ export function RoundControlsRow() {
     undo,
     redo,
     clearActiveEntry,
+    completeRound,
+    reopenRound,
     nextRound,
     busy,
   } = useInvestigationContext();
   const [noteOpen, setNoteOpen] = useState(false);
 
   const isActive = investigation.status === "active";
-  const isRoundComplete =
-    currentRound.dealerHand.result !== null &&
-    investigation.trackedSeats.every((seat) => currentRound.seats[seat]?.outcome != null);
 
   return (
     <div className="flex-none border-t border-border bg-surface p-1.5">
@@ -59,7 +58,7 @@ export function RoundControlsRow() {
         </button>
         <button
           onClick={clearActiveEntry}
-          disabled={busy || !isActive}
+          disabled={busy || !isActive || currentRound.completed}
           aria-label="Clear current entry"
           className="tap-target flex items-center justify-center gap-1 rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
         >
@@ -67,14 +66,34 @@ export function RoundControlsRow() {
         </button>
       </div>
 
-      <button
-        onClick={nextRound}
-        disabled={busy || !isActive}
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-        className="tap-target w-full rounded-lg bg-accent text-sm font-bold text-accent-foreground disabled:opacity-40"
-      >
-        {isRoundComplete ? "Start Next Round ▶▶" : "Complete Round"}
-      </button>
+      {currentRound.completed ? (
+        <>
+          <button
+            onClick={nextRound}
+            disabled={busy || !isActive}
+            style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+            className="tap-target w-full rounded-lg bg-accent text-sm font-bold text-accent-foreground disabled:opacity-40"
+          >
+            Start Next Round ▶▶
+          </button>
+          <button
+            onClick={reopenRound}
+            disabled={busy || !isActive}
+            className="mt-1 w-full text-center text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-40"
+          >
+            Round locked — Reopen Round
+          </button>
+        </>
+      ) : (
+        <button
+          onClick={completeRound}
+          disabled={busy || !isActive}
+          style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+          className="tap-target w-full rounded-lg bg-accent text-sm font-bold text-accent-foreground disabled:opacity-40"
+        >
+          Complete Round
+        </button>
+      )}
 
       {noteOpen && <AddNoteSheet onClose={() => setNoteOpen(false)} />}
     </div>

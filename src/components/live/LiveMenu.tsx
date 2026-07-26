@@ -87,10 +87,19 @@ function ExportOverlayContent() {
  * both still require confirmation.
  */
 export function LiveMenu() {
-  const { investigation, newShoe, refresh, busy } = useInvestigationContext();
+  const {
+    investigation,
+    currentRound,
+    startNewShoe,
+    completeRoundAndStartNewShoe,
+    voidRoundAndStartNewShoe,
+    refresh,
+    busy,
+  } = useInvestigationContext();
   const [menuOpen, setMenuOpen] = useState(false);
   const [overlay, setOverlay] = useState<OverlayKey | null>(null);
   const [shoeConfirmOpen, setShoeConfirmOpen] = useState(false);
+  const [incompletePromptOpen, setIncompletePromptOpen] = useState(false);
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
   const [ending, setEnding] = useState(false);
 
@@ -99,9 +108,28 @@ export function LiveMenu() {
     setOverlay(key);
   }
 
+  function handleNewShoeSelected() {
+    setMenuOpen(false);
+    if (currentRound.completed) {
+      setShoeConfirmOpen(true);
+    } else {
+      setIncompletePromptOpen(true);
+    }
+  }
+
   async function handleConfirmShoe() {
-    await newShoe();
+    await startNewShoe();
     setShoeConfirmOpen(false);
+  }
+
+  async function handleCompleteRoundFirst() {
+    await completeRoundAndStartNewShoe();
+    setIncompletePromptOpen(false);
+  }
+
+  async function handleVoidAndStartNewShoe() {
+    await voidRoundAndStartNewShoe();
+    setIncompletePromptOpen(false);
   }
 
   async function handleEndInvestigation() {
@@ -138,10 +166,7 @@ export function LiveMenu() {
             </button>
           ))}
           <button
-            onClick={() => {
-              setMenuOpen(false);
-              setShoeConfirmOpen(true);
-            }}
+            onClick={handleNewShoeSelected}
             disabled={busy || investigation.status !== "active"}
             className="tap-target flex items-center gap-3 rounded-lg px-3 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-40"
           >
@@ -194,17 +219,48 @@ export function LiveMenu() {
       <ConfirmDialog
         open={shoeConfirmOpen}
         title="Start a new shoe?"
-        message="Running and true count reset to zero for the new shoe, across every counting system. Every round already recorded stays in history."
+        message="Start a new shoe? This will reset the running count and shoe card history. Completed rounds will remain saved."
         confirmLabel="Start New Shoe"
         busy={busy}
         onConfirm={handleConfirmShoe}
         onCancel={() => setShoeConfirmOpen(false)}
       />
 
+      {incompletePromptOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+          <button
+            aria-label="Cancel"
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setIncompletePromptOpen(false)}
+          />
+          <div className="relative w-full max-w-sm rounded-xl border border-border bg-surface p-4">
+            <h2 className="mb-2 text-base font-semibold text-foreground">
+              The current round is not complete.
+            </h2>
+            <div className="flex flex-col gap-2">
+              <Button variant="secondary" fullWidth onClick={() => setIncompletePromptOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="primary" fullWidth disabled={busy} onClick={handleCompleteRoundFirst}>
+                Complete Round First
+              </Button>
+              <Button
+                variant="destructive"
+                fullWidth
+                disabled={busy}
+                onClick={handleVoidAndStartNewShoe}
+              >
+                Void Current Round and Start New Shoe
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmDialog
         open={endConfirmOpen}
         title="End this investigation?"
-        message={`${investigation.rounds.length} rounds recorded across ${investigation.trackedSeats.length} tracked seat(s). You can still reopen it later from History.`}
+        message={`${investigation.rounds.length} rounds recorded across ${investigation.occupiedSeats.length} occupied seat(s). You can still reopen it later from History.`}
         confirmLabel="End Investigation"
         destructive
         busy={ending}

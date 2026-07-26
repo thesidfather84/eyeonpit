@@ -16,7 +16,7 @@ const RESULTS: { outcome: NonNullable<HandOutcome>; label: string }[] = [
 export function ResultButtonsRow({ seatNumber }: { seatNumber: number }) {
   const { investigation, currentRound, mutate, advanceToNext, busy } = useInvestigationContext();
   const current = currentRound.seats[seatNumber]?.outcome ?? null;
-  const disabled = busy || investigation.status !== "active";
+  const disabled = busy || investigation.status !== "active" || currentRound.completed;
 
   function handleResult(outcome: NonNullable<HandOutcome>, label: string) {
     mutate(

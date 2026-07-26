@@ -6,9 +6,6 @@ export interface WizardDraft {
   dealerName: string;
   operatorName: string;
   investigationDate: string;
-  occupiedSeats: number[];
-  trackedSeats: number[];
-  initialWagers: Record<number, number>;
   countingSystem: CountingSystem;
   shoeTotalDecks: number;
   startingShoeNumber: number;

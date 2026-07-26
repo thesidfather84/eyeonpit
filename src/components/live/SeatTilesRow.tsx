@@ -11,6 +11,7 @@ import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import type { CardTarget } from "@/contexts/InvestigationContext";
 import { SeatOptionsSheet } from "./SeatOptionsSheet";
 import { ManageSeatsSheet } from "./ManageSeatsSheet";
+import { DealerTile } from "./DealerTile";
 
 const LONG_PRESS_MS = 500;
 
@@ -62,8 +63,8 @@ export function SeatTilesRow() {
   }
 
   return (
-    <div className="flex-none border-b border-border bg-surface p-1.5">
-      <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-7">
+    <div className="flex-none bg-surface p-1.5">
+      <div className="grid grid-cols-4 gap-1.5">
         {seats.map((seat) => {
           const isOccupied = investigation.occupiedSeats.includes(seat);
           const isActive = activeTarget === (seat as CardTarget);
@@ -190,6 +191,8 @@ export function SeatTilesRow() {
             </div>
           );
         })}
+
+        <DealerTile />
       </div>
 
       <button

@@ -1,47 +1,50 @@
 @import "tailwindcss";
 
 /*
-  EyeOnPit professional surveillance-workstation theme.
-  Deliberately a single, dark-only theme: no light mode, no
-  prefers-color-scheme branching. Deep charcoal (not pure black)
-  background, bright blue primary actions, a cyan secondary accent for
-  informational/active-state highlights, orange for pending/attention
-  states, red reserved strictly for the dealer, errors, and busts, green
-  for confirmed/completed states. Not flashy — muted saturation, high
-  contrast text.
+  EyeOnPit theme — palette is Grok's approved UI design, ported verbatim
+  into our CSS custom properties (see eyeonpit-ui.zip tailwind.config.js).
+  Single dark theme, no light mode. Deep navy/charcoal background, bright
+  blue primary actions, cyan for active/informational highlights, violet
+  for split-hand state, orange for pending/attention (doubled hand,
+  insurance offered), rose reserved for the dealer/errors/busts, emerald
+  for confirmed/completed states.
 */
 :root {
-  --background: #0d1117;
-  --surface: #151b23;
-  --surface-raised: #1c232d;
-  --border: #2d3746;
+  --background: #0b1220;
+  --surface: #111827;
+  --surface-raised: #1e293b;
+  --border: #334155;
 
-  --foreground: #eef1f5;
-  --muted-foreground: #8a94a3;
+  --foreground: #f1f5f9;
+  --muted-foreground: #64748b;
 
-  /* Primary actions — bright blue. */
-  --accent: #2f7de1;
-  --accent-foreground: #f5f9ff;
+  /* Primary actions — Grok's primary.DEFAULT/hover. */
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-foreground: #f8fafc;
 
-  /* Secondary/informational highlight — active seat, live indicators. */
-  --accent-secondary: #22b8c8;
-  --accent-secondary-foreground: #04262a;
+  /* Secondary/informational highlight — active seat, live indicators. Grok's accent.cyan. */
+  --accent-secondary: #22d3ee;
+  --accent-secondary-foreground: #042f2e;
 
-  /* Dealer-specific highlight — kept separate from the destructive red so a dealer hand isn't visually read as an error. */
-  --dealer: #e5484d;
-  --dealer-foreground: #fff5f5;
+  /* Split-hand state — Grok's accent.violet. */
+  --accent-violet: #a78bfa;
+  --accent-violet-foreground: #2e1065;
 
-  /* Pending/attention states — doubled hand, insurance available, etc. */
-  --pending: #d97a2b;
-  --pending-foreground: #241300;
+  /* Dealer-specific highlight — kept separate from destructive-as-a-concept so a dealer hand isn't visually read as an error, but shares Grok's rose hue. */
+  --dealer: #f43f5e;
+  --dealer-foreground: #fff1f2;
 
-  /* Confirmed/completed status. */
-  --status-green: #2fb35c;
-  /* Elevated behavior/correlation indicators — never used for destructive actions. */
-  --status-orange: #d9822b;
+  /* Pending/attention states — doubled hand, insurance available, etc. Grok's accent.orange. */
+  --pending: #fb923c;
+  --pending-foreground: #431407;
 
-  --destructive: #e5484d;
-  --destructive-foreground: #fff5f5;
+  /* Confirmed/completed status — Grok's accent.emerald. */
+  --status-green: #34d399;
+  --status-orange: #fb923c;
+
+  --destructive: #f43f5e;
+  --destructive-foreground: #fff1f2;
 }
 
 @theme inline {
@@ -54,10 +57,14 @@
   --color-muted-foreground: var(--muted-foreground);
 
   --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
   --color-accent-foreground: var(--accent-foreground);
 
   --color-accent-secondary: var(--accent-secondary);
   --color-accent-secondary-foreground: var(--accent-secondary-foreground);
+
+  --color-accent-violet: var(--accent-violet);
+  --color-accent-violet-foreground: var(--accent-violet-foreground);
 
   --color-dealer: var(--dealer);
   --color-dealer-foreground: var(--dealer-foreground);
@@ -86,5 +93,18 @@ body {
   .tap-target {
     min-height: 48px;
     min-width: 48px;
+  }
+  .safe-area-pt {
+    padding-top: env(safe-area-inset-top);
+  }
+  .safe-area-pb {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
   }
 }

@@ -54,10 +54,11 @@ async function persist(entry: LogEntry): Promise<void> {
       const oldest = await db.logs.orderBy("id").limit(excess).toArray();
       await db.logs.bulkDelete(oldest.map((e) => e.id!));
     }
-  } catch {
+  } catch (error) {
     // IndexedDB unavailable/full — the in-memory ring buffer above is the
     // emergency fallback; losing persisted history is never worth throwing
     // over inside a logger.
+    console.error("[diagnostics] persist failed:", error);
   }
 }
 

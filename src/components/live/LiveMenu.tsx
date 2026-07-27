@@ -169,7 +169,18 @@ export function LiveMenu() {
       // null again. A full navigation back to "/" forces ConsoleShell to remount
       // and re-resolve against Dexie's current (closed) status, landing on
       // EmptyConsole instead of leaving the operator stuck on a closed console.
-      window.location.assign("/");
+      //
+      // window.location.assign("/") alone is not enough when already at "/"
+      // (the common case — root is the primary entry point): browsers treat
+      // navigating to an identical URL as a no-op, so nothing actually
+      // reloads. reload() is used explicitly in that case; assign() still
+      // handles the /investigations/[id]/live deep-link case correctly,
+      // since that URL genuinely differs from "/".
+      if (window.location.pathname === "/") {
+        window.location.reload();
+      } else {
+        window.location.assign("/");
+      }
     } finally {
       setEnding(false);
       setEndConfirmOpen(false);

@@ -9,7 +9,6 @@ import { HandStatusLine } from "./HandStatusLine";
 import { QuickBetPanel } from "./QuickBetPanel";
 import { PlayerActionsRow } from "./PlayerActionsRow";
 import { ResultButtonsRow } from "./ResultButtonsRow";
-import { DealerActionsRow } from "./DealerActionsRow";
 import { CardEntryPad } from "./CardEntryPad";
 import { OperatorAssistantBar } from "./OperatorAssistantBar";
 import { RoundControlsRow } from "./RoundControlsRow";
@@ -27,7 +26,6 @@ import { RoundControlsRow } from "./RoundControlsRow";
 export function LiveScreen() {
   const { activeTarget } = useInvestigationContext();
   const activeSeat = typeof activeTarget === "number" ? activeTarget : null;
-  const isDealerActive = activeTarget === "dealer" || activeTarget === "dealer-hole";
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -41,8 +39,6 @@ export function LiveScreen() {
 
         <CardEntryPad />
         <HandStatusLine />
-
-        {isDealerActive && <DealerActionsRow />}
 
         {activeSeat != null && (
           <>

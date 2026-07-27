@@ -26,7 +26,8 @@ export type WagerDirection = "up" | "down" | "same" | "first";
 export type PlayerAction =
   | "hit" | "stand" | "double" | "split" | "insurance" | "surrender" | "blackjack" | "other";
 
-export type DealerResult = "stand" | "blackjack" | "bust" | null;
+/** Purely a derived display label (see lib/utils/blackjackTotal.ts) — never stored. "Stand" has no separate state: a dealer hand with neither is just showing its running total. */
+export type DealerResult = "blackjack" | "bust" | null;
 
 export type CountingSystem = "Hi-Lo" | "KO" | "Zen" | "Omega II";
 
@@ -184,18 +185,18 @@ export interface SeatRoundRecord {
   observationNote: string;
 }
 
+/**
+ * EyeOnPit records observed cards, not blackjack play — the dealer is just
+ * a chronological list of cards, exactly like a seat's hand. There is no
+ * upcard/hole-card distinction, no reveal step, and no forced entry order:
+ * a card exists here the moment (and only the moment) the operator taps it.
+ */
 export interface DealerHand {
-  upcard: CardCode | null;
-  holeCard: CardCode | null;
-  /** Stays false — and the hole card stays hidden from every display/export — until the operator explicitly reveals it. */
-  holeCardRevealed: boolean;
-  drawCards: CardCode[];
-  result: DealerResult;
+  cards: CardCode[];
 }
 // Dealer total is intentionally NOT stored here. It is always derived from
-// upcard + (holeCard if revealed) + drawCards via computeHandTotal() in
-// lib/utils/blackjackTotal.ts, so it can never drift out of sync with the
-// cards actually entered.
+// `cards` via computeHandTotal() in lib/utils/blackjackTotal.ts, so it can
+// never drift out of sync with the cards actually entered.
 
 export interface Round {
   id: string;
@@ -261,7 +262,7 @@ export interface Investigation {
   playerGroups: Record<string, PlayerGroup>;
   /** seatNumber -> playerGroupId, only present for occupied seats. */
   seatPlayerGroups: Partial<Record<number, string>>;
-  /** The live entry-target selection, persisted so a refresh lands back on the same seat/dealer instead of resetting. "dealer-hole" is never stored here — it collapses to "dealer", since it's a momentary sub-state of the reveal flow, not a place a reload should ever land. */
+  /** The live entry-target selection, persisted so a refresh lands back on the same seat/dealer instead of resetting. */
   activeTarget: number | "dealer";
 
   countingSystem: CountingSystem;
@@ -301,5 +302,5 @@ export interface Investigation {
   schemaVersion: number;
 }
 
-/** The current on-disk shape version, for future Dexie migrations. */
-export const INVESTIGATION_SCHEMA_VERSION = 1;
+/** The current on-disk shape version, for future Dexie migrations. Bumped to 2: DealerHand dropped upcard/holeCard/holeCardRevealed/drawCards/result for a flat `cards` array — see normalizeInvestigation.ts for the v1→v2 conversion. */
+export const INVESTIGATION_SCHEMA_VERSION = 2;

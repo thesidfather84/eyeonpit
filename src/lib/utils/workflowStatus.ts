@@ -48,13 +48,6 @@ export function computeWorkflowStatus(investigation: Investigation, round: Round
     };
   }
 
-  if (!round.dealerHand.upcard) {
-    return {
-      message: "Enter Dealer Up Card.",
-      guidance: "Tap the dealer, then tap the rank of the dealer's up card.",
-    };
-  }
-
   const hands = allHands(investigation, round);
 
   if (hands.every((h) => h.hand.playerCards.length === 0)) {
@@ -86,8 +79,8 @@ export function computeWorkflowStatus(investigation: Investigation, round: Round
   }
 
   const insuranceOffered =
-    round.dealerHand.upcard.rank === "A" &&
-    !round.dealerHand.holeCardRevealed &&
+    round.dealerHand.cards.length === 1 &&
+    round.dealerHand.cards[0].rank === "A" &&
     hands.every((h) => (h.hand.insuranceAmount ?? 0) === 0);
   if (insuranceOffered) {
     return {
@@ -98,10 +91,10 @@ export function computeWorkflowStatus(investigation: Investigation, round: Round
 
   const check = canCompleteRound(investigation, round);
   if (!check.canComplete) {
-    if (check.reasons.some((r) => r.includes("Dealer hand"))) {
+    if (check.reasons.some((r) => r.includes("Dealer"))) {
       return {
-        message: "Dealer hand incomplete.",
-        guidance: "Reveal the hole card and record Stand, Blackjack, or Bust.",
+        message: "Dealer cards not recorded.",
+        guidance: "Enter the dealer's observed cards.",
       };
     }
     return {

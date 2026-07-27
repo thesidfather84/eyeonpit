@@ -34,8 +34,8 @@ import type {
   WagerChange,
 } from "@/types/investigation";
 
-/** Which hand the next tapped card / action applies to. "dealer-hole" is a transient state entered only via the Dealer Panel's reveal control. */
-export type CardTarget = "dealer" | "dealer-hole" | number;
+/** Which hand the next tapped card / action applies to. */
+export type CardTarget = "dealer" | number;
 
 /**
  * Undo/redo covers two independent kinds of change: in-round mutations
@@ -199,8 +199,7 @@ export function InvestigationProvider({
     (target: CardTarget) => {
       setActiveTargetState(target);
       if (investigation) {
-        const persisted: number | "dealer" = target === "dealer-hole" ? "dealer" : target;
-        updateInvestigation(investigation.localId, { activeTarget: persisted });
+        updateInvestigation(investigation.localId, { activeTarget: target });
       }
     },
     [investigation]
@@ -672,16 +671,7 @@ export function InvestigationProvider({
       clearSeatHand(activeTarget);
     } else {
       mutate(
-        (round) => ({
-          ...round,
-          dealerHand: {
-            upcard: null,
-            holeCard: null,
-            holeCardRevealed: false,
-            drawCards: [],
-            result: null,
-          },
-        }),
+        (round) => ({ ...round, dealerHand: { cards: [] } }),
         { type: "correction", message: "Dealer cards cleared" }
       );
     }

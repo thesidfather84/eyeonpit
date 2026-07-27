@@ -2,7 +2,6 @@
 
 import { Undo2 } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
-import { deriveDealerResult } from "@/lib/utils/blackjackTotal";
 import { formatCard } from "@/lib/utils/cards";
 import { resolveSeatTarget, updateSeatAtTarget } from "@/lib/utils/seatTarget";
 import { isSeatLocked } from "@/lib/utils/seatLock";
@@ -10,20 +9,27 @@ import type { CardCode, Rank } from "@/types/investigation";
 
 const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 
-/** Large rank-only buttons — suits are skipped for entry speed. Applies to whichever target (dealer / dealer hole / seat / split hand) is currently active, always visible in the lower-central portion of the console. */
+/**
+ * Large rank-only buttons — suits are skipped for entry speed. Applies to
+ * whichever target (dealer / seat / split hand) is currently active, always
+ * visible in the lower-central portion of the console. A tap simply
+ * appends the card to the target's list — dealer and seats use the exact
+ * same append, no upcard/hole-card distinction, no confirmation, no forced
+ * order. EyeOnPit records what the operator observed; it never asks them
+ * to play the hand out.
+ */
 export function CardEntryPad() {
   const {
     investigation,
     currentRound,
     activeTarget,
-    setActiveTarget,
     mutate,
     advanceToNext,
     undo,
     canUndo,
     busy,
   } = useInvestigationContext();
-  const isDealerTarget = activeTarget === "dealer" || activeTarget === "dealer-hole";
+  const isDealerTarget = activeTarget === "dealer";
   const seatResolved =
     !isDealerTarget && typeof activeTarget === "number"
       ? resolveSeatTarget(currentRound, activeTarget)
@@ -31,14 +37,9 @@ export function CardEntryPad() {
   const locked = seatResolved ? isSeatLocked(seatResolved.record) : false;
   const disabled = busy || investigation.status !== "active" || currentRound.completed || locked;
 
-  const targetLabel =
-    activeTarget === "dealer"
-      ? currentRound.dealerHand.upcard
-        ? "DEALER"
-        : "DEALER UPCARD"
-      : activeTarget === "dealer-hole"
-        ? "DEALER HOLE CARD"
-        : `SEAT ${seatResolved?.seatNumber}${seatResolved?.isSplit ? " · SPLIT" : ""}`;
+  const targetLabel = isDealerTarget
+    ? "DEALER"
+    : `SEAT ${seatResolved?.seatNumber}${seatResolved?.isSplit ? " · SPLIT" : ""}`;
 
   const lastCardEvent = [...currentRound.eventLog].reverse().find((e) => e.type === "card");
 
@@ -46,31 +47,15 @@ export function CardEntryPad() {
     const card: CardCode = { rank, suit: "unspecified" };
 
     if (activeTarget === "dealer") {
-      const isUpcard = !currentRound.dealerHand.upcard;
+      const isFirstCard = currentRound.dealerHand.cards.length === 0;
       mutate(
-        (round) => {
-          const dh = round.dealerHand;
-          const nextDh = dh.upcard
-            ? { ...dh, drawCards: [...dh.drawCards, card] }
-            : { ...dh, upcard: card };
-          return { ...round, dealerHand: { ...nextDh, result: deriveDealerResult(nextDh) } };
-        },
+        (round) => ({ ...round, dealerHand: { cards: [...round.dealerHand.cards, card] } }),
         { type: "card", message: `Dealer: ${formatCard(card)}` }
       );
-      // Upcard entered — automatically move to the first tracked seat.
-      if (isUpcard) advanceToNext();
-      return;
-    }
-
-    if (activeTarget === "dealer-hole") {
-      mutate(
-        (round) => {
-          const nextDh = { ...round.dealerHand, holeCard: card, holeCardRevealed: true };
-          return { ...round, dealerHand: { ...nextDh, result: deriveDealerResult(nextDh) } };
-        },
-        { type: "dealer-reveal", message: `Dealer reveals hole card: ${formatCard(card)}` }
-      );
-      setActiveTarget("dealer");
+      // First dealer card of the hand — automatically move to the first
+      // tracked seat in Guided mode, same convenience as before, without
+      // implying this card is an "upcard" in any gameplay sense.
+      if (isFirstCard) advanceToNext();
       return;
     }
 

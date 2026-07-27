@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { MoreVertical, Users } from "lucide-react";
 import { computeApLikelihoodBySeat } from "@/lib/analysis/apLikelihood";
-import { computeHandTotal } from "@/lib/utils/blackjackTotal";
+import { computeHandTotal, isAutoDetectedBlackjack } from "@/lib/utils/blackjackTotal";
 import { formatCard } from "@/lib/utils/cards";
 import { seatNumbersFor } from "@/lib/utils/seats";
 import { splitTargetFor } from "@/lib/utils/seatTarget";
@@ -88,6 +88,7 @@ export function SeatTilesRow() {
           const ap = apBySeat[seat];
           const total =
             record && record.playerCards.length > 0 ? computeHandTotal(record.playerCards) : null;
+          const isBlackjack = record ? isAutoDetectedBlackjack(record.playerCards) : false;
 
           const groupId = investigation.seatPlayerGroups[seat];
           const group = groupId ? investigation.playerGroups[groupId] : undefined;
@@ -185,13 +186,17 @@ export function SeatTilesRow() {
                   </span>
                   <span className="text-[10px] leading-tight">
                     {record && record.playerCards.length > 0
-                      ? record.playerCards.map(formatCard).join(" · ")
+                      ? `${record.playerCards.map(formatCard).join(" · ")} · ${record.playerCards.length} Cards`
                       : " "}
                   </span>
                   <span
                     className={`text-[10px] font-medium leading-tight ${total?.bust ? "text-dealer" : ""}`}
                   >
-                    {total ? `${total.bust ? "BUST " : total.soft ? "S" : ""}${total.value}` : " "}
+                    {isBlackjack
+                      ? "BLACKJACK"
+                      : total
+                        ? `${total.bust ? "BUST " : total.soft ? "S" : ""}${total.value}`
+                        : " "}
                   </span>
                 </>
               ) : (

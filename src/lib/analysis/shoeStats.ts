@@ -1,18 +1,11 @@
 import { COUNTING_SYSTEMS, computeRunningCount, computeTrueCount } from "@/lib/counting-systems/countingSystems";
 import type { CardCode, CountingSystem, Investigation, Round } from "@/types/investigation";
 
-/** Every card actually visible to the operator in a round — the dealer's hole card only counts once revealed, matching what a real surveillance operator can see. Split hands are dealt from the same shoe and must count exactly once, same as any other hand. */
+/** Every card observed in a round — a card counts the instant it's entered, dealer or seat alike, since there's no hidden/hole-card concept to delay it. Split hands are dealt from the same shoe and must count exactly once, same as any other hand. */
 export function getVisibleCardsInRound(round: Round): CardCode[] {
-  const dealerCards: CardCode[] = [
-    ...(round.dealerHand.upcard ? [round.dealerHand.upcard] : []),
-    ...(round.dealerHand.holeCardRevealed && round.dealerHand.holeCard
-      ? [round.dealerHand.holeCard]
-      : []),
-    ...round.dealerHand.drawCards,
-  ];
   const seatCards = Object.values(round.seats).flatMap((seat) => seat?.playerCards ?? []);
   const splitHandCards = Object.values(round.splitHands).flatMap((seat) => seat?.playerCards ?? []);
-  return [...dealerCards, ...seatCards, ...splitHandCards];
+  return [...round.dealerHand.cards, ...seatCards, ...splitHandCards];
 }
 
 export type CountTrend = "up" | "down" | "flat";

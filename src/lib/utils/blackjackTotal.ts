@@ -1,4 +1,4 @@
-import type { CardCode, DealerHand } from "@/types/investigation";
+import type { CardCode, DealerHand, DealerResult } from "@/types/investigation";
 
 export interface HandTotal {
   value: number;
@@ -51,20 +51,20 @@ export function computeHandTotal(cards: CardCode[]): HandTotal {
   };
 }
 
-/** Cards actually visible for a dealer hand right now — the hole card only counts once revealed. */
+/** Every card in a dealer hand is observed and visible the moment it's entered — no hidden/hole-card concept. Kept as its own function so call sites don't need to know the field name. */
 export function dealerVisibleCards(dealerHand: DealerHand): CardCode[] {
-  return [
-    ...(dealerHand.upcard ? [dealerHand.upcard] : []),
-    ...(dealerHand.holeCardRevealed && dealerHand.holeCard ? [dealerHand.holeCard] : []),
-    ...dealerHand.drawCards,
-  ];
+  return dealerHand.cards;
 }
 
-/** Recomputes bust/blackjack from the hand's current cards. "stand" is left to the operator — only the dealer's actual play (not a card count) tells you they're done drawing. */
-export function deriveDealerResult(dealerHand: DealerHand): DealerHand["result"] {
-  const visible = dealerVisibleCards(dealerHand);
-  const total = computeHandTotal(visible);
+/** Blackjack auto-detected from exactly two observed cards totaling 21 — the same rule for a dealer hand or a player hand. An operator override belongs in a "Manual Blackjack correction" label, not a stored flag here. */
+export function isAutoDetectedBlackjack(cards: CardCode[]): boolean {
+  return cards.length === 2 && computeHandTotal(cards).value === 21;
+}
+
+/** Bust/blackjack purely derived from the cards themselves — never stored, never an operator action. */
+export function deriveDealerResult(cards: CardCode[]): DealerResult {
+  const total = computeHandTotal(cards);
   if (total.bust) return "bust";
-  if (dealerHand.holeCardRevealed && visible.length === 2 && total.value === 21) return "blackjack";
-  return dealerHand.result;
+  if (isAutoDetectedBlackjack(cards)) return "blackjack";
+  return null;
 }

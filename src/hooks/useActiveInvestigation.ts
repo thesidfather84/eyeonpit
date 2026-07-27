@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { listInvestigations } from "@/lib/db/repositories/investigations";
+import { diagnostics } from "@/lib/diagnostics/logger";
 import type { Investigation } from "@/types/investigation";
 
 /**
@@ -24,9 +25,19 @@ export function useActiveInvestigation(): {
     listInvestigations()
       .then((all) => {
         if (cancelled) return;
-        const current =
-          all.find((inv) => inv.status === "active" || inv.status === "paused") ??
-          null;
+        const candidates = all.filter((inv) => inv.status === "active" || inv.status === "paused");
+        const current = candidates[0] ?? null;
+        diagnostics.info("startup-resolution", "useActiveInvestigation resolved on mount", {
+          totalInvestigations: all.length,
+          activeOrPausedCandidates: candidates.map((c) => ({
+            localId: c.localId,
+            displayId: c.displayId,
+            status: c.status,
+            updatedAt: c.updatedAt,
+          })),
+          resolvedInvestigationId: current?.localId ?? null,
+          resolvedDisplayId: current?.displayId ?? null,
+        });
         setInvestigation(current);
       })
       .catch(() => {

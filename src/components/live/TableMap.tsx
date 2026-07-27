@@ -10,7 +10,7 @@ import { SeatTilesRow } from "./SeatTilesRow";
  */
 export function TableMap() {
   return (
-    <div className="mx-1.5 mt-1.5 flex-none overflow-hidden rounded-2xl border border-border/80 bg-surface-raised/30">
+    <div className="mx-1.5 flex-none overflow-hidden rounded-2xl border border-border/80 bg-surface-raised/30">
       <SeatTilesRow />
     </div>
   );

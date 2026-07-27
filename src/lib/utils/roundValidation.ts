@@ -1,4 +1,3 @@
-import { computeHandTotal } from "@/lib/utils/blackjackTotal";
 import type { Investigation, Round, SeatRoundRecord } from "@/types/investigation";
 
 export interface RoundCompletionCheck {
@@ -7,56 +6,46 @@ export interface RoundCompletionCheck {
   reasons: string[];
 }
 
-/** Outcomes an operator can only reach without comparing to the dealer's hand — a seat resolved this way never requires the dealer to have played. */
-const SELF_RESOLVED_OUTCOMES = new Set(["blackjack", "surrender", "void"]);
-
-function checkHand(
-  hand: SeatRoundRecord | undefined,
-  label: string,
-  reasons: string[]
-): boolean {
-  if (!hand) return false;
+function checkHand(hand: SeatRoundRecord | undefined, label: string, reasons: string[]): void {
+  if (!hand) return;
   const hasActiveWager = hand.betAmount != null && hand.betAmount > 0;
-  if (!hasActiveWager) return false;
+  if (!hasActiveWager) return;
 
-  if (hand.outcome == null) {
-    reasons.push(`${label} has no result`);
-    return false;
+  // Win/Loss/Push/Blackjack are never a manual result to wait for — they're
+  // derived automatically from the final cards the instant the round
+  // completes (see completeRound() in the investigations repository). What
+  // Complete Round still needs is something to derive an outcome FROM: a
+  // wagered hand with zero cards recorded has nothing to compare against
+  // the dealer's hand, so that's the one thing that still blocks here.
+  // Surrender/Void/Manual-Blackjack already set `outcome` immediately when
+  // tapped and are unaffected by this check either way.
+  if (hand.playerCards.length === 0 && hand.outcome == null) {
+    reasons.push(`${label} has no cards recorded`);
   }
-
-  const total = hand.playerCards.length > 0 ? computeHandTotal(hand.playerCards) : null;
-  const selfResolved = Boolean(total?.bust) || SELF_RESOLVED_OUTCOMES.has(hand.outcome);
-  return !selfResolved;
 }
 
 /**
- * Complete Round stays disabled until every occupied wager this round has
- * an outcome and the dealer's hand is accounted for — except when nothing
- * in play ever needed the dealer to draw (every live hand busted, or was
- * resolved some other self-evident way), matching real blackjack play
- * where the dealer doesn't need to reveal/hit if every player is already
- * out. Split hands are checked exactly like their seat's primary hand.
+ * Complete Round stays disabled until the dealer's cards are recorded and
+ * every occupied wager this round has cards to derive a result from — a
+ * completeness check on the observation record, not a gameplay rule.
+ * Dealer entry pending is the one blocker the operator can't resolve by
+ * simply continuing: it requires either entering the dealer's cards, or
+ * explicitly declaring a round exception (Misdeal / Incomplete Observation
+ * / Dealer Error), which bypasses this check entirely (see
+ * misdealAndAdvance in InvestigationContext). Split hands are checked
+ * exactly like their seat's primary hand.
  */
 export function canCompleteRound(investigation: Investigation, round: Round): RoundCompletionCheck {
   const reasons: string[] = [];
-  let anyLiveHandNeedsDealer = false;
 
-  if (!round.dealerHand.upcard) {
-    reasons.push("Dealer upcard not recorded");
+  if (round.dealerHand.cards.length === 0) {
+    reasons.push("Dealer cards pending — enter cards or declare a round exception");
   }
 
   for (const seatNumber of investigation.occupiedSeats) {
-    if (checkHand(round.seats[seatNumber], `Seat ${seatNumber}`, reasons)) {
-      anyLiveHandNeedsDealer = true;
-    }
+    checkHand(round.seats[seatNumber], `Seat ${seatNumber}`, reasons);
     const splitHand = round.splitHands[seatNumber];
-    if (splitHand && checkHand(splitHand, `Seat ${seatNumber} split hand`, reasons)) {
-      anyLiveHandNeedsDealer = true;
-    }
-  }
-
-  if (anyLiveHandNeedsDealer && round.dealerHand.result == null) {
-    reasons.push("Dealer hand not resolved");
+    if (splitHand) checkHand(splitHand, `Seat ${seatNumber} split hand`, reasons);
   }
 
   return { canComplete: reasons.length === 0, reasons };

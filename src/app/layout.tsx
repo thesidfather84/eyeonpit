@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { UpdateAvailableBanner } from "@/components/system/UpdateAvailableBanner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -46,6 +47,7 @@ export default function RootLayout({
     >
       <body className="flex h-full justify-center overflow-hidden bg-background text-foreground">
         <div className="flex h-full w-full max-w-md flex-col overflow-hidden bg-background">
+          <UpdateAvailableBanner />
           {children}
         </div>
       </body>

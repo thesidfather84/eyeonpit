@@ -6,6 +6,7 @@ import { useSettingsStore, type WorkflowAssistanceLevel } from "@/store/useSetti
 import type { TerminologyLevel } from "@/lib/terminology";
 import { listInvestigations, resetAllData } from "@/lib/db/repositories/investigations";
 import { findOrCreatePracticeInvestigation } from "@/lib/onboarding/practiceInvestigationSeed";
+import { downloadDiagnostics, exportDiagnostics } from "@/lib/diagnostics/logger";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
@@ -34,11 +35,14 @@ export function SettingsScreen() {
     setTerminologyLevel,
     workflowAssistance,
     setWorkflowAssistance,
+    showGroupLabels,
+    setShowGroupLabels,
   } = useSettingsStore();
   const [practiceLoading, setPracticeLoading] = useState(false);
   const [resetConfirming, setResetConfirming] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
 
   async function handlePractice() {
     setPracticeLoading(true);
@@ -68,6 +72,15 @@ export function SettingsScreen() {
     }
   }
 
+  async function handleExportDiagnostics() {
+    setExportingDiagnostics(true);
+    try {
+      downloadDiagnostics(await exportDiagnostics());
+    } finally {
+      setExportingDiagnostics(false);
+    }
+  }
+
   async function handleReset() {
     setResetting(true);
     try {
@@ -94,9 +107,24 @@ export function SettingsScreen() {
             {showGuidedTips ? "ON" : "OFF"}
           </button>
         </div>
-        <div className="flex items-center justify-between">
+        <div className="mb-3 flex items-center justify-between">
           <span className="text-sm font-medium text-foreground">Dark theme</span>
           <span className="text-xs text-muted-foreground">Always on</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="block text-sm font-medium text-foreground">Linked seat labels</span>
+            <span className="block text-xs text-muted-foreground">Show A/B/C letter on linked seats, not just the ring color</span>
+          </div>
+          <button
+            onClick={() => setShowGroupLabels(!showGroupLabels)}
+            aria-pressed={showGroupLabels}
+            className={`tap-target rounded-full px-4 text-xs font-bold ${
+              showGroupLabels ? "bg-accent text-accent-foreground" : "border border-border text-muted-foreground"
+            }`}
+          >
+            {showGroupLabels ? "ON" : "OFF"}
+          </button>
         </div>
       </section>
 
@@ -162,6 +190,28 @@ export function SettingsScreen() {
         </Button>
       </section>
 
+      <section className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface p-3">
+        <h2 className="mb-1 text-sm font-semibold text-foreground">About</h2>
+        <AboutRow label="Application Version" value={process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"} />
+        <AboutRow label="Git Commit" value={process.env.NEXT_PUBLIC_BUILD_ID ?? "local"} />
+        <AboutRow label="Build ID" value={(process.env.NEXT_PUBLIC_BUILD_ID ?? "local").slice(0, 7)} />
+        <AboutRow
+          label="Build Date"
+          value={
+            process.env.NEXT_PUBLIC_BUILD_DATE
+              ? new Date(process.env.NEXT_PUBLIC_BUILD_DATE).toLocaleString()
+              : "—"
+          }
+        />
+      </section>
+
+      <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
+        <h2 className="text-sm font-semibold text-foreground">Diagnostics</h2>
+        <Button variant="secondary" disabled={exportingDiagnostics} onClick={handleExportDiagnostics}>
+          {exportingDiagnostics ? "Exporting…" : "Export Diagnostics"}
+        </Button>
+      </section>
+
       <ConfirmDialog
         open={resetConfirming}
         title="Reset all local data?"
@@ -172,6 +222,16 @@ export function SettingsScreen() {
         onConfirm={handleReset}
         onCancel={() => setResetConfirming(false)}
       />
+    </div>
+  );
+}
+
+/** One label/value line in the About section — lets desktop, mobile browser, and an installed PWA be compared side by side to confirm they're the same build. */
+function AboutRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2 text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="truncate font-mono text-foreground">{value}</span>
     </div>
   );
 }

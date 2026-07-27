@@ -8,12 +8,14 @@ import { useTerminology } from "@/hooks/useTerminology";
 import { AddNoteSheet } from "./AddNoteSheet";
 
 /**
- * Fixed bottom action bar — never falls below the viewport. One primary
- * action, "Complete Round": disabled until canCompleteRound() passes, and
- * on tap it saves the round and begins the next one in the same shoe
- * immediately — no separate "Start Next Round" tap, nothing else to ask.
- * An accidental completion is corrected with the same Undo used for every
- * other mistake, not a special-case button.
+ * The last item inside LiveScreen's single scrollable region — always
+ * reachable by scrolling down, regardless of how tall the sticky core and
+ * the rest of the secondary content above it get. One primary action,
+ * "Complete Round": disabled until canCompleteRound() passes, and on tap it
+ * saves the round and begins the next one in the same shoe immediately — no
+ * separate "Start Next Round" tap, nothing else to ask. An accidental
+ * completion is corrected with the same Undo used for every other mistake,
+ * not a special-case button.
  */
 export function RoundControlsRow() {
   const {

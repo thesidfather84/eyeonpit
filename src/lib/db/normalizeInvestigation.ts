@@ -135,16 +135,26 @@ function normalizeSeatMap(raw: unknown): Partial<Record<number, SeatRoundRecord>
   return out;
 }
 
+/**
+ * Handles both the current shape (schemaVersion 2+: a flat `cards` list)
+ * and the legacy one (schemaVersion 1 and earlier: separate upcard/
+ * holeCard/holeCardRevealed/drawCards fields from the old hidden-card
+ * privacy model). A legacy hole card the operator had entered — even if
+ * the old UI hadn't flagged it "revealed" yet — was still a real observed
+ * card, so it carries over regardless of that now-removed flag; only its
+ * position in the chronological list is a best-effort guess (upcard,
+ * then hole, then draws), since the legacy shape never recorded true
+ * entry order across those three buckets.
+ */
 function normalizeDealerHand(raw: unknown): DealerHand {
   const r = isObj(raw) ? raw : {};
-  const results: Exclude<DealerHand["result"], null>[] = ["stand", "blackjack", "bust"];
-  return {
-    upcard: normalizeCard(r.upcard),
-    holeCard: normalizeCard(r.holeCard),
-    holeCardRevealed: bool(r.holeCardRevealed, false),
-    drawCards: normalizeCardList(r.drawCards),
-    result: results.includes(r.result as (typeof results)[number]) ? (r.result as DealerHand["result"]) : null,
-  };
+  if (Array.isArray(r.cards)) {
+    return { cards: normalizeCardList(r.cards) };
+  }
+  const legacyCards = [normalizeCard(r.upcard), normalizeCard(r.holeCard)].filter(
+    (c): c is CardCode => c !== null
+  );
+  return { cards: [...legacyCards, ...normalizeCardList(r.drawCards)] };
 }
 
 function normalizeEventLog(raw: unknown): EventLogEntry[] {

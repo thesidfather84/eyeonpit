@@ -48,13 +48,6 @@ export function computeWorkflowStatus(investigation: Investigation, round: Round
     };
   }
 
-  if (!round.dealerHand.upcard) {
-    return {
-      message: "Enter Dealer Up Card.",
-      guidance: "Tap the dealer, then tap the rank of the dealer's up card.",
-    };
-  }
-
   const hands = allHands(investigation, round);
 
   if (hands.every((h) => h.hand.playerCards.length === 0)) {
@@ -77,17 +70,17 @@ export function computeWorkflowStatus(investigation: Investigation, round: Round
     };
   }
 
-  const activeSplit = hands.find((h) => h.isSplit && h.hand.outcome == null);
+  const activeSplit = hands.find((h) => h.isSplit && h.hand.playerCards.length === 0);
   if (activeSplit) {
     return {
       message: `Split hand active on Seat ${activeSplit.seatNumber}.`,
-      guidance: "Continue entering cards and a result for the split hand before moving on.",
+      guidance: "Enter cards for the split hand — its result is derived automatically when the round completes.",
     };
   }
 
   const insuranceOffered =
-    round.dealerHand.upcard.rank === "A" &&
-    !round.dealerHand.holeCardRevealed &&
+    round.dealerHand.cards.length === 1 &&
+    round.dealerHand.cards[0].rank === "A" &&
     hands.every((h) => (h.hand.insuranceAmount ?? 0) === 0);
   if (insuranceOffered) {
     return {
@@ -98,20 +91,20 @@ export function computeWorkflowStatus(investigation: Investigation, round: Round
 
   const check = canCompleteRound(investigation, round);
   if (!check.canComplete) {
-    if (check.reasons.some((r) => r.includes("Dealer hand"))) {
+    if (check.reasons.some((r) => r.includes("Dealer"))) {
       return {
-        message: "Dealer hand incomplete.",
-        guidance: "Reveal the hole card and record Stand, Blackjack, or Bust.",
+        message: "Dealer card entry pending.",
+        guidance: "Enter the dealer's observed cards, or declare a round exception from the menu.",
       };
     }
     return {
       message: check.reasons[0] ?? "Waiting for player cards.",
-      guidance: "Finish recording each hand's result before moving on.",
+      guidance: "Enter each remaining hand's cards — results are derived automatically before moving on.",
     };
   }
 
   return {
     message: "Ready for Next Hand.",
-    guidance: "Every hand is resolved — tap Next Hand when ready.",
+    guidance: "Every hand's cards are recorded — results are derived automatically when you tap Next Hand.",
   };
 }

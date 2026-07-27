@@ -9,7 +9,7 @@ import {
 } from "@/lib/db/repositories/investigations";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { dealerVisibleCards, computeHandTotal } from "@/lib/utils/blackjackTotal";
+import { dealerVisibleCards, computeHandTotal, deriveDealerResult } from "@/lib/utils/blackjackTotal";
 import { formatCard } from "@/lib/utils/cards";
 
 export function ReportScreen() {
@@ -114,6 +114,7 @@ export function ReportScreen() {
         <div className="flex flex-col gap-2">
           {rounds.map((round) => {
             const total = computeHandTotal(dealerVisibleCards(round.dealerHand));
+            const dealerResult = deriveDealerResult(round.dealerHand.cards);
             return (
               <div key={round.id} className="rounded-lg border border-border bg-surface p-2 text-xs">
                 <p className="mb-1 font-semibold text-foreground">
@@ -122,7 +123,7 @@ export function ReportScreen() {
                 <p className="mb-1 text-muted-foreground">
                   Dealer: {dealerVisibleCards(round.dealerHand).map(formatCard).join(" ") || "—"} (
                   {total.value}
-                  {round.dealerHand.result ? `, ${round.dealerHand.result}` : ""})
+                  {dealerResult ? `, ${dealerResult}` : ""})
                 </p>
                 {Object.values(round.seats).map(
                   (seat) =>

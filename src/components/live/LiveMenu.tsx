@@ -26,6 +26,8 @@ import { BottomStatusBar } from "./BottomStatusBar";
 import { TableEventsSheet } from "./TableEventsSheet";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { completeInvestigation, listInvestigations } from "@/lib/db/repositories/investigations";
+import type { RoundExceptionReason } from "@/lib/db/repositories/investigations";
+import { diagnostics } from "@/lib/diagnostics/logger";
 import { downloadInvestigationJson } from "@/lib/export/toJson";
 import { newShoeOrDeckLabel } from "@/lib/utils/gameConfig";
 import { canCompleteRound } from "@/lib/utils/roundValidation";
@@ -103,7 +105,6 @@ export function LiveMenu() {
     completeRoundAndStartNewShoe,
     voidRoundAndStartNewShoe,
     misdealAndAdvance,
-    refresh,
     busy,
   } = useInvestigationContext();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -146,16 +147,41 @@ export function LiveMenu() {
     setIncompletePromptOpen(false);
   }
 
-  async function handleMisdeal() {
-    await misdealAndAdvance();
+  async function handleMisdeal(reason: RoundExceptionReason) {
+    await misdealAndAdvance(reason);
     setMisdealConfirmOpen(false);
   }
 
   async function handleEndInvestigation() {
     setEnding(true);
     try {
+      diagnostics.info("investigation-lifecycle", "End Investigation pressed", {
+        investigationId: investigation.localId,
+        statusBefore: investigation.status,
+      });
       await completeInvestigation(investigation.localId);
-      await refresh();
+      diagnostics.info("investigation-lifecycle", "status written to closed, navigating to / to force ConsoleShell to re-resolve", {
+        investigationId: investigation.localId,
+      });
+      // ConsoleShell resolves the active investigation via useActiveInvestigation,
+      // which fetches once on mount and never re-queries — refresh() alone updates
+      // this context's own copy in place but leaves ConsoleShell pointed at the
+      // now-closed investigation forever, since its resolved id never becomes
+      // null again. A full navigation back to "/" forces ConsoleShell to remount
+      // and re-resolve against Dexie's current (closed) status, landing on
+      // EmptyConsole instead of leaving the operator stuck on a closed console.
+      //
+      // window.location.assign("/") alone is not enough when already at "/"
+      // (the common case — root is the primary entry point): browsers treat
+      // navigating to an identical URL as a no-op, so nothing actually
+      // reloads. reload() is used explicitly in that case; assign() still
+      // handles the /investigations/[id]/live deep-link case correctly,
+      // since that URL genuinely differs from "/".
+      if (window.location.pathname === "/") {
+        window.location.reload();
+      } else {
+        window.location.assign("/");
+      }
     } finally {
       setEnding(false);
       setEndConfirmOpen(false);
@@ -306,16 +332,41 @@ export function LiveMenu() {
         </div>
       )}
 
-      <ConfirmDialog
-        open={misdealConfirmOpen}
-        title="Declare a misdeal?"
-        message="Voids this hand's outcomes and moves on to the next hand in the same shoe. Cards already exposed stay recorded — the running count and shoe history are unaffected."
-        confirmLabel="Misdeal"
-        destructive
-        busy={busy}
-        onConfirm={handleMisdeal}
-        onCancel={() => setMisdealConfirmOpen(false)}
-      />
+      {misdealConfirmOpen && (
+        <BottomSheet
+          open
+          onClose={() => setMisdealConfirmOpen(false)}
+          title="Declare a round exception"
+        >
+          <div className="flex flex-col gap-2 pb-4">
+            <p className="text-xs text-muted-foreground">
+              Voids this hand&apos;s outcomes and moves on to the next hand in the same shoe. Cards
+              already exposed stay recorded — the running count and shoe history are unaffected.
+            </p>
+            <button
+              disabled={busy}
+              onClick={() => handleMisdeal("misdeal")}
+              className="tap-target rounded-xl border border-pending/60 bg-pending/10 px-3 text-left text-sm font-medium text-pending hover:bg-pending/15 disabled:opacity-40"
+            >
+              Misdeal
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => handleMisdeal("incomplete-observation")}
+              className="tap-target rounded-xl border border-pending/60 bg-pending/10 px-3 text-left text-sm font-medium text-pending hover:bg-pending/15 disabled:opacity-40"
+            >
+              Incomplete Observation
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => handleMisdeal("dealer-error")}
+              className="tap-target rounded-xl border border-pending/60 bg-pending/10 px-3 text-left text-sm font-medium text-pending hover:bg-pending/15 disabled:opacity-40"
+            >
+              Dealer Error
+            </button>
+          </div>
+        </BottomSheet>
+      )}
 
       {tableEventsOpen && <TableEventsSheet onClose={() => setTableEventsOpen(false)} />}
 

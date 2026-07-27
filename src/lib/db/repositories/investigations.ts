@@ -871,6 +871,36 @@ export async function completeInvestigation(localId: string): Promise<void> {
   await updateInvestigation(localId, { status: "closed" });
 }
 
+/**
+ * Wipes only this investigation's live table state back to a single fresh
+ * round — cards, wagers, hand state, running counts (derived from round
+ * history, so clearing the rounds clears them), and seat occupancy/grouping.
+ * Investigation identity (casino, table, dealer, operator, notes,
+ * displayId/localId/createdAt) and every OTHER investigation are untouched.
+ * The "Reset Current Investigation" action in Settings.
+ */
+export async function resetInvestigationLiveState(localId: string): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+  const now = new Date().toISOString();
+
+  const round1 = createRound(1, 1);
+  round1.eventLog.push({
+    id: uuidv4(),
+    timestamp: now,
+    type: "round-saved",
+    message: "Round 1 started (Shoe 1) — investigation reset",
+  });
+
+  await updateInvestigation(localId, {
+    rounds: [round1],
+    occupiedSeats: [],
+    playerGroups: {},
+    seatPlayerGroups: {},
+    activeTarget: "dealer",
+  });
+}
+
 /** Destructive — clears every locally stored investigation. Gated behind a strong confirmation in Settings. */
 export async function resetAllData(): Promise<void> {
   await getDb().investigations.clear();

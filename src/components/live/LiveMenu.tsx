@@ -274,7 +274,9 @@ export function LiveMenu() {
       </BottomSheet>
 
       <BottomSheet open={overlay === "settings"} onClose={() => setOverlay(null)} title="Settings">
-        <SettingsScreen />
+        <SettingsScreen
+          activeInvestigation={{ localId: investigation.localId, displayId: investigation.displayId }}
+        />
       </BottomSheet>
 
       <BottomSheet open={overlay === "help"} onClose={() => setOverlay(null)} title="Help">

@@ -4,9 +4,17 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSettingsStore, type WorkflowAssistanceLevel } from "@/store/useSettingsStore";
 import type { TerminologyLevel } from "@/lib/terminology";
-import { listInvestigations, resetAllData } from "@/lib/db/repositories/investigations";
+import {
+  completeInvestigation,
+  createInvestigation,
+  listInvestigations,
+  resetAllData,
+  resetInvestigationLiveState,
+} from "@/lib/db/repositories/investigations";
+import { DEFAULT_GAME_CONFIG } from "@/types/investigation";
 import { findOrCreatePracticeInvestigation } from "@/lib/onboarding/practiceInvestigationSeed";
 import { downloadDiagnostics, exportDiagnostics } from "@/lib/diagnostics/logger";
+import { useServiceWorkerUpdate } from "@/hooks/useServiceWorkerUpdate";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
@@ -26,7 +34,17 @@ const ASSISTANCE_OPTIONS: { value: WorkflowAssistanceLevel; label: string; hint:
   { value: "guided", label: "Guided", hint: "Add explanations for new operators" },
 ];
 
-export function SettingsScreen() {
+interface SettingsScreenProps {
+  /**
+   * Only present when Settings is opened from inside a live investigation
+   * (LiveMenu) — the standalone /settings route has no investigation
+   * context to read, so it passes nothing and the two investigation-scoped
+   * actions below stay hidden there.
+   */
+  activeInvestigation?: { localId: string; displayId: string } | null;
+}
+
+export function SettingsScreen({ activeInvestigation }: SettingsScreenProps = {}) {
   const router = useRouter();
   const {
     showGuidedTips,
@@ -38,11 +56,25 @@ export function SettingsScreen() {
     showGroupLabels,
     setShowGroupLabels,
   } = useSettingsStore();
+  const {
+    updateAvailable,
+    supported: swSupported,
+    activeScriptURL,
+    cacheNames,
+    checking,
+    checkNow,
+    activateUpdate,
+  } = useServiceWorkerUpdate();
   const [practiceLoading, setPracticeLoading] = useState(false);
   const [resetConfirming, setResetConfirming] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
+  const [checkedOnce, setCheckedOnce] = useState(false);
+  const [startFreshConfirming, setStartFreshConfirming] = useState(false);
+  const [startingFresh, setStartingFresh] = useState(false);
+  const [resetCurrentConfirming, setResetCurrentConfirming] = useState(false);
+  const [resettingCurrent, setResettingCurrent] = useState(false);
 
   async function handlePractice() {
     setPracticeLoading(true);
@@ -78,6 +110,54 @@ export function SettingsScreen() {
       downloadDiagnostics(await exportDiagnostics());
     } finally {
       setExportingDiagnostics(false);
+    }
+  }
+
+  async function handleCheckForUpdate() {
+    await checkNow();
+    setCheckedOnce(true);
+  }
+
+  function handleReloadApp() {
+    window.location.reload();
+  }
+
+  async function handleStartFresh() {
+    if (!activeInvestigation) return;
+    setStartingFresh(true);
+    try {
+      await completeInvestigation(activeInvestigation.localId);
+      const fresh = await createInvestigation({
+        casino: "",
+        tableNumber: "",
+        dealerName: "",
+        investigationDate: new Date().toISOString().slice(0, 10),
+        operatorName: "",
+        countingSystem: "Hi-Lo",
+        shoeTotalDecks: DEFAULT_GAME_CONFIG.deckCount,
+        blackjackFormat: DEFAULT_GAME_CONFIG.format,
+        ruleProfile: DEFAULT_GAME_CONFIG.ruleProfile,
+        entryDirection: DEFAULT_GAME_CONFIG.entryDirection,
+        playerSpotCount: DEFAULT_GAME_CONFIG.playerSpotCount,
+        practiceMode: DEFAULT_GAME_CONFIG.practiceMode,
+        status: "active",
+      });
+      router.push(`/investigations/${fresh.localId}/live`);
+    } finally {
+      setStartingFresh(false);
+      setStartFreshConfirming(false);
+    }
+  }
+
+  async function handleResetCurrent() {
+    if (!activeInvestigation) return;
+    setResettingCurrent(true);
+    try {
+      await resetInvestigationLiveState(activeInvestigation.localId);
+      window.location.reload();
+    } finally {
+      setResettingCurrent(false);
+      setResetCurrentConfirming(false);
     }
   }
 
@@ -181,12 +261,61 @@ export function SettingsScreen() {
       </Button>
 
       <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
+        <h2 className="text-sm font-semibold text-foreground">App &amp; Updates</h2>
+        <Button variant="secondary" disabled={checking} onClick={handleCheckForUpdate}>
+          {checking ? "Checking…" : "Check for Update"}
+        </Button>
+        {checkedOnce && !checking && (
+          <div className="rounded-md border border-border bg-surface-raised p-2 text-xs">
+            {updateAvailable ? (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-accent">New EyeOnPit version available</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setCheckedOnce(false)}
+                    className="tap-target rounded-md px-2 text-muted-foreground hover:text-foreground"
+                  >
+                    Later
+                  </button>
+                  <button
+                    onClick={activateUpdate}
+                    className="tap-target rounded-md bg-accent px-3 font-semibold text-accent-foreground"
+                  >
+                    Update Now
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <span className="text-muted-foreground">You&apos;re on the latest version.</span>
+            )}
+          </div>
+        )}
+        <Button variant="secondary" onClick={handleReloadApp}>
+          Reload App
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          Reloads the app in place. Saved investigations and the current investigation are preserved — this is
+          not a reset.
+        </p>
+      </section>
+
+      {activeInvestigation && (
+        <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
+          <h2 className="text-sm font-semibold text-foreground">Current Investigation</h2>
+          <p className="text-xs text-muted-foreground">{activeInvestigation.displayId}</p>
+          <Button variant="secondary" onClick={() => setStartFreshConfirming(true)}>
+            Start Fresh Investigation
+          </Button>
+          <Button variant="destructive" onClick={() => setResetCurrentConfirming(true)}>
+            Reset Current Investigation
+          </Button>
+        </section>
+      )}
+
+      <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
         <h2 className="text-sm font-semibold text-foreground">Data</h2>
         <Button variant="secondary" disabled={exporting} onClick={handleExportAll}>
           {exporting ? "Exporting…" : "Export All Investigations (JSON)"}
-        </Button>
-        <Button variant="destructive" onClick={() => setResetConfirming(true)}>
-          Reset All Local Data
         </Button>
       </section>
 
@@ -203,6 +332,9 @@ export function SettingsScreen() {
               : "—"
           }
         />
+        <AboutRow label="Service Worker" value={swSupported ? (activeScriptURL ? "Active" : "Registering…") : "Unsupported"} />
+        <AboutRow label="Active Cache" value={cacheNames.length > 0 ? cacheNames.join(", ") : "—"} />
+        <AboutRow label="Update Waiting" value={updateAvailable ? "Yes" : "No"} />
       </section>
 
       <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
@@ -212,10 +344,42 @@ export function SettingsScreen() {
         </Button>
       </section>
 
+      <section className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-surface p-3">
+        <h2 className="text-sm font-semibold text-destructive">Advanced / Danger Zone</h2>
+        <p className="text-xs text-muted-foreground">
+          These actions are destructive and cannot be undone. Only use them if you understand what will be
+          deleted.
+        </p>
+        <Button variant="destructive" onClick={() => setResetConfirming(true)}>
+          Full Local Data Reset
+        </Button>
+      </section>
+
+      <ConfirmDialog
+        open={startFreshConfirming}
+        title="Start a fresh investigation?"
+        message={`Ends "${activeInvestigation?.displayId}" (it stays in History, fully intact) and opens a brand-new blank investigation. Nothing is deleted.`}
+        confirmLabel="Start Fresh"
+        busy={startingFresh}
+        onConfirm={handleStartFresh}
+        onCancel={() => setStartFreshConfirming(false)}
+      />
+
+      <ConfirmDialog
+        open={resetCurrentConfirming}
+        title="Reset this investigation?"
+        message={`Clears all cards, wagers, hand state, running counts, and seat occupancy for "${activeInvestigation?.displayId}" back to a fresh Round 1. Casino/table/dealer details and notes are kept. Every other saved investigation is untouched. This cannot be undone.`}
+        confirmLabel="Reset Investigation"
+        destructive
+        busy={resettingCurrent}
+        onConfirm={handleResetCurrent}
+        onCancel={() => setResetCurrentConfirming(false)}
+      />
+
       <ConfirmDialog
         open={resetConfirming}
         title="Reset all local data?"
-        message="This permanently deletes every investigation stored on this device, including closed ones. This cannot be undone."
+        message="This permanently deletes every investigation stored on this device, including closed ones, plus all local settings. This cannot be undone."
         confirmLabel="Delete Everything"
         destructive
         busy={resetting}

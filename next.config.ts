@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { version as appVersion } from "./package.json";
 
 const nextConfig: NextConfig = {
   // Pin the workspace root: an unrelated package-lock.json in the parent
@@ -7,12 +8,17 @@ const nextConfig: NextConfig = {
     root: __dirname,
   },
 
-  // Surfaces the deployed commit to the client (Settings > Export
-  // Diagnostics, the recovery screen) so a bug report can be tied to an
-  // exact build — Vercel sets VERCEL_GIT_COMMIT_SHA at build time, but
-  // only NEXT_PUBLIC_-prefixed vars ship to the browser bundle.
+  // Surfaces build identity to the client (Settings > About, Export
+  // Diagnostics, the recovery screen) so desktop, mobile, and an installed
+  // PWA can all be confirmed to be running the same deploy — Vercel sets
+  // VERCEL_GIT_COMMIT_SHA at build time, but only NEXT_PUBLIC_-prefixed
+  // vars ship to the browser bundle. Build date is captured once, here, at
+  // build time — evaluating Date.now() at request/render time would give
+  // every visitor a different value.
   env: {
     NEXT_PUBLIC_BUILD_ID: process.env.VERCEL_GIT_COMMIT_SHA ?? "local",
+    NEXT_PUBLIC_APP_VERSION: appVersion,
+    NEXT_PUBLIC_BUILD_DATE: new Date().toISOString(),
   },
 
   // Vercel-readiness baseline security headers, plus a no-cache rule for

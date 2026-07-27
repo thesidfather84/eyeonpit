@@ -190,11 +190,23 @@ export function SettingsScreen() {
         </Button>
       </section>
 
+      <section className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface p-3">
+        <h2 className="mb-1 text-sm font-semibold text-foreground">About</h2>
+        <AboutRow label="Application Version" value={process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"} />
+        <AboutRow label="Git Commit" value={process.env.NEXT_PUBLIC_BUILD_ID ?? "local"} />
+        <AboutRow label="Build ID" value={(process.env.NEXT_PUBLIC_BUILD_ID ?? "local").slice(0, 7)} />
+        <AboutRow
+          label="Build Date"
+          value={
+            process.env.NEXT_PUBLIC_BUILD_DATE
+              ? new Date(process.env.NEXT_PUBLIC_BUILD_DATE).toLocaleString()
+              : "—"
+          }
+        />
+      </section>
+
       <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
         <h2 className="text-sm font-semibold text-foreground">Diagnostics</h2>
-        <p className="text-xs text-muted-foreground">
-          Build {process.env.NEXT_PUBLIC_BUILD_ID?.slice(0, 7) ?? "local"}
-        </p>
         <Button variant="secondary" disabled={exportingDiagnostics} onClick={handleExportDiagnostics}>
           {exportingDiagnostics ? "Exporting…" : "Export Diagnostics"}
         </Button>
@@ -210,6 +222,16 @@ export function SettingsScreen() {
         onConfirm={handleReset}
         onCancel={() => setResetConfirming(false)}
       />
+    </div>
+  );
+}
+
+/** One label/value line in the About section — lets desktop, mobile browser, and an installed PWA be compared side by side to confirm they're the same build. */
+function AboutRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2 text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="truncate font-mono text-foreground">{value}</span>
     </div>
   );
 }

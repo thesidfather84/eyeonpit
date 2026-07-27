@@ -54,6 +54,7 @@ function normalizePersistedSettings(raw: unknown): Partial<SettingsState> {
     workflowAssistance: WORKFLOW_LEVELS.includes(r.workflowAssistance as WorkflowAssistanceLevel)
       ? (r.workflowAssistance as WorkflowAssistanceLevel)
       : "basic",
+    showGroupLabels: typeof r.showGroupLabels === "boolean" ? r.showGroupLabels : false,
   };
 
   const looksMalformed =
@@ -82,11 +83,14 @@ interface SettingsState {
   terminologyLevel: TerminologyLevel;
   /** Governs the Operator Assistant bar. Off = no bar at all; Basic = next-step message only; Guided = message plus a fuller explanation for new operators. */
   workflowAssistance: WorkflowAssistanceLevel;
+  /** Accessibility: shows a small A/B/C letter badge on linked seats, so grouping isn't communicated by ring color alone. Off by default — the color ring is the primary signal, this is an opt-in reinforcement. */
+  showGroupLabels: boolean;
   completeOnboarding: () => void;
   setShowGuidedTips: (value: boolean) => void;
   dismissHint: (id: string) => void;
   setTerminologyLevel: (level: TerminologyLevel) => void;
   setWorkflowAssistance: (level: WorkflowAssistanceLevel) => void;
+  setShowGroupLabels: (value: boolean) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -97,6 +101,7 @@ export const useSettingsStore = create<SettingsState>()(
       dismissedHints: [],
       terminologyLevel: "casinoProfessional",
       workflowAssistance: "basic",
+      showGroupLabels: false,
       completeOnboarding: () => set({ hasCompletedOnboarding: true }),
       setShowGuidedTips: (value) => set({ showGuidedTips: value }),
       dismissHint: (id) =>
@@ -107,6 +112,7 @@ export const useSettingsStore = create<SettingsState>()(
         ),
       setTerminologyLevel: (level) => set({ terminologyLevel: level }),
       setWorkflowAssistance: (level) => set({ workflowAssistance: level }),
+      setShowGroupLabels: (value) => set({ showGroupLabels: value }),
     }),
     {
       name: "eyeonpit:settings",

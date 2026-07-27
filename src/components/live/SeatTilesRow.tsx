@@ -7,8 +7,10 @@ import { computeHandTotal } from "@/lib/utils/blackjackTotal";
 import { formatCard } from "@/lib/utils/cards";
 import { seatNumbersFor } from "@/lib/utils/seats";
 import { splitTargetFor } from "@/lib/utils/seatTarget";
+import { seatRingFor } from "@/lib/utils/seatGroupColor";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import type { CardTarget } from "@/contexts/InvestigationContext";
+import { useSettingsStore } from "@/store/useSettingsStore";
 import { SeatOptionsSheet } from "./SeatOptionsSheet";
 import { ManageSeatsSheet } from "./ManageSeatsSheet";
 import { DealerTile } from "./DealerTile";
@@ -43,6 +45,7 @@ const AP_DOT_CLASSES: Record<string, string> = {
 export function SeatTilesRow() {
   const { investigation, currentRound, activeTarget, occupySeat, selectSeat, setActiveTarget } =
     useInvestigationContext();
+  const showGroupLabels = useSettingsStore((s) => s.showGroupLabels);
   const apBySeat = computeApLikelihoodBySeat(investigation, currentRound.shoeNumber);
   const seats = seatNumbersFor(investigation);
   const [optionsSeat, setOptionsSeat] = useState<number | null>(null);
@@ -96,6 +99,7 @@ export function SeatTilesRow() {
             : [];
           const spotIndex = linkedSeatNumbers.indexOf(seat) + 1;
           const spotCount = linkedSeatNumbers.length;
+          const ring = seatRingFor(isOccupied, spotCount, groupId);
 
           let toneClasses = "border-dashed border-border/60 bg-transparent text-muted-foreground";
           if (isOccupied) {
@@ -117,11 +121,25 @@ export function SeatTilesRow() {
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") endPress(seat);
               }}
-              style={{ touchAction: "manipulation", transform: `translateY(${curveOffset}px)` }}
-              className={`tap-target relative flex min-h-[68px] flex-col justify-center gap-0.5 rounded-xl py-1.5 pl-2 pr-1 ${toneClasses} ${
+              style={{
+                touchAction: "manipulation",
+                transform: `translateY(${curveOffset}px)`,
+                boxShadow: ring ? `0 0 0 2px ${ring.color}` : undefined,
+              }}
+              className={`tap-target relative flex min-h-[68px] flex-col justify-center gap-0.5 rounded-xl py-1.5 pl-2 pr-1 transition-shadow duration-200 ${toneClasses} ${
                 isActive ? "border-2" : "border"
               }`}
             >
+              {ring && showGroupLabels && ring.letter && (
+                <span
+                  className="absolute -left-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold text-white"
+                  style={{ backgroundColor: ring.color }}
+                  aria-label={`Linked player group ${ring.letter}`}
+                >
+                  {ring.letter}
+                </span>
+              )}
+
               {isOccupied && !isActive && ap && (
                 <span
                   className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${AP_DOT_CLASSES[ap.level]}`}

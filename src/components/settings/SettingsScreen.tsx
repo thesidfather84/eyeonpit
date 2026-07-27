@@ -35,6 +35,8 @@ export function SettingsScreen() {
     setTerminologyLevel,
     workflowAssistance,
     setWorkflowAssistance,
+    showGroupLabels,
+    setShowGroupLabels,
   } = useSettingsStore();
   const [practiceLoading, setPracticeLoading] = useState(false);
   const [resetConfirming, setResetConfirming] = useState(false);
@@ -105,9 +107,24 @@ export function SettingsScreen() {
             {showGuidedTips ? "ON" : "OFF"}
           </button>
         </div>
-        <div className="flex items-center justify-between">
+        <div className="mb-3 flex items-center justify-between">
           <span className="text-sm font-medium text-foreground">Dark theme</span>
           <span className="text-xs text-muted-foreground">Always on</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="block text-sm font-medium text-foreground">Linked seat labels</span>
+            <span className="block text-xs text-muted-foreground">Show A/B/C letter on linked seats, not just the ring color</span>
+          </div>
+          <button
+            onClick={() => setShowGroupLabels(!showGroupLabels)}
+            aria-pressed={showGroupLabels}
+            className={`tap-target rounded-full px-4 text-xs font-bold ${
+              showGroupLabels ? "bg-accent text-accent-foreground" : "border border-border text-muted-foreground"
+            }`}
+          >
+            {showGroupLabels ? "ON" : "OFF"}
+          </button>
         </div>
       </section>
 

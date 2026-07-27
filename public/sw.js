@@ -16,7 +16,7 @@
 // keep cache-first: a real new build always emits new filenames, so there
 // is no staleness risk there, only a speed win.
 
-const CACHE_NAME = "eyeonpit-shell-v2";
+const CACHE_NAME = "eyeonpit-shell-v3";
 const APP_SHELL_URLS = ["/", "/favicon.ico"];
 
 self.addEventListener("install", (event) => {

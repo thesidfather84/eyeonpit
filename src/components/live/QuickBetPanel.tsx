@@ -70,13 +70,13 @@ export function QuickBetPanel({ target }: { target: number }) {
         : null;
 
   return (
-    <div className="flex-none border-b border-border bg-surface p-1.5">
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-xs font-bold text-foreground">
+    <div className="flex-none border-b border-border bg-surface p-0.5">
+      <div className="mb-0 flex items-center justify-between">
+        <span className="text-[11px] font-bold leading-none text-foreground">
           {t.currentBet.toUpperCase()} — SEAT {seatNumber}
           {isSplit ? " · SPLIT" : ""}
         </span>
-        <span className="flex items-center gap-2 text-xs">
+        <span className="flex items-center gap-2 text-[11px] leading-none">
           <span className="text-muted-foreground">
             {t.baseBet} <span className="font-medium text-foreground">${startingWager}</span>
           </span>
@@ -95,18 +95,20 @@ export function QuickBetPanel({ target }: { target: number }) {
         </span>
       </div>
       {record?.doubled && (
-        <p className="mb-1.5 text-[10px] font-semibold text-pending">
+        <p className="mb-1 text-[10px] font-semibold text-pending">
           DOUBLED — wager locked, waiting for one final card
         </p>
       )}
 
-      <div className="mb-1.5 grid grid-cols-4 gap-1 sm:grid-cols-7">
+      {/* One horizontal-scroll row, never wraps — a fixed 2-row chip grid was
+          the single biggest contributor to this panel's height. */}
+      <div className="mb-0 flex gap-1 overflow-x-auto">
         {CHIPS.map((chip) => (
           <button
             key={chip}
             disabled={disabled}
             onClick={() => applyBet(chip)}
-            className={`tap-target rounded-md text-xs font-semibold disabled:opacity-40 ${
+            className={`tap-target shrink-0 rounded-md px-3 text-xs font-semibold disabled:opacity-40 ${
               currentBet === chip
                 ? "bg-accent text-accent-foreground"
                 : "border border-border bg-surface-raised text-foreground"
@@ -118,14 +120,14 @@ export function QuickBetPanel({ target }: { target: number }) {
         <button
           disabled={disabled}
           onClick={() => setCustomOpen((v) => !v)}
-          className="tap-target rounded-md border border-border bg-surface-raised text-xs font-semibold text-foreground disabled:opacity-40"
+          className="tap-target shrink-0 rounded-md border border-border bg-surface-raised px-3 text-xs font-semibold text-foreground disabled:opacity-40"
         >
           CUSTOM
         </button>
       </div>
 
       {customOpen && (
-        <div className="mb-1.5 flex gap-1.5">
+        <div className="mb-1 flex gap-1.5">
           <input
             type="number"
             inputMode="numeric"
@@ -145,46 +147,47 @@ export function QuickBetPanel({ target }: { target: number }) {
         </div>
       )}
 
-      <div className="grid grid-cols-4 gap-1">
+      <div className="flex items-center gap-1">
+        <button
+          disabled={disabled}
+          onClick={() => applyBet(Math.max(0, currentBet - BET_STEP))}
+          aria-label="Decrease bet"
+          className="tap-target shrink-0 rounded-md border border-border bg-surface-raised px-3 text-base font-semibold text-foreground disabled:opacity-40"
+        >
+          −
+        </button>
+        <span className="w-12 shrink-0 text-center text-xs font-semibold text-foreground">
+          ${currentBet}
+        </span>
+        <button
+          disabled={disabled}
+          onClick={() => applyBet(currentBet + BET_STEP)}
+          aria-label="Increase bet"
+          className="tap-target shrink-0 rounded-md border border-accent bg-accent/15 px-3 text-base font-semibold text-accent disabled:opacity-40"
+        >
+          +
+        </button>
         <button
           disabled={disabled || previousStartingWager == null}
           onClick={() => applyBet(previousStartingWager ?? currentBet, "repeat")}
-          className="tap-target rounded-md border border-border bg-surface-raised text-[10px] font-medium text-foreground disabled:opacity-40"
+          className="tap-target flex-1 rounded-md border border-border bg-surface-raised text-[10px] font-medium text-foreground disabled:opacity-40"
         >
-          Repeat {t.baseBet}
+          Repeat
         </button>
         <button
           disabled={disabled}
           onClick={() => applyBet(0, "clear")}
-          className="tap-target rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
+          className="tap-target flex-1 rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
         >
           Clear
         </button>
         <button
           disabled={!canUndo || busy}
           onClick={undo}
-          className="tap-target rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
+          className="tap-target flex-1 rounded-md border border-border bg-surface-raised text-[10px] font-medium text-foreground disabled:opacity-40"
         >
-          Undo Chip
+          Undo
         </button>
-        <div className="grid grid-cols-2 gap-1">
-          <button
-            disabled={disabled}
-            onClick={() => applyBet(Math.max(0, currentBet - BET_STEP))}
-            aria-label="Decrease bet"
-            className="tap-target rounded-md border border-border bg-surface-raised text-base font-semibold text-foreground disabled:opacity-40"
-          >
-            −
-          </button>
-          <button
-            disabled={disabled}
-            onClick={() => applyBet(currentBet + BET_STEP)}
-            aria-label="Increase bet"
-            className="tap-target rounded-md border border-accent bg-accent/15 text-base font-semibold text-accent disabled:opacity-40"
-          >
-            +
-          </button>
-        </div>
       </div>
 
       {isLinked && (

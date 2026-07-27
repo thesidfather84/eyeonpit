@@ -35,7 +35,13 @@ export function CardEntryPad() {
       ? resolveSeatTarget(currentRound, activeTarget)
       : null;
   const locked = seatResolved ? isSeatLocked(seatResolved.record) : false;
-  const disabled = busy || investigation.status !== "active" || currentRound.completed || locked;
+  // A seat can now be the active target without being enabled/occupied —
+  // selecting is no longer the same action as occupying. There's nothing
+  // to append a card to yet, so the keypad stays disabled with a clear
+  // reason instead of silently no-opping.
+  const notEnabled = seatResolved != null && !seatResolved.record;
+  const disabled =
+    busy || investigation.status !== "active" || currentRound.completed || locked || notEnabled;
 
   const targetLabel = isDealerTarget
     ? "DEALER"
@@ -75,9 +81,9 @@ export function CardEntryPad() {
   }
 
   return (
-    <div className="flex-none border-b border-border bg-surface p-1.5">
-      <div className="mb-1.5 flex items-center justify-between gap-2">
-        <p className="text-center text-sm font-bold text-accent-secondary">
+    <div className="flex-none border-b border-border bg-surface p-0.5">
+      <div className="mb-0 flex items-center justify-between gap-2">
+        <p className="text-center text-sm font-bold leading-none text-accent-secondary">
           ENTER CARD → {targetLabel}
         </p>
         <button
@@ -89,23 +95,24 @@ export function CardEntryPad() {
           <Undo2 className="h-3 w-3" aria-hidden /> Undo Last Card
         </button>
       </div>
-      {lastCardEvent && (
-        <p className="mb-1.5 text-center text-[10px] text-muted-foreground">
-          Last: {lastCardEvent.message}
+      {(lastCardEvent || locked || notEnabled) && (
+        <p
+          className={`mb-0 text-center text-[10px] leading-tight ${locked || notEnabled ? "font-semibold text-pending" : "text-muted-foreground"}`}
+        >
+          {notEnabled
+            ? "Seat not enabled — double-tap to enable"
+            : locked
+              ? "Hand locked — no further cards"
+              : `Last: ${lastCardEvent!.message}`}
         </p>
       )}
-      {locked && (
-        <p className="mb-1.5 text-center text-[10px] font-semibold text-pending">
-          Hand locked — no further cards
-        </p>
-      )}
-      <div className="grid grid-cols-5 gap-1.5">
+      <div className="grid grid-cols-5 gap-x-1 gap-y-0.5">
         {RANKS.map((rank) => (
           <button
             key={rank}
             disabled={disabled}
             onClick={() => handleTap(rank)}
-            className="tap-target flex h-12 items-center justify-center rounded-lg border border-border bg-surface-raised text-lg font-bold text-foreground active:bg-accent active:text-accent-foreground disabled:opacity-40"
+            className="tap-target flex h-11 items-center justify-center rounded-lg border border-border bg-surface-raised text-lg font-bold text-foreground active:bg-accent active:text-accent-foreground disabled:opacity-40"
           >
             {rank}
           </button>

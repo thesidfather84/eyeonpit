@@ -22,6 +22,7 @@ import {
   unlinkSeat as unlinkSeatRepo,
   updateInvestigation,
 } from "@/lib/db/repositories/investigations";
+import type { RoundExceptionReason } from "@/lib/db/repositories/investigations";
 import { orderedSeatNumbersFor } from "@/lib/utils/seats";
 import { computeShoeStats } from "@/lib/analysis/shoeStats";
 import { diagnostics } from "@/lib/diagnostics/logger";
@@ -120,8 +121,8 @@ interface InvestigationContextValue {
   clearSeatHand: (seatNumber: number) => Promise<void>;
   /** Creates the seat's second hand after Split. No-op if the seat has no primary hand yet or is already split. */
   splitSeat: (seatNumber: number) => Promise<void>;
-  /** Voids the current hand's outcomes (keeping its exposed cards, so the count stays correct) and immediately begins the next hand in the same shoe. Bypasses canCompleteRound()'s validation — a misdeal is an explicit declaration, not a normal resolution. */
-  misdealAndAdvance: () => Promise<void>;
+  /** Voids the current hand's outcomes (keeping its exposed cards, so the count stays correct) and immediately begins the next hand in the same shoe. Bypasses canCompleteRound()'s validation — this is an explicit declared exception (Misdeal / Incomplete Observation / Dealer Error), not a normal resolution. */
+  misdealAndAdvance: (reason?: RoundExceptionReason) => Promise<void>;
   /** Logs a table event (dealer change, shuffle, seat/player joins-leaves, table closed) to the current round. */
   logTableEvent: (kind: TableEventKind, detail?: string) => Promise<void>;
 }
@@ -169,13 +170,22 @@ export function InvestigationProvider({
 
   const currentRound = investigation?.rounds[investigation.rounds.length - 1];
 
-  // Undo/redo history is scoped to the current round. Reset it the moment
-  // the round changes by adjusting state during render (React's documented
-  // pattern for this) rather than an effect — avoids an extra render tick
-  // and the set-state-in-effect lint rule.
-  const [historyRoundId, setHistoryRoundId] = useState<string | undefined>(currentRound?.id);
-  if (currentRound?.id !== historyRoundId) {
-    setHistoryRoundId(currentRound?.id);
+  // Undo/redo history is scoped to the current investigation, not the
+  // current round — reset only when switching investigations, by adjusting
+  // state during render (React's documented pattern for this) rather than
+  // an effect. Every action that changes WHICH round is current
+  // (completeRoundAndAdvance, misdealAndAdvance, the New Shoe actions)
+  // pushes a "rounds-snapshot" entry first, and undo/redo of that entry
+  // replace the whole `rounds` array rather than targeting `currentRound.id`
+  // — so it stays correct across the boundary. Resetting on every round
+  // change here used to discard that entry before an operator could ever
+  // reach it, silently breaking "Undo" for an accidental Next Hand/Misdeal/
+  // New Shoe tap despite that being the documented intent below.
+  const [historyInvestigationId, setHistoryInvestigationId] = useState<string | undefined>(
+    investigation?.localId
+  );
+  if (investigation?.localId !== historyInvestigationId) {
+    setHistoryInvestigationId(investigation?.localId);
     setHistory([]);
     setFuture([]);
   }
@@ -597,12 +607,12 @@ export function InvestigationProvider({
     [investigation, currentRound, refresh, pushHistory]
   );
 
-  const misdealAndAdvance = useCallback(async () => {
+  const misdealAndAdvance = useCallback(async (reason: RoundExceptionReason = "misdeal") => {
     if (!investigation || !currentRound) return;
     setBusy(true);
     try {
       pushHistory({ kind: "rounds-snapshot", rounds: investigation.rounds });
-      await misdealRoundRepo(investigation.localId, currentRound.id);
+      await misdealRoundRepo(investigation.localId, currentRound.id, reason);
       await advanceRoundRepo(investigation.localId, { newShoe: false });
       const ordered = orderedSeatNumbersFor(investigation);
       setActiveTarget(investigation.entryMode === "guided" ? (ordered[0] ?? "dealer") : "dealer");

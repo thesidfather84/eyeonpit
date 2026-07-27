@@ -11,25 +11,35 @@ function checkHand(hand: SeatRoundRecord | undefined, label: string, reasons: st
   const hasActiveWager = hand.betAmount != null && hand.betAmount > 0;
   if (!hasActiveWager) return;
 
-  if (hand.outcome == null) {
-    reasons.push(`${label} has no result`);
+  // Win/Loss/Push/Blackjack are never a manual result to wait for — they're
+  // derived automatically from the final cards the instant the round
+  // completes (see completeRound() in the investigations repository). What
+  // Complete Round still needs is something to derive an outcome FROM: a
+  // wagered hand with zero cards recorded has nothing to compare against
+  // the dealer's hand, so that's the one thing that still blocks here.
+  // Surrender/Void/Manual-Blackjack already set `outcome` immediately when
+  // tapped and are unaffected by this check either way.
+  if (hand.playerCards.length === 0 && hand.outcome == null) {
+    reasons.push(`${label} has no cards recorded`);
   }
 }
 
 /**
- * Complete Round stays disabled until every occupied wager this round has
- * an outcome and the dealer's cards are recorded — a completeness check on
- * the observation record, not a gameplay rule. There's no "dealer result
- * resolved" requirement anymore: the dealer hand is just a card list, and
- * its bust/blackjack/total status is always derived live from whatever
- * cards exist (lib/utils/blackjackTotal.ts), never a separate thing to
- * declare. Split hands are checked exactly like their seat's primary hand.
+ * Complete Round stays disabled until the dealer's cards are recorded and
+ * every occupied wager this round has cards to derive a result from — a
+ * completeness check on the observation record, not a gameplay rule.
+ * Dealer entry pending is the one blocker the operator can't resolve by
+ * simply continuing: it requires either entering the dealer's cards, or
+ * explicitly declaring a round exception (Misdeal / Incomplete Observation
+ * / Dealer Error), which bypasses this check entirely (see
+ * misdealAndAdvance in InvestigationContext). Split hands are checked
+ * exactly like their seat's primary hand.
  */
 export function canCompleteRound(investigation: Investigation, round: Round): RoundCompletionCheck {
   const reasons: string[] = [];
 
   if (round.dealerHand.cards.length === 0) {
-    reasons.push("Dealer cards not recorded");
+    reasons.push("Dealer cards pending — enter cards or declare a round exception");
   }
 
   for (const seatNumber of investigation.occupiedSeats) {

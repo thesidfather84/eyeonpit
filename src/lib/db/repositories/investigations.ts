@@ -4,6 +4,7 @@ import { generateInvestigationId } from "@/lib/investigation-id";
 import { getOrCreateDeviceId } from "@/lib/utils/deviceId";
 import { computeShoeStats } from "@/lib/analysis/shoeStats";
 import { normalizeInvestigation } from "@/lib/db/normalizeInvestigation";
+import { deriveHandOutcome } from "@/lib/utils/deriveHandOutcome";
 import { diagnostics } from "@/lib/diagnostics/logger";
 import type {
   BlackjackFormat,
@@ -593,17 +594,35 @@ export async function splitSeat(
   );
 }
 
+export type RoundExceptionReason = "misdeal" | "incomplete-observation" | "dealer-error";
+
+const ROUND_EXCEPTION_LABELS: Record<RoundExceptionReason, string> = {
+  misdeal: "Misdeal",
+  "incomplete-observation": "Incomplete Observation",
+  "dealer-error": "Dealer Error",
+};
+
 /**
- * Misdeal — distinct from voiding a whole round: the current hand's
- * outcomes are voided but its already-exposed cards stay exactly as
- * recorded (running count and shoe stay correct off them), and play
- * continues in the same shoe. Locks the round the same way Complete Round
- * does, since the hand is over either way.
+ * The round-level exception path — used whenever the hand can't be resolved
+ * normally (a genuine misdeal, the operator's view was blocked so cards
+ * can't be trusted, or a dealer error occurred), including as the required
+ * alternative to entering dealer cards before Next Hand. Distinct from
+ * voiding a whole round: the current hand's outcomes are voided but its
+ * already-exposed cards stay exactly as recorded (running count and shoe
+ * stay correct off them), and play continues in the same shoe. Locks the
+ * round the same way Complete Round does, since the hand is over either
+ * way. Per-seat Void (SeatMoreActionsSheet) is the equivalent for a single
+ * hand rather than the whole round.
  */
-export async function misdealRound(localId: string, roundId: string): Promise<void> {
+export async function misdealRound(
+  localId: string,
+  roundId: string,
+  reason: RoundExceptionReason = "misdeal"
+): Promise<void> {
   const investigation = await getInvestigation(localId);
   if (!investigation) throw new Error(`Investigation ${localId} not found.`);
   const now = new Date().toISOString();
+  const label = ROUND_EXCEPTION_LABELS[reason];
 
   const rounds = investigation.rounds.map((round) => {
     if (round.id !== roundId) return round;
@@ -626,7 +645,7 @@ export async function misdealRound(localId: string, roundId: string): Promise<vo
       completed: true,
       eventLog: [
         ...round.eventLog,
-        { id: uuidv4(), timestamp: now, type: "misdeal" as EventType, message: "Misdeal — hand voided" },
+        { id: uuidv4(), timestamp: now, type: "misdeal" as EventType, message: `${label} — hand voided` },
       ],
       updatedAt: now,
     };
@@ -660,24 +679,64 @@ export async function logTableEvent(
   });
 }
 
-/** Locks a round from further entry — set by "Complete Round", the only stored (not derived) round lock. */
+/**
+ * Locks a round from further entry — set by "Complete Round", the only
+ * stored (not derived) round lock. Win/Loss/Push/Blackjack are never a
+ * manual tap: every occupied hand still missing an outcome at this instant
+ * (i.e. not already Surrendered, Voided, or manually Blackjack-corrected —
+ * all of which set `outcome` the moment the operator taps them) gets one
+ * computed here, exactly once, from its final cards against the dealer's
+ * final cards (see lib/utils/deriveHandOutcome.ts). Split hands are
+ * resolved identically to their seat's primary hand.
+ */
 export async function completeRound(localId: string, roundId: string): Promise<void> {
   const investigation = await getInvestigation(localId);
   if (!investigation) throw new Error(`Investigation ${localId} not found.`);
   const now = new Date().toISOString();
-  const rounds = investigation.rounds.map((round) =>
-    round.id === roundId
-      ? {
-          ...round,
-          completed: true,
-          eventLog: [
-            ...round.eventLog,
-            { id: uuidv4(), timestamp: now, type: "round-saved" as EventType, message: `Round ${round.roundNumber} completed` },
-          ],
-          updatedAt: now,
-        }
-      : round
-  );
+
+  const rounds = investigation.rounds.map((round) => {
+    if (round.id !== roundId) return round;
+
+    const eventLog = [...round.eventLog];
+    const dealerCards = round.dealerHand.cards;
+
+    function resolve(seatNumber: number, hand: SeatRoundRecord, isSplit: boolean): SeatRoundRecord {
+      if (hand.outcome != null || hand.playerCards.length === 0) return hand;
+      const outcome = deriveHandOutcome(hand.playerCards, dealerCards);
+      if (outcome != null) {
+        const label = outcome.charAt(0).toUpperCase() + outcome.slice(1);
+        eventLog.push({
+          id: uuidv4(),
+          timestamp: now,
+          type: "action",
+          message: `Seat ${seatNumber}${isSplit ? " (split)" : ""}: Result — ${label} (auto)`,
+        });
+      }
+      return { ...hand, outcome };
+    }
+
+    const seats = { ...round.seats };
+    for (const seatNumber of investigation.occupiedSeats) {
+      const seat = seats[seatNumber];
+      if (seat) seats[seatNumber] = resolve(seatNumber, seat, false);
+    }
+
+    const splitHands = { ...round.splitHands };
+    for (const seatNumber of investigation.occupiedSeats) {
+      const split = splitHands[seatNumber];
+      if (split) splitHands[seatNumber] = resolve(seatNumber, split, true);
+    }
+
+    eventLog.push({
+      id: uuidv4(),
+      timestamp: now,
+      type: "round-saved" as EventType,
+      message: `Round ${round.roundNumber} completed`,
+    });
+
+    return { ...round, seats, splitHands, eventLog, completed: true, updatedAt: now };
+  });
+
   await updateInvestigation(localId, { rounds });
 }
 

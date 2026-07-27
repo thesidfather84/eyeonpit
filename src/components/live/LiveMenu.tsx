@@ -26,6 +26,7 @@ import { BottomStatusBar } from "./BottomStatusBar";
 import { TableEventsSheet } from "./TableEventsSheet";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { completeInvestigation, listInvestigations } from "@/lib/db/repositories/investigations";
+import type { RoundExceptionReason } from "@/lib/db/repositories/investigations";
 import { diagnostics } from "@/lib/diagnostics/logger";
 import { downloadInvestigationJson } from "@/lib/export/toJson";
 import { newShoeOrDeckLabel } from "@/lib/utils/gameConfig";
@@ -146,8 +147,8 @@ export function LiveMenu() {
     setIncompletePromptOpen(false);
   }
 
-  async function handleMisdeal() {
-    await misdealAndAdvance();
+  async function handleMisdeal(reason: RoundExceptionReason) {
+    await misdealAndAdvance(reason);
     setMisdealConfirmOpen(false);
   }
 
@@ -331,16 +332,41 @@ export function LiveMenu() {
         </div>
       )}
 
-      <ConfirmDialog
-        open={misdealConfirmOpen}
-        title="Declare a misdeal?"
-        message="Voids this hand's outcomes and moves on to the next hand in the same shoe. Cards already exposed stay recorded — the running count and shoe history are unaffected."
-        confirmLabel="Misdeal"
-        destructive
-        busy={busy}
-        onConfirm={handleMisdeal}
-        onCancel={() => setMisdealConfirmOpen(false)}
-      />
+      {misdealConfirmOpen && (
+        <BottomSheet
+          open
+          onClose={() => setMisdealConfirmOpen(false)}
+          title="Declare a round exception"
+        >
+          <div className="flex flex-col gap-2 pb-4">
+            <p className="text-xs text-muted-foreground">
+              Voids this hand&apos;s outcomes and moves on to the next hand in the same shoe. Cards
+              already exposed stay recorded — the running count and shoe history are unaffected.
+            </p>
+            <button
+              disabled={busy}
+              onClick={() => handleMisdeal("misdeal")}
+              className="tap-target rounded-xl border border-pending/60 bg-pending/10 px-3 text-left text-sm font-medium text-pending hover:bg-pending/15 disabled:opacity-40"
+            >
+              Misdeal
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => handleMisdeal("incomplete-observation")}
+              className="tap-target rounded-xl border border-pending/60 bg-pending/10 px-3 text-left text-sm font-medium text-pending hover:bg-pending/15 disabled:opacity-40"
+            >
+              Incomplete Observation
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => handleMisdeal("dealer-error")}
+              className="tap-target rounded-xl border border-pending/60 bg-pending/10 px-3 text-left text-sm font-medium text-pending hover:bg-pending/15 disabled:opacity-40"
+            >
+              Dealer Error
+            </button>
+          </div>
+        </BottomSheet>
+      )}
 
       {tableEventsOpen && <TableEventsSheet onClose={() => setTableEventsOpen(false)} />}
 

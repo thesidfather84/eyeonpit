@@ -9,6 +9,12 @@ import { diagnostics, installGlobalErrorCapture } from "@/lib/diagnostics/logger
  * reloads on its own. An operator mid-hand should never lose their place
  * to a surprise reload; "Later" just dismisses it for this session, and the
  * next natural reload (or a later "Update Now") picks up the new version.
+ *
+ * Also proactively re-checks for a new build periodically and on tab
+ * refocus (see the interval/visibilitychange handling below) — without
+ * this, a tab left open across a deploy would sit on the old build
+ * indefinitely, since the browser otherwise only checks for a newer
+ * /sw.js on navigation.
  */
 export function UpdateAvailableBanner() {
   const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
@@ -27,7 +33,10 @@ export function UpdateAvailableBanner() {
       window.location.reload();
     });
 
+    let registrationRef: ServiceWorkerRegistration | null = null;
+
     navigator.serviceWorker.register("/sw.js").then((registration) => {
+      registrationRef = registration;
       diagnostics.info("service-worker", "registered", {
         scriptURL: registration.active?.scriptURL,
         hasWaiting: !!registration.waiting,
@@ -50,6 +59,25 @@ export function UpdateAvailableBanner() {
     }).catch((error: unknown) => {
       diagnostics.error("service-worker", "registration failed", { error: String(error) });
     });
+
+    // The browser only checks for a newer /sw.js on navigation (or its own
+    // ~24h background timer) — a tab left open across a deploy would
+    // otherwise never learn a new build exists, since register() above only
+    // ever runs once per page load. Proactively re-checking catches a real
+    // deployment in practical time without spamming the network: every 60s
+    // while the tab is visible, plus immediately whenever it regains focus.
+    const checkForUpdate = () => {
+      if (document.visibilityState === "visible") {
+        registrationRef?.update().catch(() => {});
+      }
+    };
+    const intervalId = window.setInterval(checkForUpdate, 60_000);
+    document.addEventListener("visibilitychange", checkForUpdate);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", checkForUpdate);
+    };
   }, []);
 
   if (!waitingWorker || dismissed) return null;

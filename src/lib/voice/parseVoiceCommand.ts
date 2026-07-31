@@ -35,9 +35,16 @@ const SEAT_PHRASES: Record<string, VoiceSeat> = {
   "seat 7": 7,
 };
 
-/** jack/queen/king all resolve to the same "10" CardEntryPad itself produces for any ten-value card — see CardEntryPad's own RANKS list, which never offers J/Q/K as separate buttons. */
+/**
+ * jack/queen/king all resolve to the same "10" CardEntryPad itself produces
+ * for any ten-value card — see CardEntryPad's own RANKS list, which never
+ * offers J/Q/K as separate buttons. "one" is included as a bare-word card
+ * alias for Ace (distinct from "seat one", which is matched as its own
+ * whole phrase in SEAT_PHRASES before this table is ever consulted).
+ */
 const RANK_WORDS: Record<string, VoiceRank> = {
   ace: "A",
+  one: "A",
   two: "2",
   three: "3",
   four: "4",
@@ -59,10 +66,22 @@ const WORKFLOW_WORDS: Record<string, "done" | "next" | "undo"> = {
 };
 
 /**
+ * Safari on iOS has been observed prepending a filler article or noun to a
+ * card word ("an ace", "a king", "card ace") rather than returning the bare
+ * word alone. Each of these is stripped — at most one, and only as an exact
+ * literal prefix — before falling back to the card lexicon. Deliberately
+ * scoped to card words only (not seats/dealer/workflow): the point is to
+ * accept a handful of observed literal variants, not to genuinely fuzzy-
+ * match arbitrary phrasing.
+ */
+const CARD_FILLER_PREFIXES = ["an ", "a ", "the ", "card "];
+
+/**
  * Strict, deterministic, exact-phrase lookup — no fuzzy matching, no
  * partial credit, no free-form/NLP parsing. A normalized transcript either
- * equals exactly one lexicon entry or `command` comes back null; there is
- * no third outcome. Because every seat phrase starts with the literal word
+ * equals exactly one lexicon entry (directly, or after stripping exactly
+ * one known card filler prefix) or `command` comes back null; there is no
+ * third outcome. Because every seat phrase starts with the literal word
  * "seat" and every card/workflow word is looked up as a whole normalized
  * string (not tokenized), "seat two" and "two" can never collide even
  * though "two" alone is a valid card word — the full phrase is the key.
@@ -82,5 +101,14 @@ export function parseVoiceCommand(rawTranscript: string): ParsedVoiceCommand {
   if (normalized in WORKFLOW_WORDS) {
     return { raw: rawTranscript, normalized, command: { kind: WORKFLOW_WORDS[normalized] } };
   }
+
+  for (const prefix of CARD_FILLER_PREFIXES) {
+    if (!normalized.startsWith(prefix)) continue;
+    const stripped = normalized.slice(prefix.length);
+    if (stripped in RANK_WORDS) {
+      return { raw: rawTranscript, normalized, command: { kind: "card", rank: RANK_WORDS[stripped] } };
+    }
+  }
+
   return { raw: rawTranscript, normalized, command: null };
 }

@@ -50,6 +50,13 @@ export interface SpeechRecognitionLike {
   onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
   onend: (() => void) | null;
   onstart: (() => void) | null;
+  /** Diagnostic-only lifecycle events (Web Speech API spec) — none of these gate or change dispatch, they only feed the visible diagnostics log. Not every engine fires every one of these; absence is itself diagnostic information. */
+  onaudiostart: (() => void) | null;
+  onsoundstart: (() => void) | null;
+  onspeechstart: (() => void) | null;
+  onspeechend: (() => void) | null;
+  onsoundend: (() => void) | null;
+  onaudioend: (() => void) | null;
 }
 
 export type SpeechRecognitionCtor = new () => SpeechRecognitionLike;

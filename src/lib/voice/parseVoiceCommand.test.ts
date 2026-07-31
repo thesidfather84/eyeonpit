@@ -59,6 +59,39 @@ describe("parseVoiceCommand — card ranks", () => {
   it.each(["jack", "queen", "king"])("%s normalizes to rank 10, the same value CardEntryPad's own keypad produces", (word) => {
     expect(parseVoiceCommand(word).command).toEqual({ kind: "card", rank: "10" });
   });
+
+  it('"one" is a bare-word alias for Ace, distinct from "seat one"', () => {
+    expect(parseVoiceCommand("one").command).toEqual({ kind: "card", rank: "A" });
+    expect(parseVoiceCommand("seat one").command).toEqual({ kind: "select-seat", seat: 1 });
+  });
+});
+
+describe("parseVoiceCommand — observed Safari filler-word variants (card words only)", () => {
+  it.each([
+    ["an ace", "A"],
+    ["a king", "10"],
+    ["card ace", "A"],
+    ["card king", "10"],
+    ["a ten", "10"],
+    ["the ace", "A"],
+  ] as const)("%s -> rank %s", (phrase, rank) => {
+    expect(parseVoiceCommand(phrase).command).toEqual({ kind: "card", rank });
+  });
+
+  it("is still case-insensitive and tolerates trailing punctuation with a filler prefix", () => {
+    expect(parseVoiceCommand("An Ace.").command).toEqual({ kind: "card", rank: "A" });
+    expect(parseVoiceCommand("A KING!").command).toEqual({ kind: "card", rank: "10" });
+  });
+
+  it("does not strip a filler prefix in front of a seat, dealer, or workflow word", () => {
+    expect(parseVoiceCommand("a dealer").command).toBeNull();
+    expect(parseVoiceCommand("a done").command).toBeNull();
+    expect(parseVoiceCommand("a seat one").command).toBeNull();
+  });
+
+  it("does not strip more than one filler prefix", () => {
+    expect(parseVoiceCommand("a a king").command).toBeNull();
+  });
 });
 
 describe("parseVoiceCommand — workflow", () => {

@@ -34,6 +34,12 @@ class MockSpeechRecognition {
   onerror: ((event: { error: string }) => void) | null = null;
   onend: (() => void) | null = null;
   onstart: (() => void) | null = null;
+  onaudiostart: (() => void) | null = null;
+  onsoundstart: (() => void) | null = null;
+  onspeechstart: (() => void) | null = null;
+  onspeechend: (() => void) | null = null;
+  onsoundend: (() => void) | null = null;
+  onaudioend: (() => void) | null = null;
 
   constructor() {
     MockSpeechRecognition.instances.push(this);
@@ -202,6 +208,24 @@ describe("VoiceControl — card entry", () => {
     await act(async () => sayFinal(word));
     await waitFor(() => screen.getByText("✓ Card 10 entered"));
   });
+
+  it.each([
+    ["an ace", "✓ Card A entered"],
+    ["card ace", "✓ Card A entered"],
+    ["a king", "✓ Card 10 entered"],
+  ] as const)('observed Safari variant "%s" is still accepted end-to-end', async (phrase, expectedStatus) => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal(phrase));
+    await waitFor(() => screen.getByText(expectedStatus));
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+  });
 });
 
 describe("VoiceControl — workflow", () => {
@@ -363,7 +387,7 @@ describe("VoiceControl — safety", () => {
     await act(async () => {
       MockSpeechRecognition.latest().onerror?.({ error: "not-allowed" });
     });
-    await waitFor(() => screen.getByText("Microphone permission denied."));
+    await waitFor(() => screen.getByText(/Microphone permission was denied\..*not-allowed/));
 
     // Manual controls must still work exactly as if voice never ran.
     const tenButton = screen.getByRole("button", { name: "10" });
@@ -391,5 +415,105 @@ describe("VoiceControl — parity with the touch keypad", () => {
     }
 
     await waitFor(() => expect(screen.getByLabelText("HI-LO running count").textContent).toBe("+1"));
+  });
+});
+
+describe("VoiceControl — diagnostics panel", () => {
+  it("logs the full recognition lifecycle, every alternative with its confidence, and the outcome", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+
+    await startListening();
+    await waitFor(() => screen.getByText("STARTED"));
+
+    const instance = MockSpeechRecognition.latest();
+    await act(async () => {
+      instance.onaudiostart?.();
+      instance.onsoundstart?.();
+      instance.onspeechstart?.();
+    });
+    await waitFor(() => screen.getByText("AUDIO START"));
+    screen.getByText("SOUND START");
+    screen.getByText("SPEECH START");
+
+    // Multiple alternatives — logged in full, but only alternatives[0] is
+    // ever checked against the parser.
+    await act(async () => {
+      const alt0 = { transcript: "king", confidence: 0.4 };
+      const alt1 = { transcript: "thing", confidence: 0.3 };
+      const result = { isFinal: true, length: 2, 0: alt0, 1: alt1 };
+      const results = { length: 1, 0: result };
+      instance.onresult?.({ resultIndex: 0, results });
+    });
+
+    await waitFor(() => screen.getByText(/FINAL #1/));
+    expect(screen.getByText(/"king" \(confidence: 0.40\)/)).toBeTruthy();
+    expect(screen.getByText(/"thing" \(confidence: 0.30\)/)).toBeTruthy();
+    await waitFor(() => screen.getByText("ACCEPTED"));
+    await waitFor(() => screen.getByText("END"));
+  });
+
+  it("logs the exact error code verbatim, even for a code with no built-in description", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => {
+      MockSpeechRecognition.latest().onerror?.({ error: "some-brand-new-error-code" });
+    });
+    // Appears in both the status pill and the diagnostics log — two matches is expected.
+    const matches = await screen.findAllByText(/some-brand-new-error-code/);
+    expect(matches.length).toBeGreaterThan(0);
+  });
+
+  it.each(["no-speech", "audio-capture", "not-allowed", "service-not-allowed", "network", "aborted", "language-not-supported"])(
+    "displays a description for the %s error code",
+    async (code) => {
+      const investigationId = await freshInvestigationId();
+      render(
+        <InvestigationProvider investigationId={investigationId}>
+          <VoiceControl />
+        </InvestigationProvider>
+      );
+      await startListening();
+      await act(async () => {
+        MockSpeechRecognition.latest().onerror?.({ error: code });
+      });
+      const matches = await screen.findAllByText(new RegExp(code));
+      expect(matches.length).toBeGreaterThan(0);
+    }
+  );
+
+  it('"Copy Voice Log" copies the rendered log to the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("ace"));
+    await waitFor(() => screen.getByText("ACCEPTED"));
+
+    const copyButton = screen.getByRole("button", { name: /Copy Voice Log/ });
+    await act(async () => {
+      copyButton.click();
+    });
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const loggedText = writeText.mock.calls[0][0] as string;
+    expect(loggedText).toContain("STARTED");
+    expect(loggedText).toContain("ACCEPTED");
+    expect(loggedText).toContain("ace");
   });
 });

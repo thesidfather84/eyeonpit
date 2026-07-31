@@ -14,6 +14,6 @@ export default defineConfig({
     // IndexedDB implementation Dexie talks to.
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
   },
 });

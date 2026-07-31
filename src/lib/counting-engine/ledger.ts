@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
-import type { CardEvent, CardEventStatus, CardEventTargetType, Rank } from "./types";
+import type { CardEvent, CardEventSource, CardEventStatus, CardEventTargetType, Rank } from "./types";
 
 /** Every event already recorded for a shoe, scoped for sequence assignment — never crosses a shoe boundary. */
 export function eventsInShoe(events: CardEvent[], shoeNumber: number): CardEvent[] {
@@ -25,6 +25,8 @@ export interface NewCardEventInput {
   targetType: CardEventTargetType;
   targetId: number | "dealer";
   rank: Rank;
+  /** Omitted by every shipped entry path today (CardEntryPad never passes one) — createCardEvent defaults it, so this is purely a hook for a future entry path, not a required decision at any existing call site. */
+  source?: CardEventSource;
 }
 
 /**
@@ -48,6 +50,7 @@ export function createCardEvent(input: NewCardEventInput, existingEvents: CardEv
     rank: input.rank,
     status: "active",
     createdAt: new Date().toISOString(),
+    source: input.source ?? "manual",
   };
 }
 

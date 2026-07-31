@@ -4,7 +4,7 @@ import { getInvestigation, updateInvestigation } from "@/lib/db/repositories/inv
 import { createCardEvent } from "@/lib/counting-engine/ledger";
 import { hasLegacyCardActivity, recoverLegacyLedger } from "@/lib/counting-engine/migration";
 import type { LegacyAmbiguity } from "@/lib/counting-engine/migration";
-import type { CardEvent, CardEventStatus, CardEventTargetType } from "@/lib/counting-engine/types";
+import type { CardEvent, CardEventSource, CardEventStatus, CardEventTargetType } from "@/lib/counting-engine/types";
 import type { EventType, Investigation, Rank, Round } from "@/types/investigation";
 
 export async function getCardEventsForInvestigation(investigationId: string): Promise<CardEvent[]> {
@@ -27,6 +27,8 @@ export interface AddCardInput {
   /** Applies the card to the round's display arrays (dealerHand/seats/splitHands) — same updater shape mutateRound uses. */
   applyToRound: (round: Round) => Round;
   event: { type: EventType; message: string };
+  /** Optional — every current caller (CardEntryPad) omits this and gets "manual", unchanged. A future non-touch entry path is the only thing that would ever pass one. */
+  source?: CardEventSource;
 }
 
 export interface AddCardResult {
@@ -77,6 +79,7 @@ export async function addCardToRound(input: AddCardInput): Promise<AddCardResult
         targetType: input.targetType,
         targetId: input.targetId,
         rank: input.rank,
+        source: input.source,
       },
       existingShoeEvents
     );

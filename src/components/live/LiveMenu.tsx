@@ -12,6 +12,7 @@ import {
   ListPlus,
   Menu as MenuIcon,
   Settings,
+  Stethoscope,
   XOctagon,
 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
@@ -21,6 +22,7 @@ import { SettingsScreen } from "@/components/settings/SettingsScreen";
 import { WorkflowHelpContent } from "@/components/settings/WorkflowHelpContent";
 import { AnalysisScreen } from "@/components/analysis/AnalysisScreen";
 import { ReportScreen } from "@/components/report/ReportScreen";
+import { DiagnosticCenter } from "@/components/diagnostics/DiagnosticCenter";
 import { EventLogPanel } from "./EventLogPanel";
 import { BottomStatusBar } from "./BottomStatusBar";
 import { TableEventsSheet } from "./TableEventsSheet";
@@ -35,13 +37,14 @@ import { useTerminology } from "@/hooks/useTerminology";
 import type { TerminologyDictionary } from "@/lib/terminology";
 import type { Investigation } from "@/types/investigation";
 
-type OverlayKey = "history" | "reports" | "export" | "settings" | "help";
+type OverlayKey = "history" | "reports" | "export" | "settings" | "help" | "diagnostics";
 
 function menuItems(t: TerminologyDictionary): { key: OverlayKey; label: string; icon: typeof HistoryIcon }[] {
   return [
     { key: "history", label: t.history, icon: HistoryIcon },
     { key: "reports", label: t.report, icon: FileText },
     { key: "export", label: t.export, icon: Download },
+    { key: "diagnostics", label: "Diagnostic Center", icon: Stethoscope },
     { key: "settings", label: "Settings", icon: Settings },
     { key: "help", label: "Help", icon: HelpCircle },
   ];
@@ -271,6 +274,10 @@ export function LiveMenu() {
 
       <BottomSheet open={overlay === "export"} onClose={() => setOverlay(null)} title={t.export}>
         <ExportOverlayContent />
+      </BottomSheet>
+
+      <BottomSheet open={overlay === "diagnostics"} onClose={() => setOverlay(null)} title="Diagnostic Center">
+        <DiagnosticCenter />
       </BottomSheet>
 
       <BottomSheet open={overlay === "settings"} onClose={() => setOverlay(null)} title="Settings">

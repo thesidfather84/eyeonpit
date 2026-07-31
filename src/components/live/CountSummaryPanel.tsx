@@ -18,11 +18,16 @@ function formatTrueCount(value: number | null): string {
 const ABBR: Record<string, string> = { "Hi-Lo": "HI-LO", KO: "KO", Zen: "ZEN", "Omega II": "OMEGA" };
 
 /**
- * One compact strip (~40px) — receives one calculated CountSnapshot from
- * the counting engine and only formats/renders it; it never calculates a
- * count itself. Every system updates from the same card ledger; the
- * primary system (investigation.countingSystem) is emphasized, others
- * shown as quick comparison values.
+ * The count panel — receives one calculated CountSnapshot from the
+ * counting engine and only formats/renders it; it never calculates a count
+ * itself. The primary system's running count is the single largest thing
+ * on this panel (an operator glancing at the phone must be able to read it
+ * without parsing a sentence); RC/TC are smaller secondary labels next to
+ * it. Every other enabled system renders as its own equal-size chip below,
+ * wrapping onto a second line on narrow phones rather than clipping —
+ * this container never uses overflow-hidden or a fixed height that could
+ * hide a value. No system gets an arbitrary one-off color; the only color
+ * distinction is foreground (values) vs muted-foreground (labels).
  */
 export function CountSummaryPanel() {
   const { investigation, currentRound, cardEvents } = useInvestigationContext();
@@ -32,25 +37,45 @@ export function CountSummaryPanel() {
   );
   const primary = investigation.countingSystem;
   const others = COUNTING_SYSTEMS.filter((s) => s !== primary);
+  const primaryValue = snapshot[primary];
 
   return (
-    <div className="flex h-10 flex-none items-center gap-2 overflow-x-auto border-b border-border bg-surface px-2 text-[11px]">
-      <span className="shrink-0 font-bold text-foreground">{ABBR[primary]}</span>
-      <span className="shrink-0 font-bold text-foreground">
-        RC {formatSigned(snapshot[primary].running)}
-      </span>
-      <span className="shrink-0 font-bold text-accent">
-        TC {formatTrueCount(snapshot[primary].trueCount)}
-      </span>
-      {others.map((system) => (
-        <span key={system} className="shrink-0 text-muted-foreground">
-          <span className="text-muted-foreground/70">|</span> {ABBR[system]}{" "}
-          {formatSigned(snapshot[system].running)}
-        </span>
-      ))}
-      <span className="shrink-0 text-muted-foreground">
-        <span className="text-muted-foreground/70">|</span> {snapshot.decksRemaining.toFixed(1)} decks left
-      </span>
+    <div className="flex flex-none flex-col gap-2 border-b border-border bg-surface px-3 py-2">
+      <div className="flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+            {ABBR[primary]}
+          </p>
+          <p
+            className="text-[2.5rem] font-extrabold leading-none tabular-nums text-foreground"
+            aria-label={`${ABBR[primary]} running count`}
+          >
+            {formatSigned(primaryValue.running)}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-0.5 text-[11px] text-muted-foreground">
+          <span>
+            RC <span className="font-semibold text-foreground">{formatSigned(primaryValue.running)}</span>
+          </span>
+          <span>
+            TC <span className="font-semibold text-foreground">{formatTrueCount(primaryValue.trueCount)}</span>
+          </span>
+        </div>
+      </div>
+
+      {others.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {others.map((system) => (
+            <span
+              key={system}
+              className="shrink-0 rounded-md border border-border bg-surface-raised px-2 py-1 text-[11px] font-semibold text-foreground"
+            >
+              <span className="text-muted-foreground">{ABBR[system]}</span>{" "}
+              {formatSigned(snapshot[system].running)}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

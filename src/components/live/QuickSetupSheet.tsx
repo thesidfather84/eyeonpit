@@ -39,7 +39,7 @@ const FORMAT_OPTIONS: { value: BlackjackFormat; label: string }[] = [
   { value: "shoe", label: "Shoe Game" },
 ];
 
-const DECK_PRESETS = [4, 6, 8];
+const DECK_PRESETS = [1, 2, 6, 8];
 const RULE_PROFILE_OPTIONS: RuleProfileId[] = ["standard", "3-2-h17", "3-2-s17", "6-5-h17", "custom"];
 
 const optionButton = (active: boolean) =>

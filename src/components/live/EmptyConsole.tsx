@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Eye, Menu } from "lucide-react";
+import { Eye, Menu, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { NavigationDrawer } from "@/components/navigation/NavigationDrawer";
 import { NewInvestigationDrawer } from "@/components/investigation-setup/NewInvestigationDrawer";
@@ -11,6 +11,47 @@ import { findOrCreatePracticeInvestigation } from "@/lib/onboarding/practiceInve
 import { createInvestigation } from "@/lib/db/repositories/investigations";
 import { DEFAULT_GAME_CONFIG } from "@/types/investigation";
 import { formatLastConfigSummary, loadLastGameConfig } from "@/lib/utils/lastGameConfig";
+import { useServiceWorkerUpdate } from "@/hooks/useServiceWorkerUpdate";
+
+/**
+ * The homepage's own visible refresh control — distinct from the passive
+ * always-mounted UpdateAvailableBanner (root layout), which only appears
+ * once an update is already confirmed. This one is a direct, always-there
+ * "check right now" action with its own result state, so an operator never
+ * has to guess whether they're on the current build or go clear storage to
+ * find out.
+ */
+function RefreshCheckForUpdate() {
+  const { updateAvailable, checking, checkNow, activateUpdate } = useServiceWorkerUpdate();
+  const [checkedOnce, setCheckedOnce] = useState(false);
+  const buildId = process.env.NEXT_PUBLIC_BUILD_ID ?? "local";
+
+  async function handleCheck() {
+    await checkNow();
+    setCheckedOnce(true);
+  }
+
+  return (
+    <div className="mt-2 flex w-full max-w-xs flex-col items-center gap-1.5 rounded-lg border border-border bg-surface p-3">
+      <button
+        type="button"
+        onClick={updateAvailable ? activateUpdate : handleCheck}
+        disabled={checking}
+        className="tap-target flex w-full items-center justify-center gap-1.5 rounded-md border border-border bg-surface-raised text-xs font-semibold text-foreground disabled:opacity-40"
+      >
+        <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+        {checking ? "Checking…" : updateAvailable ? "Update Now" : "Refresh / Check for Update"}
+      </button>
+      {checkedOnce && !checking && !updateAvailable && (
+        <p className="text-[11px] text-muted-foreground">App is up to date</p>
+      )}
+      {updateAvailable && (
+        <p className="text-[11px] text-accent">New version ready — tap to update</p>
+      )}
+      <p className="text-[10px] text-muted-foreground">Build {buildId.slice(0, 7)}</p>
+    </div>
+  );
+}
 
 /** Reads ?open=new (from the /investigations/new compatibility redirect) and opens the setup drawer automatically. Isolated in its own component since useSearchParams requires a Suspense boundary. */
 function AutoOpenFromQuery({ onOpen }: { onOpen: () => void }) {
@@ -152,6 +193,8 @@ export function EmptyConsole({ onCreated }: { onCreated: (investigationLocalId: 
         >
           Full setup with casino &amp; dealer details
         </button>
+
+        <RefreshCheckForUpdate />
       </div>
 
       <NavigationDrawer open={menuOpen} onClose={() => setMenuOpen(false)} />

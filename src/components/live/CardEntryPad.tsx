@@ -1,10 +1,8 @@
 "use client";
 
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
-import { formatCard } from "@/lib/utils/cards";
-import { resolveSeatTarget, updateSeatAtTarget } from "@/lib/utils/seatTarget";
-import { isSeatLocked } from "@/lib/utils/seatLock";
-import type { CardCode, Rank } from "@/types/investigation";
+import { useCardEntry } from "@/hooks/useCardEntry";
+import type { Rank } from "@/types/investigation";
 
 const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 
@@ -25,58 +23,10 @@ const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
  * its buttons need most.
  */
 export function CardEntryPad() {
-  const { investigation, currentRound, activeTarget, addCard, busy } = useInvestigationContext();
-  const isDealerTarget = activeTarget === "dealer";
-  const seatResolved =
-    !isDealerTarget && typeof activeTarget === "number"
-      ? resolveSeatTarget(currentRound, activeTarget)
-      : null;
-  const locked = seatResolved ? isSeatLocked(seatResolved.record) : false;
-  // A seat can now be the active target without being enabled/occupied —
-  // selecting is no longer the same action as occupying. There's nothing
-  // to append a card to yet, so the keypad stays disabled with a clear
-  // reason instead of silently no-opping.
-  const notEnabled = seatResolved != null && !seatResolved.record;
-  const disabled =
-    busy || investigation.status !== "active" || currentRound.completed || locked || notEnabled;
-
-  const targetLabel = isDealerTarget
-    ? "DEALER"
-    : `SEAT ${seatResolved?.seatNumber}${seatResolved?.isSplit ? " · SPLIT" : ""}`;
+  const { currentRound } = useInvestigationContext();
+  const { enterCard, disabled, locked, notEnabled, targetLabel } = useCardEntry();
 
   const lastCardEvent = [...currentRound.eventLog].reverse().find((e) => e.type === "card");
-
-  function handleTap(rank: Rank) {
-    const card: CardCode = { rank, suit: "unspecified" };
-
-    if (activeTarget === "dealer") {
-      // The dealer stays the active target through every card — rapid
-      // multi-card dealer entry (upcard, hole card, hits) never requires
-      // reselecting the dealer tile. Only a manual seat selection, or
-      // ending/clearing the round, moves the target away from "dealer".
-      addCard(
-        { targetType: "dealer", targetId: "dealer", rank },
-        (round) => ({ ...round, dealerHand: { cards: [...round.dealerHand.cards, card] } }),
-        { type: "card", message: `Dealer: ${formatCard(card)}` }
-      );
-      return;
-    }
-
-    if (typeof activeTarget !== "number" || !seatResolved) return;
-    const target = activeTarget;
-    addCard(
-      { targetType: seatResolved.isSplit ? "split" : "seat", targetId: seatResolved.seatNumber, rank },
-      (round) =>
-        updateSeatAtTarget(round, target, (seat) => ({
-          ...seat,
-          playerCards: [...seat.playerCards, card],
-        })),
-      {
-        type: "card",
-        message: `Seat ${seatResolved.seatNumber}${seatResolved.isSplit ? " (split)" : ""}: ${formatCard(card)}`,
-      }
-    );
-  }
 
   return (
     <div className="flex flex-none flex-col gap-0.5 border-b border-border bg-surface px-2 py-0.5 short:gap-0 short:border-b-0 short:px-1.5 short:py-0.5">
@@ -105,7 +55,7 @@ export function CardEntryPad() {
           <button
             key={rank}
             disabled={disabled}
-            onClick={() => handleTap(rank)}
+            onClick={() => enterCard(rank)}
             className="tap-target flex h-[clamp(40px,7dvh,52px)] items-center justify-center rounded-xl border border-border bg-surface-raised text-xl font-bold text-foreground active:bg-accent active:text-accent-foreground disabled:opacity-40 short:!h-[clamp(30px,9dvh,40px)] short:text-base"
           >
             {rank}

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { MoreHorizontal, Redo2, StickyNote, XCircle } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
+import { useRoundControls } from "@/hooks/useRoundControls";
 import { canCompleteRound } from "@/lib/utils/roundValidation";
 import { AddNoteSheet } from "./AddNoteSheet";
 
@@ -24,39 +25,20 @@ import { AddNoteSheet } from "./AddNoteSheet";
  * way to advance — never two competing "finish this round" buttons.
  */
 export function RoundControlsRow() {
-  const {
-    investigation,
-    currentRound,
-    canUndo,
-    canRedo,
-    undo,
-    redo,
-    clearActiveEntry,
-    completeRound,
-    advanceToNext,
-    nextRound,
-    busy,
-  } = useInvestigationContext();
+  const { investigation, currentRound, canRedo, redo, clearActiveEntry, busy } = useInvestigationContext();
+  const { handleDone, handleNext, handleUndo, doneDisabled, nextDisabled, undoDisabled } = useRoundControls();
   const [noteOpen, setNoteOpen] = useState(false);
   const [overflowOpen, setOverflowOpen] = useState(false);
 
   const isActive = investigation.status === "active";
   const check = canCompleteRound(investigation, currentRound);
 
-  function handleNext() {
-    if (currentRound.completed) {
-      nextRound();
-    } else {
-      advanceToNext();
-    }
-  }
-
   return (
     <div className="flex-none border-t border-border bg-surface p-0.5 short:border-t-0">
       <div className="grid grid-cols-[1.3fr_1fr_1fr_44px] gap-1.5 short:gap-1">
         <button
-          onClick={completeRound}
-          disabled={busy || !isActive || currentRound.completed || !check.canComplete}
+          onClick={handleDone}
+          disabled={doneDisabled}
           aria-label="Done — complete this round"
           className="tap-target flex items-center justify-center rounded-lg bg-accent text-sm font-bold text-accent-foreground disabled:opacity-40"
         >
@@ -64,15 +46,15 @@ export function RoundControlsRow() {
         </button>
         <button
           onClick={handleNext}
-          disabled={busy || !isActive}
+          disabled={nextDisabled}
           aria-label="Next"
           className="tap-target flex items-center justify-center rounded-lg border border-border bg-surface-raised text-sm font-bold text-foreground disabled:opacity-40"
         >
           Next
         </button>
         <button
-          onClick={undo}
-          disabled={!canUndo || busy}
+          onClick={handleUndo}
+          disabled={undoDisabled}
           aria-label="Undo"
           className="tap-target flex items-center justify-center rounded-lg border border-border bg-surface-raised text-sm font-bold text-foreground disabled:opacity-40"
         >

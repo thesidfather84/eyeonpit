@@ -41,7 +41,6 @@ const FORMAT_OPTIONS: { value: BlackjackFormat; label: string }[] = [
 
 const DECK_PRESETS = [4, 6, 8];
 const RULE_PROFILE_OPTIONS: RuleProfileId[] = ["standard", "3-2-h17", "3-2-s17", "6-5-h17", "custom"];
-const SPOT_PRESETS = [5, 6, 7];
 
 const optionButton = (active: boolean) =>
   `tap-target rounded-xl border text-xs font-semibold ${
@@ -68,9 +67,16 @@ export function QuickSetupSheet({
   initialTableNumber,
 }: QuickSetupSheetProps) {
   const isEdit = Boolean(investigation);
-  const [config, setConfig] = useState<GameConfig>(
-    investigation ? gameConfigFromInvestigation(investigation) : (initialConfig ?? DEFAULT_GAME_CONFIG)
-  );
+  const [config, setConfig] = useState<GameConfig>(() => {
+    const base = investigation
+      ? gameConfigFromInvestigation(investigation)
+      : (initialConfig ?? DEFAULT_GAME_CONFIG);
+    // New/edited table configs are limited to the fixed 6+1 arch — legacy
+    // investigations with more positions keep their recorded seat data
+    // (TableMap still renders it, clearly labeled), but applying a config
+    // change here always normalizes going forward to 6 or 7.
+    return { ...base, playerSpotCount: base.playerSpotCount >= 7 ? 7 : 6 };
+  });
   const [tableNumber, setTableNumber] = useState(
     investigation?.tableNumber ?? initialTableNumber ?? ""
   );
@@ -351,23 +357,19 @@ export function QuickSetupSheet({
           )}
 
           <div>
-            <p className="mb-2 text-sm font-medium text-foreground">Player Spots</p>
-            <div className="flex flex-wrap items-center gap-2">
-              {SPOT_PRESETS.map((n) => (
-                <button key={n} onClick={() => update({ playerSpotCount: n })} className={`${optionButton(config.playerSpotCount === n)} px-4`}>
-                  {n}
-                </button>
-              ))}
-              <input
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={10}
-                value={config.playerSpotCount}
-                onChange={(e) => update({ playerSpotCount: Math.min(10, Math.max(1, Number(e.target.value) || 1)) })}
-                className="tap-target w-20 rounded-lg border border-border bg-surface px-2 text-center text-sm text-foreground"
-              />
+            <p className="mb-2 text-sm font-medium text-foreground">Position 7</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => update({ playerSpotCount: 6 })} className={optionButton(config.playerSpotCount === 6)}>
+                Off (6 Positions)
+              </button>
+              <button onClick={() => update({ playerSpotCount: 7 })} className={optionButton(config.playerSpotCount === 7)}>
+                On (7 Positions)
+              </button>
             </div>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Positions 1-6 are always shown in the arch. Position 7 adds one optional spot centered above the
+              dealer.
+            </p>
           </div>
 
           <div>

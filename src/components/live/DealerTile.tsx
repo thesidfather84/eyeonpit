@@ -35,7 +35,7 @@ export function DealerTile() {
         {isActive ? "ACTIVE · DEALER" : "DEALER"}
       </span>
       <span className="text-[10px] leading-tight text-muted-foreground">
-        {cards.length > 0 ? `${cards.map(formatCard).join(" · ")} · ${cards.length} Cards` : "Not entered"}
+        {cards.length > 0 ? cards.map(formatCard).join(" · ") : "Not entered"}
       </span>
       <span className={`text-sm font-semibold leading-tight ${total?.bust ? "text-dealer" : "text-foreground"}`}>
         {result ? RESULT_LABEL[result] : total ? `${total.soft ? "S" : ""}${total.value}` : "—"}

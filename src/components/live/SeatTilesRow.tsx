@@ -5,7 +5,11 @@ import { MoreVertical, Users } from "lucide-react";
 import { computeApLikelihoodBySeat } from "@/lib/analysis/apLikelihood";
 import { computeHandTotal, isAutoDetectedBlackjack } from "@/lib/utils/blackjackTotal";
 import { formatCard } from "@/lib/utils/cards";
-import { seatNumbersFor } from "@/lib/utils/seats";
+import {
+  ARCH_SEAT_NUMBERS,
+  isPosition7Enabled,
+  legacyOverflowSeatNumbersFor,
+} from "@/lib/utils/seats";
 import { splitTargetFor } from "@/lib/utils/seatTarget";
 import { seatRingFor } from "@/lib/utils/seatGroupColor";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
@@ -15,7 +19,6 @@ import { seatHasCurrentRoundData } from "@/lib/db/repositories/investigations";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SeatOptionsSheet } from "./SeatOptionsSheet";
 import { ManageSeatsSheet } from "./ManageSeatsSheet";
-import { DealerTile } from "./DealerTile";
 
 const LONG_PRESS_MS = 500;
 const DOUBLE_TAP_MS = 300;
@@ -26,16 +29,22 @@ const AP_DOT_CLASSES: Record<string, string> = {
   elevated: "bg-destructive/80",
 };
 
+/** Per-column vertical offset (px) that bows positions 1-6 into an arch, concave toward the dealer — middle positions sit furthest from the dealer, end positions nearest, matching a real table's curved rail. */
+const ARCH_TRANSLATE_Y = [14, 6, 0, 0, 6, 14];
+
 /**
- * Player seats — a fixed, flat 4-column grid; tiles never shift, rise, or
- * curve for any reason, selected or not. Three signals stay visually
+ * Player seats — six permanent positions in a dealer's-eye-view arch, plus
+ * an optional Position 7 centered beneath it. Tiles never shift, rise, or
+ * curve for any reason *within a position* — the arch shape comes from each
+ * column's fixed offset, not from tile state. Three signals stay visually
  * separate on every tile: enabled/occupied (green border), active
  * card-entry target (cyan border, overrides green when both apply), and
  * player grouping (a ring color + optional letter badge, unrelated to
  * either). A single tap only ever changes which target is active — it
- * never enables or disables a seat. Enabling/disabling takes a deliberate
- * double-tap (or the long-press/⋮ options menu, which also offers it
- * alongside link/unlink/label).
+ * never enables or disables a seat, and never implies an entry order:
+ * any position can be selected and entered in any order. Enabling/disabling
+ * takes a deliberate double-tap (or the long-press/⋮ options menu, which
+ * also offers it alongside link/unlink/label).
  */
 export function SeatTilesRow() {
   const {
@@ -50,7 +59,8 @@ export function SeatTilesRow() {
   } = useInvestigationContext();
   const showGroupLabels = useSettingsStore((s) => s.showGroupLabels);
   const apBySeat = computeApLikelihoodBySeat(investigation, cardEvents, currentRound.shoeNumber);
-  const seats = seatNumbersFor(investigation);
+  const position7Enabled = isPosition7Enabled(investigation);
+  const legacySeats = legacyOverflowSeatNumbersFor(investigation, currentRound);
   const [optionsSeat, setOptionsSeat] = useState<number | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const [disableConfirmSeat, setDisableConfirmSeat] = useState<number | null>(null);
@@ -102,45 +112,42 @@ export function SeatTilesRow() {
     if (pressTimer.current) clearTimeout(pressTimer.current);
   }
 
-  return (
-    <div className="flex-none bg-surface px-1">
-      <div className="grid grid-cols-4 gap-x-1 gap-y-0">
-        {seats.map((seat) => {
-          const isOccupied = investigation.occupiedSeats.includes(seat);
-          const isActive = activeTarget === (seat as CardTarget);
-          const record = currentRound.seats[seat];
-          const splitRecord = currentRound.splitHands[seat];
-          const isSplitActive = activeTarget === splitTargetFor(seat);
-          const ap = apBySeat[seat];
-          const total =
-            record && record.playerCards.length > 0 ? computeHandTotal(record.playerCards) : null;
-          const isBlackjack = record ? isAutoDetectedBlackjack(record.playerCards) : false;
+  function renderSeat(seat: number) {
+    const isOccupied = investigation.occupiedSeats.includes(seat);
+    const isActive = activeTarget === (seat as CardTarget);
+    const record = currentRound.seats[seat];
+    const splitRecord = currentRound.splitHands[seat];
+    const isSplitActive = activeTarget === splitTargetFor(seat);
+    const ap = apBySeat[seat];
+    const total =
+      record && record.playerCards.length > 0 ? computeHandTotal(record.playerCards) : null;
+    const isBlackjack = record ? isAutoDetectedBlackjack(record.playerCards) : false;
 
-          const groupId = investigation.seatPlayerGroups[seat];
-          const group = groupId ? investigation.playerGroups[groupId] : undefined;
-          const linkedSeatNumbers = groupId
-            ? Object.entries(investigation.seatPlayerGroups)
-                .filter(([, gId]) => gId === groupId)
-                .map(([s]) => Number(s))
-                .sort((a, b) => a - b)
-            : [];
-          const spotIndex = linkedSeatNumbers.indexOf(seat) + 1;
-          const spotCount = linkedSeatNumbers.length;
-          const ring = seatRingFor(isOccupied, spotCount, groupId);
+    const groupId = investigation.seatPlayerGroups[seat];
+    const group = groupId ? investigation.playerGroups[groupId] : undefined;
+    const linkedSeatNumbers = groupId
+      ? Object.entries(investigation.seatPlayerGroups)
+          .filter(([, gId]) => gId === groupId)
+          .map(([s]) => Number(s))
+          .sort((a, b) => a - b)
+      : [];
+    const spotIndex = linkedSeatNumbers.indexOf(seat) + 1;
+    const spotCount = linkedSeatNumbers.length;
+    const ring = seatRingFor(isOccupied, spotCount, groupId);
 
-          // Off: muted neutral. Enabled/occupied: green. Active: cyan,
-          // always wins over green so "both enabled and active" stays
-          // visibly distinct from "enabled only" — never merged into one
-          // in-between color.
-          let toneClasses = "border-dashed border-border/60 bg-transparent text-muted-foreground";
-          if (isOccupied) {
-            toneClasses = "border-status-green bg-status-green/10 text-foreground";
-          }
-          if (isActive) {
-            toneClasses = "border-accent-secondary bg-accent-secondary/10 text-foreground";
-          }
+    // Off: muted neutral. Enabled/occupied: green. Active: cyan,
+    // always wins over green so "both enabled and active" stays
+    // visibly distinct from "enabled only" — never merged into one
+    // in-between color.
+    let toneClasses = "border-dashed border-border/60 bg-transparent text-muted-foreground";
+    if (isOccupied) {
+      toneClasses = "border-status-green bg-status-green/10 text-foreground";
+    }
+    if (isActive) {
+      toneClasses = "border-accent-secondary bg-accent-secondary/10 text-foreground";
+    }
 
-          return (
+    return (
             <div
               key={seat}
               role="button"
@@ -215,7 +222,7 @@ export function SeatTilesRow() {
                   </span>
                   <span className="text-[10px] leading-none">
                     {record && record.playerCards.length > 0
-                      ? `${record.playerCards.map(formatCard).join(" · ")} · ${record.playerCards.length} Cards`
+                      ? record.playerCards.map(formatCard).join(" · ")
                       : " "}
                   </span>
                   <span
@@ -252,15 +259,39 @@ export function SeatTilesRow() {
                 </button>
               )}
             </div>
-          );
-        })}
+    );
+  }
 
-        <DealerTile />
+  return (
+    <div className="flex-none bg-surface px-1 pb-1.5">
+      {/* Positions 1-6: a fixed arch, numbered left to right exactly as the dealer sees them. Each column's translateY bows the row concave toward the dealer below — never reordered or shifted by state. */}
+      <div className="grid grid-cols-6 gap-x-1 gap-y-0 pt-3.5">
+        {ARCH_SEAT_NUMBERS.map((seat, i) => (
+          <div key={seat} style={{ transform: `translateY(${ARCH_TRANSLATE_Y[i]}px)` }}>
+            {renderSeat(seat)}
+          </div>
+        ))}
       </div>
+
+      {/* Position 7: optional, centered beneath the arch. Turning it off removes only this slot — positions 1-6 above are untouched. */}
+      {position7Enabled && (
+        <div className="mx-auto mt-1.5 w-1/3 min-w-[84px]">{renderSeat(7)}</div>
+      )}
+
+      {/* Legacy positions 8-10: only ever present on investigations set up before the 6+1 arch existed. Never hidden or discarded — shown here, clearly labeled, so recorded data stays reachable. */}
+      {legacySeats.length > 0 && (
+        <div className="mt-2 rounded-lg border border-pending/40 bg-pending/10 p-1.5">
+          <p className="mb-1 text-[10px] font-semibold text-pending">
+            Legacy table layout — position{legacySeats.length > 1 ? "s" : ""} {legacySeats.join(", ")}{" "}
+            predate the 6+1 arch. Recorded data is preserved below, not hidden.
+          </p>
+          <div className="grid grid-cols-4 gap-x-1 gap-y-0">{legacySeats.map((seat) => renderSeat(seat))}</div>
+        </div>
+      )}
 
       <button
         onClick={() => setManageOpen(true)}
-        className="rounded-md px-2 text-[10px] font-medium text-muted-foreground hover:text-foreground"
+        className="mt-1 rounded-md px-2 text-[10px] font-medium text-muted-foreground hover:text-foreground"
       >
         Manage Seats
       </button>

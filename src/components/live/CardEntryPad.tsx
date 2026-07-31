@@ -24,7 +24,6 @@ export function CardEntryPad() {
     currentRound,
     activeTarget,
     addCard,
-    advanceToNext,
     undo,
     canUndo,
     busy,
@@ -53,16 +52,15 @@ export function CardEntryPad() {
     const card: CardCode = { rank, suit: "unspecified" };
 
     if (activeTarget === "dealer") {
-      const isFirstCard = currentRound.dealerHand.cards.length === 0;
+      // The dealer stays the active target through every card — rapid
+      // multi-card dealer entry (upcard, hole card, hits) never requires
+      // reselecting the dealer tile. Only a manual seat selection, or
+      // ending/clearing the round, moves the target away from "dealer".
       addCard(
         { targetType: "dealer", targetId: "dealer", rank },
         (round) => ({ ...round, dealerHand: { cards: [...round.dealerHand.cards, card] } }),
         { type: "card", message: `Dealer: ${formatCard(card)}` }
       );
-      // First dealer card of the hand — automatically move to the first
-      // tracked seat in Guided mode, same convenience as before, without
-      // implying this card is an "upcard" in any gameplay sense.
-      if (isFirstCard) advanceToNext();
       return;
     }
 

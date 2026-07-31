@@ -192,7 +192,7 @@ function normalizeRound(raw: unknown, index: number): Round {
 function normalizeRoundList(raw: unknown): Round[] {
   if (!Array.isArray(raw) || raw.length === 0) {
     // An investigation with zero rounds is unplayable and every consumer
-    // (computeShoeStats, the live screen) assumes at least one exists —
+    // (the counting engine, the live screen) assumes at least one exists —
     // seed the same empty Round shape createInvestigation() starts with.
     return [normalizeRound({}, 0)];
   }

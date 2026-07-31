@@ -1,10 +1,16 @@
-import { computeShoeStats } from "@/lib/analysis/shoeStats";
+import { calculateCountSnapshot } from "@/lib/counting-engine/calculateCounts";
+import { eventsInShoe } from "@/lib/counting-engine/ledger";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 
-/** Final section of the single Live screen — shoe progress plus investigation-wide totals, all derived live, nothing stored redundantly. */
+/** Final section of the single Live screen — shoe progress plus investigation-wide totals, all derived live from the card ledger, nothing stored redundantly. */
 export function BottomStatusBar() {
-  const { investigation, currentRound } = useInvestigationContext();
-  const stats = computeShoeStats(investigation, currentRound.shoeNumber);
+  const { investigation, currentRound, cardEvents } = useInvestigationContext();
+  const stats = calculateCountSnapshot(
+    eventsInShoe(cardEvents, currentRound.shoeNumber),
+    investigation.shoeTotalDecks
+  );
+  const totalCards = Math.max(1, investigation.shoeTotalDecks * 52);
+  const penetrationPct = Math.min(100, (stats.exposedCardCount / totalCards) * 100);
 
   const totalHands = investigation.rounds.reduce(
     (sum, round) =>
@@ -13,9 +19,9 @@ export function BottomStatusBar() {
   );
 
   const items: { label: string; value: string }[] = [
-    { label: "Cards Seen", value: String(stats.cardsSeen) },
+    { label: "Cards Seen", value: String(stats.exposedCardCount) },
     { label: "Decks Remaining", value: stats.decksRemaining.toFixed(1) },
-    { label: "Penetration", value: `${stats.penetrationPct.toFixed(0)}%` },
+    { label: "Penetration", value: `${penetrationPct.toFixed(0)}%` },
     { label: "Rounds", value: String(investigation.rounds.length) },
     { label: "Hands", value: String(totalHands) },
     { label: "Occupied Seats", value: investigation.occupiedSeats.join(", ") || "none" },

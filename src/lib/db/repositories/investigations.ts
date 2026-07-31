@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getDb } from "@/lib/db/client";
 import { generateInvestigationId } from "@/lib/investigation-id";
 import { getOrCreateDeviceId } from "@/lib/utils/deviceId";
-import { computeShoeStats } from "@/lib/analysis/shoeStats";
+import { calculateCountSnapshot } from "@/lib/counting-engine/calculateCounts";
 import { normalizeInvestigation } from "@/lib/db/normalizeInvestigation";
 import { deriveHandOutcome } from "@/lib/utils/deriveHandOutcome";
 import { diagnostics } from "@/lib/diagnostics/logger";
@@ -506,8 +506,8 @@ export async function updateGameConfig(localId: string, patch: GameConfigPatch):
  * The "Recalculate" branch of a risky config change (format/deck count/
  * counting system). Nothing about recorded cards changes — every count is
  * always computed live from them — so applying the new config in place is
- * the entire recalculation; the next render of computeShoeStats() picks it
- * up automatically.
+ * the entire recalculation; the next calculateCountSnapshot() over the
+ * unchanged card ledger picks it up automatically.
  */
 export async function updateGameConfigAndRecalculate(
   localId: string,
@@ -787,8 +787,8 @@ export async function resumeInvestigation(localId: string): Promise<void> {
  * seats' bets carry forward unchanged by default ("same", 0) unless the
  * operator changes them once the new round is live. Pass `newShoe: true`
  * to also bump the shoe number, which is all "New Shoe" needs to do: a
- * fresh shoeNumber makes computeShoeStats start counting from zero for
- * everything tagged with it. Occupancy and player-group relationships are
+ * fresh shoeNumber gives the card ledger an independent sequence, so every
+ * query scoped to it starts counting from zero. Occupancy and player-group relationships are
  * investigation-level and are never touched here.
  *
  * `voidCurrentRound: true` is the "Void Current Round and Start New Shoe"
@@ -814,13 +814,20 @@ export async function advanceRound(
   if (options.voidCurrentRound) {
     finalizedRounds = investigation.rounds.slice(0, -1);
   } else {
-    const stats = computeShoeStats(investigation, currentRound.shoeNumber);
-    const snapshot = stats.counts[investigation.countingSystem];
+    // A report-only derived cache, regenerated from the authoritative card
+    // ledger — never the other way around. Nothing reads this to compute a
+    // live count; see lib/analysis/roundCountSnapshot.ts for the real
+    // (always-live) derivation every UI/analysis surface uses instead.
+    const shoeEvents = await getDb()
+      .cardEvents.where("[investigationId+shoeNumber]")
+      .equals([investigationLocalId, currentRound.shoeNumber])
+      .toArray();
+    const snapshot = calculateCountSnapshot(shoeEvents, investigation.shoeTotalDecks)[investigation.countingSystem];
     finalizedRounds = investigation.rounds.map((round) =>
       round.id === currentRound.id
         ? {
             ...round,
-            runningCount: snapshot.runningCount,
+            runningCount: snapshot.running,
             trueCount: snapshot.trueCount,
             updatedAt: now,
           }

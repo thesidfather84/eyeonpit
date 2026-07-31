@@ -23,13 +23,23 @@ import {
   updateInvestigation,
 } from "@/lib/db/repositories/investigations";
 import type { RoundExceptionReason } from "@/lib/db/repositories/investigations";
+import {
+  addCardToRound,
+  ensureLegacyLedger,
+  getCardEventsForInvestigation,
+  redoCardAdd,
+  undoCardAdd,
+} from "@/lib/db/repositories/cardEvents";
 import { orderedSeatNumbersFor } from "@/lib/utils/seats";
-import { computeShoeStats } from "@/lib/analysis/shoeStats";
+import { calculateCountSnapshot } from "@/lib/counting-engine/calculateCounts";
+import { eventsInShoe } from "@/lib/counting-engine/ledger";
+import type { CardEvent, CardEventTargetType } from "@/lib/counting-engine/types";
 import { diagnostics } from "@/lib/diagnostics/logger";
 import type {
   EventType,
   Investigation,
   PlayerGroup,
+  Rank,
   Round,
   TableEventKind,
   WagerChange,
@@ -45,7 +55,7 @@ export type CardTarget = "dealer" | number;
  * touches `rounds`, so it can't be captured by a Round snapshot.
  */
 type HistoryEntry =
-  | { kind: "round"; round: Round }
+  | { kind: "round"; round: Round; cardEventId?: string }
   | {
       kind: "seat-config";
       occupiedSeats: number[];
@@ -75,6 +85,14 @@ interface InvestigationContextValue {
   busy: boolean;
   mutate: (
     updater: (round: Round) => Round,
+    event: { type: EventType; message: string }
+  ) => Promise<void>;
+  /** Every CardEvent recorded for this investigation, across every shoe — the sole source for every displayed/derived running & true count. See lib/counting-engine. */
+  cardEvents: CardEvent[];
+  /** The single card-entry path: writes the round's display-array mutation and its structured CardEvent atomically, and makes the addition undoable/redoable via the ledger rather than a whole-round snapshot. */
+  addCard: (
+    target: { targetType: CardEventTargetType; targetId: number | "dealer"; rank: Rank },
+    applyToRound: (round: Round) => Round,
     event: { type: EventType; message: string }
   ) => Promise<void>;
   refresh: () => Promise<void>;
@@ -145,6 +163,7 @@ export function InvestigationProvider({
   children: ReactNode;
 }) {
   const [investigation, setInvestigation] = useState<Investigation | null>(null);
+  const [cardEvents, setCardEvents] = useState<CardEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTarget, setActiveTargetState] = useState<CardTarget>("dealer");
   const [busy, setBusy] = useState(false);
@@ -153,9 +172,23 @@ export function InvestigationProvider({
 
   useEffect(() => {
     let cancelled = false;
-    getInvestigation(investigationId).then((fresh) => {
+    getInvestigation(investigationId).then(async (fresh) => {
+      if (!fresh) {
+        if (!cancelled) {
+          setInvestigation(null);
+          setLoading(false);
+        }
+        return;
+      }
+      // Backfills the card ledger for investigations recorded before it
+      // existed — a no-op for anything that already has ledger rows (every
+      // investigation created after this point, from its first card) or
+      // has no recorded card activity to recover.
+      await ensureLegacyLedger(fresh);
+      const events = await getCardEventsForInvestigation(investigationId);
       if (cancelled) return;
-      setInvestigation(fresh ?? null);
+      setInvestigation(fresh);
+      setCardEvents(events);
       setLoading(false);
     });
     return () => {
@@ -164,8 +197,12 @@ export function InvestigationProvider({
   }, [investigationId]);
 
   const refresh = useCallback(async () => {
-    const fresh = await getInvestigation(investigationId);
+    const [fresh, events] = await Promise.all([
+      getInvestigation(investigationId),
+      getCardEventsForInvestigation(investigationId),
+    ]);
     setInvestigation(fresh ?? null);
+    setCardEvents(events);
   }, [investigationId]);
 
   const currentRound = investigation?.rounds[investigation.rounds.length - 1];
@@ -221,32 +258,73 @@ export function InvestigationProvider({
       setBusy(true);
       try {
         pushHistory({ kind: "round", round: currentRound });
-        const before =
-          event.type === "card" ? computeShoeStats(investigation, currentRound.shoeNumber) : null;
-        const updatedRound = await mutateRound(investigation.localId, currentRound.id, updater, event);
-        if (before) {
-          const afterInvestigation = { ...investigation, rounds: investigation.rounds.map((r) => (r.id === updatedRound.id ? updatedRound : r)) };
-          const after = computeShoeStats(afterInvestigation, updatedRound.shoeNumber);
-          diagnostics.debug("count-engine", event.message, {
-            investigationId: investigation.localId,
-            shoeNumber: updatedRound.shoeNumber,
-            roundNumber: updatedRound.roundNumber,
-            activeTarget,
-            countingSystem: investigation.countingSystem,
-            hiLoBefore: before.counts["Hi-Lo"].runningCount,
-            hiLoAfter: after.counts["Hi-Lo"].runningCount,
-            koAfter: after.counts.KO.runningCount,
-            zenAfter: after.counts.Zen.runningCount,
-            omegaIIAfter: after.counts["Omega II"].runningCount,
-            cardsSeenAfter: after.cardsSeen,
-          });
-        }
+        await mutateRound(investigation.localId, currentRound.id, updater, event);
         await refresh();
       } finally {
         setBusy(false);
       }
     },
-    [investigation, currentRound, activeTarget, refresh, pushHistory]
+    [investigation, currentRound, refresh, pushHistory]
+  );
+
+  /**
+   * The single card-entry path. Writes the round's display-array mutation
+   * and its structured CardEvent atomically (addCardToRound), then records
+   * the new event's id alongside the round snapshot on the undo stack —
+   * undo/redo of a card addition flips that specific ledger event's status
+   * (undoCardAdd/redoCardAdd) instead of only rewinding the round's display
+   * arrays, so the count stays derived from the ledger even across
+   * undo/redo. Every count anywhere in the app (CountSummaryPanel,
+   * BottomStatusBar, Analysis) is calculated from `cardEvents`, never from
+   * this round-array mutation directly.
+   */
+  const addCard = useCallback(
+    async (
+      target: { targetType: CardEventTargetType; targetId: number | "dealer"; rank: Rank },
+      applyToRound: (round: Round) => Round,
+      event: { type: EventType; message: string }
+    ) => {
+      if (!investigation || !currentRound) return;
+      setBusy(true);
+      try {
+        const before = calculateCountSnapshot(
+          eventsInShoe(cardEvents, currentRound.shoeNumber),
+          investigation.shoeTotalDecks
+        );
+        const { round: updatedRound, cardEvent } = await addCardToRound({
+          investigationLocalId: investigation.localId,
+          roundId: currentRound.id,
+          targetType: target.targetType,
+          targetId: target.targetId,
+          rank: target.rank,
+          applyToRound,
+          event,
+        });
+        pushHistory({ kind: "round", round: currentRound, cardEventId: cardEvent.id });
+        const afterEvents = [...cardEvents, cardEvent];
+        const after = calculateCountSnapshot(
+          eventsInShoe(afterEvents, updatedRound.shoeNumber),
+          investigation.shoeTotalDecks
+        );
+        diagnostics.debug("count-engine", event.message, {
+          investigationId: investigation.localId,
+          shoeNumber: updatedRound.shoeNumber,
+          roundNumber: updatedRound.roundNumber,
+          activeTarget,
+          countingSystem: investigation.countingSystem,
+          hiLoBefore: before["Hi-Lo"].running,
+          hiLoAfter: after["Hi-Lo"].running,
+          koAfter: after.KO.running,
+          zenAfter: after.Zen.running,
+          omegaIIAfter: after["Omega II"].running,
+          cardsSeenAfter: after.exposedCardCount,
+        });
+        await refresh();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [investigation, currentRound, cardEvents, activeTarget, refresh, pushHistory]
   );
 
   const undo = useCallback(() => {
@@ -256,13 +334,14 @@ export function InvestigationProvider({
     setHistory((h) => h.slice(0, -1));
 
     if (entry.kind === "round") {
-      setFuture((f) => [{ kind: "round", round: currentRound }, ...f]);
-      mutateRound(investigation.localId, currentRound.id, () => entry.round, {
-        type: "correction",
-        message: "Undo: reverted last change",
-      })
-        .then(refresh)
-        .finally(() => setBusy(false));
+      setFuture((f) => [{ kind: "round", round: currentRound, cardEventId: entry.cardEventId }, ...f]);
+      const restore = entry.cardEventId
+        ? undoCardAdd(investigation.localId, currentRound.id, entry.round, entry.cardEventId)
+        : mutateRound(investigation.localId, currentRound.id, () => entry.round, {
+            type: "correction",
+            message: "Undo: reverted last change",
+          });
+      restore.then(refresh).finally(() => setBusy(false));
     } else if (entry.kind === "seat-config") {
       setFuture((f) => [snapshotSeatConfig(investigation), ...f]);
       updateInvestigation(investigation.localId, {
@@ -287,13 +366,14 @@ export function InvestigationProvider({
     setFuture((f) => f.slice(1));
 
     if (entry.kind === "round") {
-      setHistory((h) => [...h, { kind: "round", round: currentRound }]);
-      mutateRound(investigation.localId, currentRound.id, () => entry.round, {
-        type: "correction",
-        message: "Redo: reapplied change",
-      })
-        .then(refresh)
-        .finally(() => setBusy(false));
+      setHistory((h) => [...h, { kind: "round", round: currentRound, cardEventId: entry.cardEventId }]);
+      const reapply = entry.cardEventId
+        ? redoCardAdd(investigation.localId, currentRound.id, entry.round, entry.cardEventId)
+        : mutateRound(investigation.localId, currentRound.id, () => entry.round, {
+            type: "correction",
+            message: "Redo: reapplied change",
+          });
+      reapply.then(refresh).finally(() => setBusy(false));
     } else if (entry.kind === "seat-config") {
       setHistory((h) => [...h, snapshotSeatConfig(investigation)]);
       updateInvestigation(investigation.localId, {
@@ -707,6 +787,8 @@ export function InvestigationProvider({
         redo,
         busy,
         mutate,
+        cardEvents,
+        addCard,
         refresh,
         pause,
         resume,

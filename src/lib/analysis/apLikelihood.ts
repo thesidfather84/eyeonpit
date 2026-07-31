@@ -1,3 +1,5 @@
+import { calculateRoundCountSnapshot } from "@/lib/analysis/roundCountSnapshot";
+import type { CardEvent } from "@/lib/counting-engine/types";
 import type { Investigation } from "@/types/investigation";
 
 export type ApLikelihoodLevel = "low" | "moderate" | "elevated";
@@ -45,6 +47,7 @@ function levelFor(correlation: number): ApLikelihoodLevel {
  */
 export function computeApLikelihoodBySeat(
   investigation: Investigation,
+  cardEvents: CardEvent[],
   shoeNumber: number
 ): Record<number, ApLikelihood> {
   const shoeRounds = investigation.rounds
@@ -64,7 +67,12 @@ export function computeApLikelihoodBySeat(
         bets.push(record.betAmount);
         countsGoingIn.push(priorTrueCount);
       }
-      if (round.trueCount != null) priorTrueCount = round.trueCount;
+      // Derived directly from the card ledger — never the persisted
+      // Round.trueCount, which is only snapshotted when a round is
+      // superseded by the next one and is otherwise null.
+      const trueCount = calculateRoundCountSnapshot(investigation, cardEvents, round)[investigation.countingSystem]
+        .trueCount;
+      if (trueCount != null) priorTrueCount = trueCount;
     }
 
     const correlation = pearson(bets, countsGoingIn);
@@ -80,8 +88,12 @@ export function computeApLikelihoodBySeat(
 }
 
 /** The single strongest-correlating tracked seat, for the Count Summary badge. */
-export function computeApLikelihood(investigation: Investigation, shoeNumber: number): ApLikelihood {
-  const bySeat = computeApLikelihoodBySeat(investigation, shoeNumber);
+export function computeApLikelihood(
+  investigation: Investigation,
+  cardEvents: CardEvent[],
+  shoeNumber: number
+): ApLikelihood {
+  const bySeat = computeApLikelihoodBySeat(investigation, cardEvents, shoeNumber);
   let best: ApLikelihood = { level: "low", correlation: 0, seatNumber: null, sampleSize: 0 };
 
   for (const result of Object.values(bySeat)) {

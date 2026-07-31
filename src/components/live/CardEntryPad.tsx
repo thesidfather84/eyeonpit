@@ -23,7 +23,7 @@ export function CardEntryPad() {
     investigation,
     currentRound,
     activeTarget,
-    mutate,
+    addCard,
     advanceToNext,
     undo,
     canUndo,
@@ -54,7 +54,8 @@ export function CardEntryPad() {
 
     if (activeTarget === "dealer") {
       const isFirstCard = currentRound.dealerHand.cards.length === 0;
-      mutate(
+      addCard(
+        { targetType: "dealer", targetId: "dealer", rank },
         (round) => ({ ...round, dealerHand: { cards: [...round.dealerHand.cards, card] } }),
         { type: "card", message: `Dealer: ${formatCard(card)}` }
       );
@@ -67,7 +68,8 @@ export function CardEntryPad() {
 
     if (typeof activeTarget !== "number" || !seatResolved) return;
     const target = activeTarget;
-    mutate(
+    addCard(
+      { targetType: seatResolved.isSplit ? "split" : "seat", targetId: seatResolved.seatNumber, rank },
       (round) =>
         updateSeatAtTarget(round, target, (seat) => ({
           ...seat,

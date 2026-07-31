@@ -209,7 +209,17 @@ export interface Round {
   seats: Partial<Record<number, SeatRoundRecord>>;
   /** A seat's second hand after Split — same shape as `seats`, keyed by the same seat number. Absent unless that seat has split this round. */
   splitHands: Partial<Record<number, SeatRoundRecord>>;
-  /** Snapshotted when the round is finalized (Next Round / New Shoe) — see lib/counting-systems. */
+  /**
+   * A report-only derived cache, snapshotted from the card ledger when the
+   * round is finalized (Next Round / New Shoe) — see
+   * lib/db/repositories/investigations.ts's advanceRound. Never the source
+   * of truth: every live/historical count anywhere in the app is computed
+   * directly from lib/counting-engine over the CardEvent ledger, never from
+   * this field. Null until the round is finalized (including the current,
+   * still-open round), and may be stale for legacy investigations recovered
+   * before the ledger existed — always prefer
+   * lib/analysis/roundCountSnapshot.ts over reading this directly.
+   */
   runningCount: number | null;
   trueCount: number | null;
   operatorNote: string;

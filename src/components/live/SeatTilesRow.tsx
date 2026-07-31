@@ -46,9 +46,10 @@ export function SeatTilesRow() {
     markSeatEmpty,
     selectSeat,
     setActiveTarget,
+    cardEvents,
   } = useInvestigationContext();
   const showGroupLabels = useSettingsStore((s) => s.showGroupLabels);
-  const apBySeat = computeApLikelihoodBySeat(investigation, currentRound.shoeNumber);
+  const apBySeat = computeApLikelihoodBySeat(investigation, cardEvents, currentRound.shoeNumber);
   const seats = seatNumbersFor(investigation);
   const [optionsSeat, setOptionsSeat] = useState<number | null>(null);
   const [manageOpen, setManageOpen] = useState(false);

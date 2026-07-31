@@ -83,7 +83,7 @@ function ExportOverlayContent() {
       <p className="text-xs text-muted-foreground">
         Exports every round, seat hand, and event log entry for this investigation as JSON.
       </p>
-      <Button variant="secondary" onClick={() => downloadInvestigationJson(investigation)}>
+      <Button variant="secondary" onClick={() => void downloadInvestigationJson(investigation)}>
         Export {investigation.displayId} (JSON)
       </Button>
     </div>

@@ -1,11 +1,12 @@
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { computeApLikelihoodBySeat } from "@/lib/analysis/apLikelihood";
+import { calculateRoundCountSnapshot } from "@/lib/analysis/roundCountSnapshot";
 
 const LEVEL_LABEL = { low: "LOW", moderate: "MODERATE", elevated: "ELEVATED" } as const;
 
 export function AnalysisScreen() {
-  const { investigation, currentRound } = useInvestigationContext();
-  const apBySeat = computeApLikelihoodBySeat(investigation, currentRound.shoeNumber);
+  const { investigation, currentRound, cardEvents } = useInvestigationContext();
+  const apBySeat = computeApLikelihoodBySeat(investigation, cardEvents, currentRound.shoeNumber);
   const rounds = [...investigation.rounds].sort((a, b) => a.roundNumber - b.roundNumber);
 
   return (
@@ -31,14 +32,23 @@ export function AnalysisScreen() {
               </tr>
             </thead>
             <tbody>
-              {rounds.map((round) => (
-                <tr key={round.id} className="border-t border-border text-foreground">
-                  <td className="px-2 py-1.5">{round.roundNumber}</td>
-                  <td className="px-2 py-1.5">{round.shoeNumber}</td>
-                  <td className="px-2 py-1.5">{round.runningCount ?? "—"}</td>
-                  <td className="px-2 py-1.5">{round.trueCount ?? "—"}</td>
-                </tr>
-              ))}
+              {rounds.map((round) => {
+                // Always derived live from the card ledger — never the
+                // persisted Round.runningCount/trueCount, which is only
+                // snapshotted when a round is superseded by the next one
+                // and is otherwise null even though its cards are known.
+                const snapshot = calculateRoundCountSnapshot(investigation, cardEvents, round)[
+                  investigation.countingSystem
+                ];
+                return (
+                  <tr key={round.id} className="border-t border-border text-foreground">
+                    <td className="px-2 py-1.5">{round.roundNumber}</td>
+                    <td className="px-2 py-1.5">{round.shoeNumber}</td>
+                    <td className="px-2 py-1.5">{snapshot.running}</td>
+                    <td className="px-2 py-1.5">{snapshot.trueCount == null ? "N/A" : snapshot.trueCount}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

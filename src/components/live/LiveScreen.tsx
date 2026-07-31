@@ -14,6 +14,8 @@ import { CardEntryPad } from "./CardEntryPad";
 import { OperatorAssistantBar } from "./OperatorAssistantBar";
 import { RoundControlsRow } from "./RoundControlsRow";
 import { LandscapeStatusSheet } from "./LandscapeStatusSheet";
+import { VoiceControl } from "./VoiceControl";
+import { VoiceControlErrorBoundary } from "./VoiceControlErrorBoundary";
 
 /**
  * Portrait / normal height (the primary case, one-handed): a single
@@ -98,6 +100,14 @@ export function LiveScreen() {
         activeSeat={activeSeat}
         activeSeatEnabled={activeSeatEnabled}
       />
+
+      {/* Voice-entry beta (v1.1) — mounted here specifically so it unmounts
+          along with the rest of this screen under the privacy lock (see
+          InvestigationChrome), the same mechanism that already protects
+          every other live control from being reachable while locked. */}
+      <VoiceControlErrorBoundary>
+        <VoiceControl />
+      </VoiceControlErrorBoundary>
     </div>
   );
 }

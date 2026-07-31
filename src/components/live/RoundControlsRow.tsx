@@ -1,18 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { Redo2, StickyNote, XCircle } from "lucide-react";
+import { MoreHorizontal, Redo2, StickyNote, XCircle } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { canCompleteRound } from "@/lib/utils/roundValidation";
 import { AddNoteSheet } from "./AddNoteSheet";
 
 /**
  * Done / Next / Undo — the three controls an operator reaches for
- * constantly, grouped together directly above the card keypad as the most
- * prominent row here. Redo/Note/Clear are real but rarer actions, so they
- * sit in a smaller secondary row beneath instead of competing for the same
- * visual weight — and the primary forward control never lives at the
- * bottom of the page behind scrollable content.
+ * constantly, permanently grouped in one compact toolbar row directly
+ * above the card keypad. Redo/Note/Clear are real but rarer actions, so
+ * they're tucked behind the "⋯" toggle instead of permanently consuming
+ * screen height — opening it is the exception, not the steady state, so it
+ * never competes with the keypad below for space.
  *
  * Done and Next are deliberately separate (not fused into one "complete
  * and advance" tap): Done locks the round (completeRound — the existing
@@ -38,6 +38,7 @@ export function RoundControlsRow() {
     busy,
   } = useInvestigationContext();
   const [noteOpen, setNoteOpen] = useState(false);
+  const [overflowOpen, setOverflowOpen] = useState(false);
 
   const isActive = investigation.status === "active";
   const check = canCompleteRound(investigation, currentRound);
@@ -51,8 +52,8 @@ export function RoundControlsRow() {
   }
 
   return (
-    <div className="flex-none border-t border-border bg-surface p-1.5">
-      <div className="grid grid-cols-3 gap-1.5">
+    <div className="flex-none border-t border-border bg-surface p-0.5 short:border-t-0">
+      <div className="grid grid-cols-[1.3fr_1fr_1fr_44px] gap-1.5 short:gap-1">
         <button
           onClick={completeRound}
           disabled={busy || !isActive || currentRound.completed || !check.canComplete}
@@ -77,37 +78,52 @@ export function RoundControlsRow() {
         >
           Undo
         </button>
+        <button
+          type="button"
+          onClick={() => setOverflowOpen((v) => !v)}
+          aria-label="More round actions — Redo, Note, Clear"
+          aria-expanded={overflowOpen}
+          className={`tap-target flex items-center justify-center rounded-lg border text-foreground ${
+            overflowOpen ? "border-accent bg-accent/15" : "border-border bg-surface-raised"
+          }`}
+        >
+          <MoreHorizontal className="h-4 w-4" aria-hidden />
+        </button>
       </div>
       {!currentRound.completed && !check.canComplete && (
-        <p className="mt-1 text-center text-[10px] text-muted-foreground">{check.reasons[0]}</p>
+        <p className="mt-1 text-center text-[10px] text-muted-foreground short:mt-0.5 short:text-[9px]">
+          {check.reasons[0]}
+        </p>
       )}
 
-      <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-        <button
-          onClick={redo}
-          disabled={!canRedo || busy}
-          aria-label="Redo"
-          className="tap-target flex items-center justify-center gap-1 rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
-        >
-          <Redo2 className="h-3.5 w-3.5" aria-hidden /> Redo
-        </button>
-        <button
-          onClick={() => setNoteOpen(true)}
-          disabled={busy}
-          aria-label="Add note"
-          className="tap-target flex items-center justify-center gap-1 rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
-        >
-          <StickyNote className="h-3.5 w-3.5" aria-hidden /> Note
-        </button>
-        <button
-          onClick={clearActiveEntry}
-          disabled={busy || !isActive || currentRound.completed}
-          aria-label="Clear current entry"
-          className="tap-target flex items-center justify-center gap-1 rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
-        >
-          <XCircle className="h-3.5 w-3.5" aria-hidden /> Clear
-        </button>
-      </div>
+      {overflowOpen && (
+        <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+          <button
+            onClick={redo}
+            disabled={!canRedo || busy}
+            aria-label="Redo"
+            className="tap-target flex items-center justify-center gap-1 rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
+          >
+            <Redo2 className="h-3.5 w-3.5" aria-hidden /> Redo
+          </button>
+          <button
+            onClick={() => setNoteOpen(true)}
+            disabled={busy}
+            aria-label="Add note"
+            className="tap-target flex items-center justify-center gap-1 rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
+          >
+            <StickyNote className="h-3.5 w-3.5" aria-hidden /> Note
+          </button>
+          <button
+            onClick={clearActiveEntry}
+            disabled={busy || !isActive || currentRound.completed}
+            aria-label="Clear current entry"
+            className="tap-target flex items-center justify-center gap-1 rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
+          >
+            <XCircle className="h-3.5 w-3.5" aria-hidden /> Clear
+          </button>
+        </div>
+      )}
 
       {noteOpen && <AddNoteSheet onClose={() => setNoteOpen(false)} />}
     </div>

@@ -1,6 +1,17 @@
 @import "tailwindcss";
 
 /*
+  `short:` — true available height is scarce (a phone rotated to
+  landscape, ~390-430px tall; a small resized desktop window; a split-screen
+  tablet), regardless of width or the device-orientation sensor. Deliberately
+  a height media feature, not Tailwind's built-in `landscape:` (which keys
+  off orientation/aspect-ratio and would misfire on, e.g., a tall narrow
+  window) — the live screen's two-column layout is a response to lacking
+  height to stack in, not to a rotation event.
+*/
+@custom-variant short (@media (max-height: 500px));
+
+/*
   EyeOnPit theme — palette is Grok's approved UI design, ported verbatim
   into our CSS custom properties (see eyeonpit-ui.zip tailwind.config.js).
   Single dark theme, no light mode. Deep navy/charcoal background, bright
@@ -89,10 +100,10 @@ body {
 }
 
 @layer utilities {
-  /* Minimum comfortable touch size for controls used one-handed, low light. */
+  /* Minimum comfortable touch size for controls used one-handed, low light — iOS HIG's own 44pt floor, not a more generous default, since the compact live-screen layout needs every spare pixel it can recover. */
   .tap-target {
-    min-height: 48px;
-    min-width: 48px;
+    min-height: 44px;
+    min-width: 44px;
   }
   .safe-area-pt {
     padding-top: env(safe-area-inset-top);

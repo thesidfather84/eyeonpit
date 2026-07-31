@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { LiveHeader } from "./LiveHeader";
 import { CountSummaryPanel } from "./CountSummaryPanel";
@@ -12,26 +13,33 @@ import { PlayerActionsRow } from "./PlayerActionsRow";
 import { CardEntryPad } from "./CardEntryPad";
 import { OperatorAssistantBar } from "./OperatorAssistantBar";
 import { RoundControlsRow } from "./RoundControlsRow";
+import { LandscapeStatusSheet } from "./LandscapeStatusSheet";
 
 /**
- * One scroll container for the whole screen below the header — never two.
- * The live-entry core (header, count summary, deck selector, table map,
- * active context, round controls, card keypad, wager) are plain
- * `flex-none` siblings, each its natural height, in their original order;
- * only the secondary stuff below (player actions, guidance) sits in the
- * single `overflow-y-auto` region and scrolls out of view. An operator
- * mid-hand should never lose the seat/dealer selector, the round controls,
- * the keypad, or the wager just because they scrolled to tap a result —
- * and never has to deal with a second, nested scrollbar to do so.
+ * Portrait / normal height (the primary case, one-handed): a single
+ * stacked column, in priority order — status strip, count strip, table
+ * graphic, active seat, round toolbar, card keypad (the largest, most
+ * important control). Everything below the keypad — wager, hand status,
+ * player actions, guidance — lives in one shared scroll region so it never
+ * pushes the keypad, round toolbar, count strip, or table out of view. Every
+ * size in this tree is fluid (clamp()-driven, tied to dvh) rather than
+ * hard-coded per device, so this degrades continuously from the tallest
+ * phone down to the shortest instead of snapping at one breakpoint.
  *
- * RoundControlsRow (Done/Next/Undo, plus the secondary Redo/Note/Clear
- * row) sits directly above CardEntryPad — the primary forward control
- * lives immediately next to the keypad it acts on, never at the bottom of
- * the page behind scrollable content.
- *
- * History, Reports, Export, Settings, and Help open as overlays from the
- * header's Menu — the operator never leaves this screen during a live
- * investigation.
+ * `short:` (real available height under ~500px — a phone rotated to
+ * landscape, not device orientation itself) is a genuinely different
+ * layout, not a squeezed portrait: a three-column dashboard — a pinned
+ * count column (RC/TC always visible, never scrolls, never competes with
+ * anything else for space), a table/dealer column (flat 3x2 seat grid, no
+ * arch curve — a curve reads fine tall and narrow, not short and wide), and
+ * an entry column (round toolbar + keypad). Nothing in this row scrolls.
+ * The active-seat banner is redundant with CardEntryPad's own "ENTER CARD →
+ * SEAT n" label at this width, so it's dropped here rather than costing an
+ * entire row. Hand status, player actions (Double/Split/Insurance/
+ * Surrender), and operator guidance are real features an operator still
+ * needs but doesn't touch every card — they move into one "Status &
+ * Actions" panel instead of permanently occupying space the keypad and
+ * count strip need more.
  */
 export function LiveScreen() {
   const { investigation, activeTarget } = useInvestigationContext();
@@ -43,24 +51,53 @@ export function LiveScreen() {
   // numbers, always tied to an already-occupied seat).
   const activeSeatEnabled =
     activeSeat != null && investigation.occupiedSeats.includes(Math.abs(activeSeat));
+  const [statusSheetOpen, setStatusSheetOpen] = useState(false);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
       <LiveHeader />
-      <CountSummaryPanel />
-      <LiveDeckSelector />
 
-      <TableMap />
-      {activeSeat != null && <ActiveSeatHeader target={activeSeat} />}
-      <RoundControlsRow />
-      <CardEntryPad />
-      {activeSeatEnabled && <QuickBetPanel target={activeSeat!} />}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden short:flex-row">
+        <div className="flex flex-none flex-col short:h-full short:w-[19%] short:min-w-[64px] short:justify-center short:border-r short:border-border">
+          <CountSummaryPanel />
+          <LiveDeckSelector />
+        </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <HandStatusLine />
-        {activeSeatEnabled && <PlayerActionsRow target={activeSeat!} />}
-        <OperatorAssistantBar />
+        <div className="flex-none short:flex short:h-full short:w-[36%] short:min-w-0 short:flex-col short:border-r short:border-border short:p-1">
+          <TableMap />
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden short:w-[45%]">
+          {activeSeat != null && <ActiveSeatHeader target={activeSeat} />}
+          <RoundControlsRow />
+          <CardEntryPad />
+
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto short:hidden">
+            {activeSeatEnabled && <QuickBetPanel target={activeSeat!} />}
+            <HandStatusLine />
+            {activeSeatEnabled && <PlayerActionsRow target={activeSeat!} />}
+            <OperatorAssistantBar />
+          </div>
+
+          <div className="hidden short:flex short:min-h-0 short:flex-1 short:flex-col short:justify-end short:overflow-hidden">
+            {activeSeatEnabled && <QuickBetPanel target={activeSeat!} />}
+            <button
+              type="button"
+              onClick={() => setStatusSheetOpen(true)}
+              className="tap-target flex flex-none items-center justify-center gap-1 border-t border-border bg-surface-raised text-[11px] font-medium text-muted-foreground"
+            >
+              Status &amp; Actions ▾
+            </button>
+          </div>
+        </div>
       </div>
+
+      <LandscapeStatusSheet
+        open={statusSheetOpen}
+        onClose={() => setStatusSheetOpen(false)}
+        activeSeat={activeSeat}
+        activeSeatEnabled={activeSeatEnabled}
+      />
     </div>
   );
 }

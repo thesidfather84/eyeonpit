@@ -29,8 +29,8 @@ const AP_DOT_CLASSES: Record<string, string> = {
   elevated: "bg-destructive/80",
 };
 
-/** Per-column vertical offset (px) that bows positions 1-6 into an arch, concave toward the dealer — middle positions sit furthest from the dealer, end positions nearest, matching a real table's curved rail. */
-const ARCH_TRANSLATE_Y = [14, 6, 0, 0, 6, 14];
+/** Per-column vertical offset (px) that bows positions 1-6 into an arch, concave toward the dealer — middle positions sit furthest from the dealer, end positions nearest, matching a real table's curved rail. Scaled down from the original [14,6,0,0,6,14] alongside the shorter tiles below — same curve, smaller footprint. */
+const ARCH_TRANSLATE_Y = [9, 4, 0, 0, 4, 9];
 
 /**
  * Player seats — six permanent positions in a dealer's-eye-view arch, plus
@@ -163,7 +163,7 @@ export function SeatTilesRow() {
                 touchAction: "manipulation",
                 boxShadow: ring ? `0 0 0 2px ${ring.color}` : undefined,
               }}
-              className={`tap-target relative flex min-h-[48px] flex-col justify-center gap-0 rounded-xl py-0.5 pl-2 pr-1 transition-shadow duration-200 ${toneClasses} ${
+              className={`relative flex min-h-[38px] flex-col justify-center gap-0 rounded-xl py-0.5 pl-2 pr-1 transition-shadow duration-200 short:min-h-[52px] ${toneClasses} ${
                 isActive ? "border-2" : "border"
               }`}
             >
@@ -263,11 +263,21 @@ export function SeatTilesRow() {
   }
 
   return (
-    <div className="flex-none bg-surface px-1 pb-1.5">
-      {/* Positions 1-6: a fixed arch, numbered left to right exactly as the dealer sees them. Each column's translateY bows the row concave toward the dealer below — never reordered or shifted by state. */}
-      <div className="grid grid-cols-6 gap-x-1 gap-y-0 pt-3.5">
+    <div className="flex-none bg-surface px-1 pb-1 short:flex short:h-full short:min-h-0 short:flex-1 short:flex-col short:justify-center short:pb-0">
+      {/* Positions 1-6: a fixed arch, numbered left to right exactly as the
+          dealer sees them, bowed concave toward the dealer below. In
+          `short:` (landscape) the arch flattens into a plain 3x2 grid
+          instead — a curve reads fine in a tall narrow column, but in a
+          short wide one it just makes labels overlap between rows; a flat
+          grid scans better at that aspect ratio. Seat numbering/order never
+          changes, only the offset that's applied to it. */}
+      <div className="grid grid-cols-6 gap-x-1 gap-y-0 pt-2.5 short:grid-cols-3 short:grid-rows-2 short:items-start short:gap-1.5 short:pt-0">
         {ARCH_SEAT_NUMBERS.map((seat, i) => (
-          <div key={seat} style={{ transform: `translateY(${ARCH_TRANSLATE_Y[i]}px)` }}>
+          <div
+            key={seat}
+            className="short:!translate-y-0"
+            style={{ transform: `translateY(${ARCH_TRANSLATE_Y[i]}px)` }}
+          >
             {renderSeat(seat)}
           </div>
         ))}
@@ -275,12 +285,14 @@ export function SeatTilesRow() {
 
       {/* Position 7: optional, centered beneath the arch. Turning it off removes only this slot — positions 1-6 above are untouched. */}
       {position7Enabled && (
-        <div className="mx-auto mt-1.5 w-1/3 min-w-[84px]">{renderSeat(7)}</div>
+        <div className="mx-auto mt-1 w-1/3 min-w-[84px] short:mt-0.5 short:w-1/4 short:min-w-[64px] short:flex-none">
+          {renderSeat(7)}
+        </div>
       )}
 
       {/* Legacy positions 8-10: only ever present on investigations set up before the 6+1 arch existed. Never hidden or discarded — shown here, clearly labeled, so recorded data stays reachable. */}
       {legacySeats.length > 0 && (
-        <div className="mt-2 rounded-lg border border-pending/40 bg-pending/10 p-1.5">
+        <div className="mt-2 rounded-lg border border-pending/40 bg-pending/10 p-1.5 short:hidden">
           <p className="mb-1 text-[10px] font-semibold text-pending">
             Legacy table layout — position{legacySeats.length > 1 ? "s" : ""} {legacySeats.join(", ")}{" "}
             predate the 6+1 arch. Recorded data is preserved below, not hidden.
@@ -289,9 +301,13 @@ export function SeatTilesRow() {
         </div>
       )}
 
+      {/* Reachable from the table map in portrait; in `short:` the column
+          has no spare row for it, but every action it opens (add/remove
+          seats, position 7 toggle) is still reachable per-seat via the ⋮
+          options menu on each tile. */}
       <button
         onClick={() => setManageOpen(true)}
-        className="mt-1 rounded-md px-2 text-[10px] font-medium text-muted-foreground hover:text-foreground"
+        className="mt-1 rounded-md px-2 text-[10px] font-medium text-muted-foreground hover:text-foreground short:hidden"
       >
         Manage Seats
       </button>

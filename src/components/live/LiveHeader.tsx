@@ -11,7 +11,15 @@ import { LiveMenu } from "./LiveMenu";
 import { EntryLockButton } from "./EntryLockButton";
 import { QuickSetupSheet } from "./QuickSetupSheet";
 
-/** Single compact row (~52px) — everything the operator needs to see at a glance, nothing more. */
+/**
+ * Single compact row, fluid height (clamp, not a fixed px) so it shrinks on
+ * short viewports too. Only the menu, id, elapsed time, online dot, and the
+ * right-side action buttons are `shrink-0` — those must always stay
+ * reachable without scrolling. The table/game-config summary is the one
+ * item allowed to truncate: on a narrow phone there isn't room for both it
+ * and the action buttons, and the buttons (Settings/Lock/Pause) are the
+ * ones an operator actually needs mid-investigation, not this summary text.
+ */
 export function LiveHeader() {
   const { investigation, currentRound, busy, pause, resume, refresh } = useInvestigationContext();
   const elapsedMs = useElapsedTimer(investigation);
@@ -21,7 +29,7 @@ export function LiveHeader() {
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
 
   return (
-    <div className="flex h-[52px] flex-none items-center gap-2 overflow-x-auto border-b border-border bg-surface px-2">
+    <div className="flex h-[clamp(40px,7dvh,52px)] flex-none items-center gap-1.5 border-b border-border bg-surface px-2 short:!h-[clamp(28px,8dvh,36px)] short:gap-1 short:px-1.5">
       <LiveMenu />
       <Eye className="h-4 w-4 shrink-0 text-accent" aria-hidden />
       <span className="hidden shrink-0 text-xs font-bold text-foreground sm:inline">EyeOnPit</span>
@@ -29,7 +37,7 @@ export function LiveHeader() {
       <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
         {investigation.displayId}
       </span>
-      <span className="shrink-0 text-[11px] text-muted-foreground">
+      <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
         T{investigation.tableNumber || "—"} · {formatGameConfigSummary(investigation, currentRound.shoeNumber)} · R
         {currentRound.roundNumber}
       </span>
@@ -46,7 +54,7 @@ export function LiveHeader() {
         />
       </span>
 
-      <div className="ml-auto flex shrink-0 items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5">
         <button
           type="button"
           onClick={() => setQuickSetupOpen(true)}

@@ -39,11 +39,11 @@ export function LiveDeckSelector() {
   }
 
   return (
-    <div className="flex flex-none items-center gap-2 border-b border-border bg-surface px-3 py-1.5">
+    <div className="flex flex-none items-center gap-2 border-b border-border bg-surface px-3 py-1.5 short:flex-col short:items-start short:gap-1 short:border-b-0 short:px-2 short:py-1">
       <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
         Decks
       </span>
-      <div className="flex gap-1.5">
+      <div className="flex gap-1.5 short:flex-wrap short:gap-1">
         {DECK_PRESETS.map((n) => {
           const selected = investigation.shoeTotalDecks === n;
           return (
@@ -53,7 +53,7 @@ export function LiveDeckSelector() {
               disabled={busy}
               aria-pressed={selected}
               onClick={() => selectDecks(n)}
-              className={`tap-target rounded-md border px-3 text-xs font-bold disabled:opacity-40 ${
+              className={`tap-target rounded-md border px-3 text-xs font-bold disabled:opacity-40 short:px-2 short:text-[10px] ${
                 selected
                   ? "border-accent bg-accent text-accent-foreground"
                   : "border-border bg-surface-raised text-foreground"

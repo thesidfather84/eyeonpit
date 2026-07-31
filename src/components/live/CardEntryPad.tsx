@@ -1,6 +1,5 @@
 "use client";
 
-import { Undo2 } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { formatCard } from "@/lib/utils/cards";
 import { resolveSeatTarget, updateSeatAtTarget } from "@/lib/utils/seatTarget";
@@ -10,24 +9,23 @@ import type { CardCode, Rank } from "@/types/investigation";
 const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 
 /**
- * Large rank-only buttons — suits are skipped for entry speed. Applies to
- * whichever target (dealer / seat / split hand) is currently active, always
- * visible in the lower-central portion of the console. A tap simply
- * appends the card to the target's list — dealer and seats use the exact
- * same append, no upcard/hole-card distinction, no confirmation, no forced
+ * The primary control surface — largest, most prominent element on the
+ * live screen, always two full rows of five buttons (never a narrow
+ * vertical strip): A 2 3 4 5 / 6 7 8 9 10. Applies to whichever target
+ * (dealer / seat / split hand) is currently active. A tap simply appends
+ * the card to the target's list — dealer and seats use the exact same
+ * append, no upcard/hole-card distinction, no confirmation, no forced
  * order. EyeOnPit records what the operator observed; it never asks them
  * to play the hand out.
+ *
+ * There is no separate "Undo Last Card" button here anymore — Undo already
+ * has one first-class, always-visible home (RoundControlsRow, directly
+ * above this pad) and the same context function either way; a second
+ * button for the identical action only cost this pad the vertical space
+ * its buttons need most.
  */
 export function CardEntryPad() {
-  const {
-    investigation,
-    currentRound,
-    activeTarget,
-    addCard,
-    undo,
-    canUndo,
-    busy,
-  } = useInvestigationContext();
+  const { investigation, currentRound, activeTarget, addCard, busy } = useInvestigationContext();
   const isDealerTarget = activeTarget === "dealer";
   const seatResolved =
     !isDealerTarget && typeof activeTarget === "number"
@@ -81,38 +79,34 @@ export function CardEntryPad() {
   }
 
   return (
-    <div className="flex-none border-b border-border bg-surface p-0.5">
-      <div className="mb-0 flex items-center justify-between gap-2">
-        <p className="text-center text-sm font-bold leading-none text-accent-secondary">
+    <div className="flex flex-none flex-col gap-0.5 border-b border-border bg-surface px-2 py-0.5 short:gap-0 short:border-b-0 short:px-1.5 short:py-0.5">
+      <div className="flex items-baseline gap-2">
+        <p className="min-w-0 shrink truncate text-xs font-bold leading-none text-accent-secondary short:text-[10px]">
           ENTER CARD → {targetLabel}
         </p>
-        <button
-          onClick={undo}
-          disabled={!canUndo || busy}
-          aria-label="Undo last card"
-          className="tap-target flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface-raised px-2 text-[10px] font-medium text-foreground disabled:opacity-40"
-        >
-          <Undo2 className="h-3 w-3" aria-hidden /> Undo Last Card
-        </button>
+        {(lastCardEvent || locked || notEnabled) && (
+          <p
+            className={`min-w-0 flex-1 truncate text-right text-[10px] leading-none short:text-[9px] ${locked || notEnabled ? "font-semibold text-pending" : "text-muted-foreground"}`}
+          >
+            {notEnabled
+              ? "Seat not enabled — double-tap to enable"
+              : locked
+                ? "Hand locked"
+                : lastCardEvent!.message}
+          </p>
+        )}
       </div>
-      {(lastCardEvent || locked || notEnabled) && (
-        <p
-          className={`mb-0 text-center text-[10px] leading-tight ${locked || notEnabled ? "font-semibold text-pending" : "text-muted-foreground"}`}
-        >
-          {notEnabled
-            ? "Seat not enabled — double-tap to enable"
-            : locked
-              ? "Hand locked — no further cards"
-              : `Last: ${lastCardEvent!.message}`}
-        </p>
-      )}
-      <div className="grid grid-cols-5 gap-x-1 gap-y-0.5">
+      {/* Compact keypad, sized off available height (clamp, not a device
+          breakpoint) rather than a device breakpoint pair — `short:` only
+          lowers the floor further, since a landscape phone has width to
+          spare for five columns but never much height. */}
+      <div className="grid grid-cols-5 gap-1.5 short:gap-1">
         {RANKS.map((rank) => (
           <button
             key={rank}
             disabled={disabled}
             onClick={() => handleTap(rank)}
-            className="tap-target flex h-11 items-center justify-center rounded-lg border border-border bg-surface-raised text-lg font-bold text-foreground active:bg-accent active:text-accent-foreground disabled:opacity-40"
+            className="tap-target flex h-[clamp(40px,7dvh,52px)] items-center justify-center rounded-xl border border-border bg-surface-raised text-xl font-bold text-foreground active:bg-accent active:text-accent-foreground disabled:opacity-40 short:!h-[clamp(30px,9dvh,40px)] short:text-base"
           >
             {rank}
           </button>

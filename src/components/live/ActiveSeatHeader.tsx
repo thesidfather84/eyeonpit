@@ -35,7 +35,7 @@ export function ActiveSeatHeader({ target }: { target: number }) {
   ].filter(Boolean);
 
   return (
-    <div className="flex-none border-b border-accent-secondary/40 bg-accent-secondary/10 px-2 py-0">
+    <div className="flex-none border-b border-accent-secondary/40 bg-accent-secondary/10 px-2 py-0 short:hidden">
       <span className="text-[11px] font-bold leading-none tracking-wide text-accent-secondary">
         ACTIVE — {parts.join(" / ")}
       </span>

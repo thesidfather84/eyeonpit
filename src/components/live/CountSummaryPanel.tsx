@@ -28,6 +28,12 @@ const ABBR: Record<string, string> = { "Hi-Lo": "HI-LO", KO: "KO", Zen: "ZEN", "
  * this container never uses overflow-hidden or a fixed height that could
  * hide a value. No system gets an arbitrary one-off color; the only color
  * distinction is foreground (values) vs muted-foreground (labels).
+ *
+ * In `short:` (landscape) this becomes its own pinned dashboard column,
+ * vertically centered, never sharing a row with anything that could
+ * squeeze it out — "prominent and always visible" is the one explicit
+ * demand on this panel in that layout, more so than in portrait where it
+ * already sits alone at the top.
  */
 export function CountSummaryPanel() {
   const { investigation, currentRound, cardEvents } = useInvestigationContext();
@@ -40,20 +46,20 @@ export function CountSummaryPanel() {
   const primaryValue = snapshot[primary];
 
   return (
-    <div className="flex flex-none flex-col gap-2 border-b border-border bg-surface px-3 py-2">
-      <div className="flex items-end justify-between gap-3">
+    <div className="flex flex-none flex-col gap-1 border-b border-border bg-surface px-3 py-1.5 short:min-h-0 short:flex-1 short:justify-center short:gap-2 short:border-b-0 short:px-2 short:py-1">
+      <div className="flex items-end justify-between gap-3 short:flex-col short:items-start short:gap-1">
         <div className="min-w-0">
           <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
             {ABBR[primary]}
           </p>
           <p
-            className="text-[2.5rem] font-extrabold leading-none tabular-nums text-foreground"
+            className="text-[clamp(1.75rem,7dvh,2.5rem)] font-extrabold leading-none tabular-nums text-foreground short:text-[clamp(1.375rem,10dvh,2rem)]"
             aria-label={`${ABBR[primary]} running count`}
           >
             {formatSigned(primaryValue.running)}
           </p>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-0.5 text-[11px] text-muted-foreground">
+        <div className="flex shrink-0 flex-col items-end gap-0.5 text-[11px] text-muted-foreground short:w-full short:flex-row short:items-baseline short:justify-between short:gap-2 short:text-[10px]">
           <span>
             RC <span className="font-semibold text-foreground">{formatSigned(primaryValue.running)}</span>
           </span>
@@ -64,11 +70,11 @@ export function CountSummaryPanel() {
       </div>
 
       {others.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1.5 short:flex-col short:flex-nowrap short:gap-1">
           {others.map((system) => (
             <span
               key={system}
-              className="shrink-0 rounded-md border border-border bg-surface-raised px-2 py-1 text-[11px] font-semibold text-foreground"
+              className="shrink-0 rounded-md border border-border bg-surface-raised px-2 py-1 text-[11px] font-semibold text-foreground short:px-1.5 short:py-0.5 short:text-[10px]"
             >
               <span className="text-muted-foreground">{ABBR[system]}</span>{" "}
               {formatSigned(snapshot[system].running)}

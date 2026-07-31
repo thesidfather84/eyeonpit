@@ -70,14 +70,14 @@ export function QuickBetPanel({ target }: { target: number }) {
         : null;
 
   return (
-    <div className="flex-none border-b border-border bg-surface p-0.5">
-      <div className="mb-0 flex items-center justify-between">
-        <span className="text-[11px] font-bold leading-none text-foreground">
+    <div className="flex-none border-b border-border bg-surface p-0.5 short:p-1">
+      <div className="mb-0 flex items-center justify-between short:text-[10px]">
+        <span className="text-[11px] font-bold leading-none text-foreground short:text-[10px]">
           {t.currentBet.toUpperCase()} — SEAT {seatNumber}
           {isSplit ? " · SPLIT" : ""}
         </span>
-        <span className="flex items-center gap-2 text-[11px] leading-none">
-          <span className="text-muted-foreground">
+        <span className="flex items-center gap-2 text-[11px] leading-none short:text-[10px]">
+          <span className="text-muted-foreground short:hidden">
             {t.baseBet} <span className="font-medium text-foreground">${startingWager}</span>
           </span>
           <span className="flex items-center gap-1">
@@ -95,20 +95,25 @@ export function QuickBetPanel({ target }: { target: number }) {
         </span>
       </div>
       {record?.doubled && (
-        <p className="mb-1 text-[10px] font-semibold text-pending">
+        <p className="mb-1 text-[10px] font-semibold text-pending short:text-[9px]">
           DOUBLED — wager locked, waiting for one final card
         </p>
       )}
 
-      {/* One horizontal-scroll row, never wraps — a fixed 2-row chip grid was
-          the single biggest contributor to this panel's height. */}
-      <div className="mb-0 flex gap-1 overflow-x-auto">
+      {/* One strip of chip buttons — a horizontal scroll in the tall
+          portrait layout (a fixed 2-row chip grid was the single biggest
+          contributor to this panel's height there); in `short:` (landscape)
+          there's no spare row for a second scroll region on top of the
+          keypad/seat-map columns, so it wraps in place instead — same
+          single-strip intent, just reflowing rather than scrolling if it
+          ever runs long. */}
+      <div className="mb-0 flex gap-1 overflow-x-auto short:flex-wrap short:gap-1 short:overflow-visible">
         {CHIPS.map((chip) => (
           <button
             key={chip}
             disabled={disabled}
             onClick={() => applyBet(chip)}
-            className={`tap-target shrink-0 rounded-md px-3 text-xs font-semibold disabled:opacity-40 ${
+            className={`tap-target shrink-0 rounded-md px-3 text-xs font-semibold disabled:opacity-40 short:px-1.5 short:text-[10px] ${
               currentBet === chip
                 ? "bg-accent text-accent-foreground"
                 : "border border-border bg-surface-raised text-foreground"
@@ -120,7 +125,7 @@ export function QuickBetPanel({ target }: { target: number }) {
         <button
           disabled={disabled}
           onClick={() => setCustomOpen((v) => !v)}
-          className="tap-target shrink-0 rounded-md border border-border bg-surface-raised px-3 text-xs font-semibold text-foreground disabled:opacity-40"
+          className="tap-target shrink-0 rounded-md border border-border bg-surface-raised px-3 text-xs font-semibold text-foreground disabled:opacity-40 short:px-1.5 short:text-[10px]"
         >
           CUSTOM
         </button>
@@ -147,12 +152,12 @@ export function QuickBetPanel({ target }: { target: number }) {
         </div>
       )}
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 short:gap-0.5">
         <button
           disabled={disabled}
           onClick={() => applyBet(Math.max(0, currentBet - BET_STEP))}
           aria-label="Decrease bet"
-          className="tap-target shrink-0 rounded-md border border-border bg-surface-raised px-3 text-base font-semibold text-foreground disabled:opacity-40"
+          className="tap-target shrink-0 rounded-md border border-border bg-surface-raised px-3 text-base font-semibold text-foreground disabled:opacity-40 short:px-2"
         >
           −
         </button>
@@ -163,28 +168,31 @@ export function QuickBetPanel({ target }: { target: number }) {
           disabled={disabled}
           onClick={() => applyBet(currentBet + BET_STEP)}
           aria-label="Increase bet"
-          className="tap-target shrink-0 rounded-md border border-accent bg-accent/15 px-3 text-base font-semibold text-accent disabled:opacity-40"
+          className="tap-target shrink-0 rounded-md border border-accent bg-accent/15 px-3 text-base font-semibold text-accent disabled:opacity-40 short:px-2"
         >
           +
         </button>
         <button
           disabled={disabled || previousStartingWager == null}
           onClick={() => applyBet(previousStartingWager ?? currentBet, "repeat")}
-          className="tap-target flex-1 rounded-md border border-border bg-surface-raised text-[10px] font-medium text-foreground disabled:opacity-40"
+          className="tap-target flex-1 rounded-md border border-border bg-surface-raised text-[10px] font-medium text-foreground disabled:opacity-40 short:px-1 short:text-[9px]"
         >
           Repeat
         </button>
         <button
           disabled={disabled}
           onClick={() => applyBet(0, "clear")}
-          className="tap-target flex-1 rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40"
+          className="tap-target flex-1 rounded-md border border-border bg-surface-raised text-[11px] font-medium text-foreground disabled:opacity-40 short:px-1 short:text-[9px]"
         >
           Clear
         </button>
+        {/* Undo here is the same undo() the primary Undo button
+            (RoundControlsRow) already exposes — in `short:` that one's
+            close enough that duplicating it here isn't worth the width. */}
         <button
           disabled={!canUndo || busy}
           onClick={undo}
-          className="tap-target flex-1 rounded-md border border-border bg-surface-raised text-[10px] font-medium text-foreground disabled:opacity-40"
+          className="tap-target flex-1 rounded-md border border-border bg-surface-raised text-[10px] font-medium text-foreground disabled:opacity-40 short:hidden"
         >
           Undo
         </button>
@@ -194,7 +202,7 @@ export function QuickBetPanel({ target }: { target: number }) {
         <button
           disabled={disabled || currentBet <= 0}
           onClick={handleApplyToLinked}
-          className="tap-target mt-1 w-full rounded-md border border-border bg-surface-raised text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-40"
+          className="tap-target mt-1 w-full rounded-md border border-border bg-surface-raised text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-40 short:hidden"
         >
           Apply ${currentBet} to all {linkedSeatCount} linked spots
         </button>

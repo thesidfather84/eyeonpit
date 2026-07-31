@@ -5,13 +5,13 @@ import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { computeWagerChange, findPreviousStartingWager } from "@/lib/utils/wagerChange";
 import { resolveSeatTarget, updateSeatAtTarget } from "@/lib/utils/seatTarget";
 import { useTerminology } from "@/hooks/useTerminology";
+import { ApplyToLinkedBetButton } from "./ApplyToLinkedBetButton";
 
 const CHIPS = [5, 10, 25, 100, 500, 1000];
 const BET_STEP = 25;
 
 export function QuickBetPanel({ target }: { target: number }) {
-  const { investigation, currentRound, mutate, undo, canUndo, applyBetToLinkedSpots, busy } =
-    useInvestigationContext();
+  const { investigation, currentRound, mutate, undo, canUndo, busy } = useInvestigationContext();
   const t = useTerminology();
   const [customOpen, setCustomOpen] = useState(false);
   const [customValue, setCustomValue] = useState("");
@@ -23,12 +23,6 @@ export function QuickBetPanel({ target }: { target: number }) {
   const previousStartingWager = findPreviousStartingWager(seatNumber, priorRounds);
   const disabled =
     busy || investigation.status !== "active" || currentRound.completed || Boolean(record?.doubled);
-
-  const groupId = investigation.seatPlayerGroups[seatNumber];
-  const linkedSeatCount = groupId
-    ? Object.values(investigation.seatPlayerGroups).filter((g) => g === groupId).length
-    : 1;
-  const isLinked = !isSplit && linkedSeatCount > 1;
 
   function applyBet(newAmount: number, label?: string) {
     const wagerChange = computeWagerChange(newAmount, previousStartingWager);
@@ -52,14 +46,6 @@ export function QuickBetPanel({ target }: { target: number }) {
   function handleCustomCommit() {
     const parsed = Number(customValue);
     if (Number.isFinite(parsed) && parsed >= 0) applyBet(parsed, "custom");
-  }
-
-  function handleApplyToLinked() {
-    applyBetToLinkedSpots(
-      seatNumber,
-      currentBet,
-      record?.wagerChange ?? { direction: "first", amount: null, overridden: false }
-    );
   }
 
   const changeBadge =
@@ -198,15 +184,14 @@ export function QuickBetPanel({ target }: { target: number }) {
         </button>
       </div>
 
-      {isLinked && (
-        <button
-          disabled={disabled || currentBet <= 0}
-          onClick={handleApplyToLinked}
-          className="tap-target mt-1 w-full rounded-md border border-border bg-surface-raised text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-40 short:hidden"
-        >
-          Apply ${currentBet} to all {linkedSeatCount} linked spots
-        </button>
-      )}
+      {/* In `short:` (landscape) this moves into the "Status & Actions"
+          panel instead — same ApplyToLinkedBetButton, same
+          applyBetToLinkedSpots call, just mounted from
+          LandscapeStatusSheet there instead of here. */}
+      <ApplyToLinkedBetButton
+        target={target}
+        className="tap-target mt-1 w-full rounded-md border border-border bg-surface-raised text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-40 short:hidden"
+      />
     </div>
   );
 }

@@ -11,11 +11,17 @@
 // and that the keypad -> ledger -> count-strip wiring still works.
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { InvestigationProvider } from "@/contexts/InvestigationContext";
-import { createInvestigation } from "@/lib/db/repositories/investigations";
+import { InvestigationProvider, useInvestigationContext } from "@/contexts/InvestigationContext";
+import {
+  createInvestigation,
+  occupySeat,
+  linkSeats,
+} from "@/lib/db/repositories/investigations";
 import { CountSummaryPanel } from "./CountSummaryPanel";
 import { CardEntryPad } from "./CardEntryPad";
 import { RoundControlsRow } from "./RoundControlsRow";
+import { QuickBetPanel } from "./QuickBetPanel";
+import { LandscapeStatusSheet } from "./LandscapeStatusSheet";
 
 async function freshInvestigationId(): Promise<string> {
   const inv = await createInvestigation({
@@ -29,6 +35,14 @@ async function freshInvestigationId(): Promise<string> {
     status: "active",
   });
   return inv.localId;
+}
+
+/** Read-only probe: exposes seat 2's current-round bet so the test can
+ * confirm "apply to linked spots" actually reached the real ledger, not
+ * just that a button rendered. */
+function Seat2BetProbe() {
+  const { currentRound } = useInvestigationContext();
+  return <div data-testid="seat2-bet">{currentRound.seats[2]?.betAmount ?? "none"}</div>;
 }
 
 function LiveEntrySurface() {
@@ -88,5 +102,59 @@ describe("live entry surface — mobile layout regression", () => {
 
     const rcTc = screen.getByText("RC").parentElement as HTMLElement;
     within(rcTc).getByText("+1");
+  });
+
+  it("Apply to linked spots is reachable from the landscape Status & Actions panel, and actually applies the bet", async () => {
+    const investigationId = await freshInvestigationId();
+    await occupySeat(investigationId, 1);
+    await occupySeat(investigationId, 2);
+    await linkSeats(investigationId, 1, 2);
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <QuickBetPanel target={1} />
+        <LandscapeStatusSheet open onClose={() => {}} activeSeat={1} activeSeatEnabled />
+        <Seat2BetProbe />
+      </InvestigationProvider>
+    );
+
+    // Set seat 1's bet through the real QuickBetPanel chip tap — same path
+    // an operator uses in either layout.
+    await waitFor(() => screen.getByRole("button", { name: "$25" }));
+    await act(async () => {
+      screen.getByRole("button", { name: "$25" }).click();
+    });
+    await waitFor(() => expect(screen.getByTestId("seat2-bet").textContent).toBe("none"));
+
+    // The action must be reachable inside the Status & Actions dialog —
+    // this is the landscape-only surface it moved into.
+    const dialog = screen.getByRole("dialog", { name: "Status & Actions" });
+    const applyButton = await within(dialog).findByRole("button", {
+      name: "Apply $25 to all 2 linked spots",
+    });
+    expect((applyButton as HTMLButtonElement).disabled).toBe(false);
+
+    await act(async () => {
+      applyButton.click();
+    });
+
+    // Confirms this isn't just a rendered button — it drove the real
+    // applyBetToLinkedSpots() and updated seat 2's actual ledger record.
+    await waitFor(() => expect(screen.getByTestId("seat2-bet").textContent).toBe("25"));
+  });
+
+  it("Apply to linked spots does not render when the active seat has no linked partner", async () => {
+    const investigationId = await freshInvestigationId();
+    await occupySeat(investigationId, 1);
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <LandscapeStatusSheet open onClose={() => {}} activeSeat={1} activeSeatEnabled />
+      </InvestigationProvider>
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "Status & Actions" });
+    await waitFor(() => within(dialog).getByText("Waiting for starting wagers."));
+    expect(within(dialog).queryByText(/Apply \$/)).toBeNull();
   });
 });

@@ -8,11 +8,14 @@
 // re-test those components' own internals (already covered by their own
 // test files).
 import { useEffect } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { InvestigationProvider, useInvestigationContext } from "@/contexts/InvestigationContext";
+import { LockProvider } from "@/contexts/LockContext";
+import { EntryLockProvider } from "@/contexts/EntryLockContext";
 import { createInvestigation } from "@/lib/db/repositories/investigations";
 import { FloorScreen } from "./FloorScreen";
+import { LiveScreen } from "./LiveScreen";
 
 class MockSpeechRecognition {
   continuous = false;
@@ -162,5 +165,50 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
     );
 
     await screen.findByRole("button", { name: "Start voice command" });
+  });
+});
+
+describe("FloorScreen and LiveScreen share the same underlying investigation/ledger", () => {
+  it("a card entered through Floor's keypad is immediately reflected in Surveillance's count — one investigation, one CardEvent ledger, not two", async () => {
+    const investigationId = await freshInvestigationId();
+
+    render(
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <div data-testid="surveillance-pane">
+              <LiveScreen />
+            </div>
+            <div data-testid="floor-pane">
+              <FloorScreen />
+            </div>
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
+    );
+
+    // Both screens embed the exact same CountSummaryPanel component — two
+    // mounted instances of it, both reading the same InvestigationContext.
+    await waitFor(() => {
+      const counts = screen.getAllByLabelText("HI-LO running count");
+      expect(counts).toHaveLength(2);
+      expect(counts[0].textContent).toBe("0");
+      expect(counts[1].textContent).toBe("0");
+    });
+
+    // Enter a card through Floor's own keypad, not Surveillance's.
+    const floorPane = screen.getByTestId("floor-pane");
+    const floorAceButton = within(floorPane).getByRole("button", { name: "A" });
+    await act(async () => {
+      floorAceButton.click();
+    });
+
+    // Surveillance's own header count updates too — same ledger, same
+    // investigation, no separate Floor counting architecture.
+    await waitFor(() => {
+      const counts = screen.getAllByLabelText("HI-LO running count");
+      expect(counts[0].textContent).toBe("-1");
+      expect(counts[1].textContent).toBe("-1");
+    });
   });
 });

@@ -389,8 +389,10 @@ describe("VoiceControl — noisy real-world transcripts, end to end (the safety 
     await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
   });
 
-  it('"C1 King Ace" (two different card values) is rejected — zero CardEvents, never a guessed one', async () => {
+  it('"C1 King Ace" — REDEFINED under natural hand narration (see parseNarration.ts): C1 is an explicit target, so two distinct sequential ranks are no longer ambiguous — Seat 1 gets both cards, in order, not a rejection', async () => {
     const investigationId = await freshInvestigationId();
+    const { occupySeat } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 1);
     render(
       <InvestigationProvider investigationId={investigationId}>
         <VoiceControl />
@@ -400,11 +402,12 @@ describe("VoiceControl — noisy real-world transcripts, end to end (the safety 
     await startListening();
     await act(async () => sayFinal("C1 King Ace"));
 
-    await waitFor(() => screen.getByText(/Not recognized/));
+    await waitFor(() => screen.getByText("✓ S1: K A"));
+    await waitFor(() => expect(screen.getByTestId("seat-1-card-count").textContent).toBe("2"));
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
   });
 
-  it('"Taylor King King" ignores the misheard name and enters exactly one card on the currently active target', async () => {
+  it('"Taylor King King" -> reject, ZERO CardEvents — redefined per the narration/legacy boundary safety fix: a bare unscoped card with ANY surrounding unrecognized word ("Taylor") must never be salvaged, even though it fits the old tolerance built for a misheard proper noun. That old tolerance was proven indistinguishable from ordinary conversation by the "Team 5" regression, so it no longer applies to a target-less card', async () => {
     const investigationId = await freshInvestigationId();
     render(
       <InvestigationProvider investigationId={investigationId}>
@@ -415,8 +418,8 @@ describe("VoiceControl — noisy real-world transcripts, end to end (the safety 
     await startListening();
     await act(async () => sayFinal("Taylor King King"));
 
-    await waitFor(() => screen.getByText("✓ DEALER: K"));
-    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+    await waitFor(() => screen.getByText(/Not recognized/));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
   });
 
   it('"dealer Qing King" ignores the garbled near-miss and enters exactly one card', async () => {
@@ -456,7 +459,7 @@ describe("VoiceControl — noisy real-world transcripts, end to end (the safety 
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
   });
 
-  it('the exact captured phrase "C1 Ace King" is rejected end to end — C1 is recognized as Seat 1, but Ace/King ambiguity means zero CardEvents, not a guessed one', async () => {
+  it('the exact captured phrase "C1 Ace King" — REDEFINED under natural hand narration: C1 recognized as Seat 1, and with an explicit target established, Ace then King become two ordered Seat 1 CardEvents rather than an ambiguous rejection', async () => {
     const investigationId = await freshInvestigationId();
     const { occupySeat } = await import("@/lib/db/repositories/investigations");
     await occupySeat(investigationId, 1);
@@ -470,13 +473,10 @@ describe("VoiceControl — noisy real-world transcripts, end to end (the safety 
     await startListening();
     await act(async () => sayFinal("C1 Ace King"));
 
-    await waitFor(() => screen.getByText(/Not recognized/));
-    expect(screen.getByTestId("seat-1-card-count").textContent).toBe("0");
+    await waitFor(() => screen.getByText("✓ S1: A K"));
+    await waitFor(() => expect(screen.getByTestId("seat-1-card-count").textContent).toBe("2"));
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
-    // Confirms this rejection is the ambiguity rule, not "C1 failed to
-    // normalize" — Seat 1 was never even selected, since the whole
-    // transcript was thrown out for the safer reason.
-    expect(screen.getByTestId("active-target").textContent).toBe("dealer");
+    expect(screen.getByTestId("active-target").textContent).toBe("1");
   });
 
   it('"C1 Ace" (the alternate single-card recognition candidate for the same utterance) selects Seat 1 and enters exactly one Ace', async () => {
@@ -943,6 +943,260 @@ describe('VoiceControl — "count"/"status" (read-only spoken feedback)', () => 
     } finally {
       useSettingsStore.getState().setVoiceAudioFeedback(true);
     }
+  });
+});
+
+describe("VoiceControl — natural hand narration, end to end (milestone required tests A-I)", () => {
+  it('A. "dealer king ace" -> exactly 2 dealer CardEvents, with a compact confirmation', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("dealer king ace"));
+
+    await waitFor(() => screen.getByText("✓ DEALER: K A"));
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("2"));
+  });
+
+  it('B. "seat one five three seven" -> exactly 3 Seat-1 CardEvents', async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 1);
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("seat one five three seven"));
+
+    await waitFor(() => screen.getByText("✓ S1: 5 3 7"));
+    await waitFor(() => expect(screen.getByTestId("seat-1-card-count").textContent).toBe("3"));
+  });
+
+  it('C. "C3 85" -> Seat 3: 8, 5 — the C<n> artifact as a narration target plus a compact digit run decomposed', async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 3);
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("C3 85"));
+
+    await waitFor(() => screen.getByText("✓ S3: 8 5"));
+    await waitFor(() => expect(screen.getByTestId("seat-3-card-count").textContent).toBe("2"));
+  });
+
+  it('E. "new hand dealer ace king seat one four five seat two three five nine done" -> complete narration across workflow + multiple targets', async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 1);
+    await occupySeat(investigationId, 2);
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () =>
+      sayFinal("new hand dealer ace king seat one four five seat two three five nine done")
+    );
+
+    // "new hand" parses to the same "next" workflow op bare "next" produces
+    // (see parseNarration's SINGLE_WORD_WORKFLOW / two-token lookahead), so
+    // it renders as its own leading "NEXT" clause exactly like any other
+    // workflow op in the sequence — consistent with
+    // narrationConfirmation.test.ts's own "NEXT · DEALER: A · S1: 4 · DONE"
+    // case.
+    await waitFor(() => screen.getByText("✓ NEXT · DEALER: A K · S1: 4 5 · S2: 3 5 9 · DONE"));
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("2"));
+    await waitFor(() => expect(screen.getByTestId("seat-1-card-count").textContent).toBe("2"));
+    await waitFor(() => expect(screen.getByTestId("seat-2-card-count").textContent).toBe("3"));
+    await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+  });
+
+  it('F. "seat three raised his bet after the five" (a casino observation, not narration) -> zero CardEvents', async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 3);
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("seat three raised his bet after the five"));
+
+    await waitFor(() => screen.getByText(/Not recognized/));
+    expect(screen.getByTestId("seat-3-card-count").textContent).toBe("0");
+  });
+
+  it('H. malformed narration ("dealer king ace seat nine five") commits ZERO events — never the valid "dealer king ace" prefix', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("dealer king ace seat nine five"));
+
+    await waitFor(() => screen.getByText(/Not recognized/));
+    // Not just "no seat 9" — the earlier, individually-valid "dealer king
+    // ace" must ALSO not have been committed. Zero cards anywhere proves
+    // the whole narration was validated before anything was dispatched.
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+
+  it("I. the exact same FINAL narration delivered twice in quick succession (a recognition restart artifact) produces exactly one set of CardEvents, never two", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    const instance = MockSpeechRecognition.latest();
+    await act(async () => {
+      // Same native session firing the identical final transcript twice —
+      // the existing duplicate-window guard (unchanged by this milestone)
+      // must still catch this exactly as it always has.
+      instance.onresult?.(makeResultEvent("dealer king ace", true));
+      instance.onresult?.(makeResultEvent("dealer king ace", true));
+    });
+
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("2"));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("2");
+  });
+});
+
+describe("VoiceControl — ATOMIC COMMIT: a multi-op narration commits ALL of its operations or NONE, never a partial prefix or suffix", () => {
+  // Distinct from test H above: H is a PARSE-time rejection (seat 9 is
+  // never a valid seat number at all, so parseNarration itself never
+  // produces ops). These are RUNTIME preflight failures — the narration
+  // parses into a perfectly valid ops list, but one op's target isn't
+  // actually usable right now (an unoccupied seat, or a round that isn't
+  // completable). Before this fix, commitNarration would silently skip
+  // just that one infeasible op and keep committing the rest; now the
+  // whole narration must preflight successfully BEFORE anything commits.
+
+  it('failure at the FIRST mutating op ("seat three five dealer king ace done", seat 3 never occupied) -> zero events anywhere, including the later valid dealer cards', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("seat three five dealer king ace done"));
+
+    await waitFor(() => screen.getByText(/isn.t available right now/));
+    expect(screen.getByTestId("seat-3-card-count").textContent).toBe("0");
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+    expect(screen.getByTestId("round-completed").textContent).toBe("false");
+  });
+
+  it('failure in the MIDDLE ("dealer king ace seat three five done", seat 3 never occupied) -> zero events, including the earlier valid "dealer king ace"', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("dealer king ace seat three five done"));
+
+    await waitFor(() => screen.getByText(/isn.t available right now/));
+    // The individually-valid "dealer king ace" prefix must NOT have landed
+    // just because it preflighted fine before the seat 3 failure was found.
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+    expect(screen.getByTestId("seat-3-card-count").textContent).toBe("0");
+    expect(screen.getByTestId("round-completed").textContent).toBe("false");
+  });
+
+  it('failure at the FINAL op ("dealer king ace done", with seat 1 wagered but zero cards -> Done infeasible) -> zero events, including the earlier valid dealer cards', async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat, getInvestigation, updateSeatBet } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 1);
+    const inv = await getInvestigation(investigationId);
+    const roundId = inv!.rounds[inv!.rounds.length - 1].id;
+    // A wagered seat with zero cards is exactly what canCompleteRound
+    // blocks on — see roundValidation.ts's checkHand — so "done" is
+    // infeasible even though nothing at all is wrong with the dealer cards
+    // this same narration is about to add.
+    await updateSeatBet(investigationId, roundId, 1, 25, { direction: "first", amount: null, overridden: false });
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("dealer king ace done"));
+
+    await waitFor(() => screen.getByText(/Done isn.t available/));
+    // Not just "Done didn't run" — the dealer cards that preflighted fine
+    // on their own must not have landed either, since the WHOLE narration
+    // (dealer cards + done) failed preflight together.
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+    expect(screen.getByTestId("round-completed").textContent).toBe("false");
+  });
+
+  it('a fully feasible narration ("dealer king ace seat one five three seven done") commits every operation exactly once', async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 1);
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("dealer king ace seat one five three seven done"));
+
+    await waitFor(() => screen.getByText("✓ DEALER: K A · S1: 5 3 7 · DONE"));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("2");
+    expect(screen.getByTestId("seat-1-card-count").textContent).toBe("3");
+    expect(screen.getByTestId("round-completed").textContent).toBe("true");
+  });
+
+  it("the exact same FINAL multi-op narration delivered twice in quick succession commits its whole operation set exactly once, never twice", async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 1);
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    const instance = MockSpeechRecognition.latest();
+    await act(async () => {
+      instance.onresult?.(makeResultEvent("dealer king ace seat one five three seven done", true));
+      instance.onresult?.(makeResultEvent("dealer king ace seat one five three seven done", true));
+    });
+
+    await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("2");
+    expect(screen.getByTestId("seat-1-card-count").textContent).toBe("3");
   });
 });
 

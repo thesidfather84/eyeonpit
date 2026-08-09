@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "validate:counting": "vitest run --config vitest.validate.config.ts src/lib/counting-engine/validation/countingValidation.standard.massvalidate.ts",
+    "validate:counting:stress": "vitest run --config vitest.validate.config.ts src/lib/counting-engine/validation/countingValidation.stress.massvalidate.ts"
   },
   "dependencies": {
     "date-fns": "^4.4.0",

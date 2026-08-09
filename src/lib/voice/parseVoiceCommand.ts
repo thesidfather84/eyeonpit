@@ -36,7 +36,7 @@ export interface ParsedVoiceCommand {
   command: VoiceCommandKind | null;
 }
 
-const SEAT_NUMBER_BY_WORD: Record<string, VoiceSeat> = {
+export const SEAT_NUMBER_BY_WORD: Record<string, VoiceSeat> = {
   one: 1,
   two: 2,
   three: 3,
@@ -61,7 +61,7 @@ const SEAT_NUMBER_BY_WORD: Record<string, VoiceSeat> = {
  * ("spot three", "the spot two player") — captured directly from the
  * natural phrasing this app's voice input is meant to support.
  */
-const SEAT_PREFIX_WORDS = ["seat", "player", "spot"];
+export const SEAT_PREFIX_WORDS = ["seat", "player", "spot"];
 
 function buildSeatPhrases(): Record<string, VoiceSeat> {
   const phrases: Record<string, VoiceSeat> = {};
@@ -97,7 +97,7 @@ const SEAT_PHRASES: Record<string, VoiceSeat> = buildSeatPhrases();
  * noise" case exactly like any other unrecognized token — it is never
  * added to the RANK_WORDS lexicon, so it can never itself become a card.
  */
-function seatFromCToken(token: string): VoiceSeat | null {
+export function seatFromCToken(token: string): VoiceSeat | null {
   const match = /^c([0-9]+)$/.exec(token);
   if (!match) return null;
   const n = Number(match[1]);
@@ -122,7 +122,7 @@ function seatFromCToken(token: string): VoiceSeat | null {
  * is always consumed as a seat number first (see extractFromNoisyTokens),
  * never reaching this table.
  */
-const RANK_WORDS: Record<string, VoiceRank> = {
+export const RANK_WORDS: Record<string, VoiceRank> = {
   ace: "A",
   one: "A",
   two: "2",
@@ -149,7 +149,7 @@ const RANK_WORDS: Record<string, VoiceRank> = {
 };
 
 /** Display-only echo of which face card was actually spoken — see VoiceCommandKind.displayRank. Not consulted for entry or counting, only for the confirmation toast's wording. */
-const FACE_CARD_DISPLAY: Record<string, "J" | "Q" | "K"> = {
+export const FACE_CARD_DISPLAY: Record<string, "J" | "Q" | "K"> = {
   jack: "J",
   queen: "Q",
   king: "K",
@@ -196,7 +196,7 @@ const CARD_FILLER_PREFIXES = ["an ", "a ", "the ", "card "];
  * swallowed for free by extractFromNoisyTokens below; they never count
  * against MAX_NOISE_TOKENS.
  */
-const NOISE_FILLER_WORDS = new Set(["a", "an", "the", "card"]);
+export const NOISE_FILLER_WORDS = new Set(["a", "an", "the", "card"]);
 
 /**
  * How many completely unrecognized tokens (not a target word, not a card
@@ -221,7 +221,7 @@ const NOISE_FILLER_WORDS = new Set(["a", "an", "the", "card"]);
  * the majority" or any fuzzier heuristic (that would just move the guessing
  * problem instead of removing it).
  */
-const MAX_NOISE_TOKENS = 1;
+export const MAX_NOISE_TOKENS = 1;
 
 function cardCommand(word: string, target?: VoiceTarget): VoiceCommandKind {
   const displayRank = FACE_CARD_DISPLAY[word];

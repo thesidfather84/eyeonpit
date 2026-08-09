@@ -70,7 +70,7 @@ A calculator-like visual grammar is acceptable because it is familiar and low-at
 
 **Manual controls remain the mandatory fallback** in Floor Mode exactly as in Surveillance — Floor Mode never becomes voice-only. When voice is unavailable, inaccurate, too noisy, or inappropriate for the moment, the operator drops to the same manual keypad/round controls Surveillance uses, with zero loss of investigation function (see §3, Offline First, which applies identically to both shells).
 
-Reaching Floor Mode from Surveillance, and returning to Surveillance from Floor, must always be one deliberate tap away — never a dead end.
+Reaching Floor Mode from Surveillance, and returning to Surveillance from Floor, must always be one deliberate tap away — never a dead end. Floor is also a first-class launch action in its own right, directly on the app's landing screen (§8) — an operator never has to enter Surveillance first and hunt for it.
 
 ## 5. Voice Control Coverage
 
@@ -86,13 +86,13 @@ Long-term, nearly every live-field operation should have a safe voice equivalent
 - notes/observations
 - relevant navigation
 
-Coverage today is partial (see the status matrix): seat/spot/dealer selection, cards, next/done/undo, notes, and the read-only count/status request are implemented. Player-decision actions (hit/stand/double/split/surrender/insurance) and wager mutation are not yet voice-controlled — see §13 for the wager design already worked out, and the Bloodhound-benchmark player-action set in §14 for what player-decision voice coverage will eventually need to reach.
+Coverage today is partial (see the status matrix): seat/spot/dealer selection, cards, next/done/undo, notes, and the read-only count/status request are implemented. Player-decision actions (hit/stand/double/split/surrender/insurance) and wager mutation are not yet voice-controlled — see §14 for the wager design already worked out, and the Bloodhound-benchmark player-action set in §17 for what player-decision voice coverage will eventually need to reach.
 
-Every voice command, present or future, is bound by the same count-integrity precedence as card entry (§9, §11): deterministic parsing only, no LLM/network dependency for anything that can mutate investigation state, and refuse rather than guess whenever input is ambiguous.
+Every voice command, present or future, is bound by the same count-integrity precedence as card entry (§9, §12): deterministic parsing only, no LLM/network dependency for anything that can mutate investigation state, and refuse rather than guess whenever input is ambiguous.
 
 ## 6. Hands-Free Audio Feedback
 
-Floor Mode supports concise spoken feedback through a headset, for the read-only "Count" and "Status" voice commands (see §11):
+Floor Mode supports concise spoken feedback through a headset, for the read-only "Count" and "Status" voice commands (see §12):
 
 - **"Count"** → e.g. "Hi-Lo plus three. True count plus one point six. K O plus seven."
 - **"Status"** → concise current target/round/count state, e.g. "Seat three active. Round four. Hi-Lo plus three."
@@ -107,17 +107,20 @@ Text-to-speech support and voice quality vary meaningfully across iOS Safari, An
 
 Casino floors are noisy. EyeOnPit uses available iOS/Android/headset voice-processing capabilities where the platform provides them, but never assumes noise cancellation is perfect.
 
-**Noise suppression is not the safety mechanism.** The safety mechanism is, and remains, deterministic parsing and refusal to mutate the ledger when speech is ambiguous (see §9, §11) — the same rule whether the environment is silent or a full casino floor. Core investigation operation must remain fully functional even when voice fails completely, on the noisiest floor or the quietest back office alike.
+**Noise suppression is not the safety mechanism.** The safety mechanism is, and remains, deterministic parsing and refusal to mutate the ledger when speech is ambiguous (see §9, §12) — the same rule whether the environment is silent or a full casino floor. Core investigation operation must remain fully functional even when voice fails completely, on the noisiest floor or the quietest back office alike.
 
 ## 8. Launch Experience
 
-Exactly three entry points, presented at app launch:
+Exactly four entry points, presented at app launch, all directly visible on the landing screen — none requires entering Surveillance first or hunting through a menu:
 
-- **Quick** — fastest path into a live investigation with sensible defaults.
+- **Quick** — fastest path into a live Surveillance investigation with sensible defaults. Remains the visually dominant default action.
+- **Floor** — one tap into the hands-free Floor workflow (§4), equally discoverable as Quick and clearly identified as the pit/floor path, styled distinctly so the two are never confused. Uses the exact same saved/default game configuration as Quick (never a separate setup step) and creates its investigation through the exact same `createInvestigation` call — there is no separate Floor launch data path. Routes directly to `/investigations/[id]/floor`, rather than opening in place the way Quick/Advanced/Practice do, since Floor Mode is a distinct screen (see §4) rather than a variant of the in-place Surveillance console.
 - **Advanced** — full setup sheet (casino, table, rules, seats) before starting.
 - **Practice** — a sandbox investigation for training/rehearsal that doesn't pollute real investigation history.
 
-No other top-level launch paths. See [`EmptyConsole.tsx`](../src/components/live/EmptyConsole.tsx) and [`QuickSetupSheet.tsx`](../src/components/live/QuickSetupSheet.tsx).
+No other top-level launch paths. Advanced and Practice remain available without added clutter from Floor's presence. See [`EmptyConsole.tsx`](../src/components/live/EmptyConsole.tsx) and [`QuickSetupSheet.tsx`](../src/components/live/QuickSetupSheet.tsx).
+
+Floor launched from the landing screen and Floor reached mid-investigation via Surveillance's "Floor Mode" entry (§4) are the same feature reached two ways — switching between Floor and Surveillance inside an already-active investigation remains available either way.
 
 **Practice state integrity.** Starting a new Practice exercise must never silently present stale cards/counts from a previous exercise as if they belong to the new one. A previous Practice investigation may remain reachable for review (the underlying record persists), but every tap of "Practice" must provide fresh current hand state, a fresh shoe/count state, and no stale dealer/player cards. See [`findOrCreatePracticeInvestigation`](../src/lib/onboarding/practiceInvestigationSeed.ts) and `resetPracticeInvestigationLiveState` in [`lib/db/repositories/investigations.ts`](../src/lib/db/repositories/investigations.ts) — this destructively clears the disposable practice CardEvent ledger, and is guarded to refuse any investigation that is not `isDemo` (see §9's Practice-vs-Production distinction — this is not the same operation a production reset would ever use).
 
@@ -148,7 +151,21 @@ If a genuinely destructive production reset is ever proposed in the future, it m
 
 **Do not change CardEvent or counting mathematics without an explicit, separate, deliberate request.** This is the one area of the app where "improve it while I'm in there" is not welcome.
 
-## 10. Live UI
+## 10. Pre-Release Validation
+
+Count Integrity (§9) is a claim about the whole system's behavior, not just its code — and a claim that scale is exactly where a subtle ledger/counting bug (an off-by-one in sequence numbering, a status-transition edge case, a shoe-boundary leak) is most likely to surface, since real production usage will eventually exercise far more hands than any hand-written unit test does. **Large-scale deterministic validation of the counting/ledger path is a required part of preparing any release that touches `lib/counting-engine/*`, `lib/db/repositories/cardEvents.ts`, or `lib/db/repositories/investigations.ts`'s round/shoe-advance functions.**
+
+The harness lives at `src/lib/counting-engine/validation/` (technical detail in `docs/VALIDATION.md`) and works by driving the **real** production path — `createInvestigation`, `occupySeat`, `addCardToRound`, `undoTargetCard`/`redoTargetCard`, `advanceRound`, `markSeatEmpty`, `mutateRound`, `calculateCountSnapshot` — through a large number of deterministically-seeded simulated shoes/hands, and comparing every result against a small, independently hand-written reference model (never production's own calculation called twice). Three levels:
+
+- **SMOKE** — small, fast, runs automatically with every `npm test`.
+- **STANDARD** — thousands of hands, run deliberately via `npm run validate:counting` before a release.
+- **STRESS** — tens of thousands of hands / hundreds of thousands of CardEvents or more, run manually via `npm run validate:counting:stress`, not part of routine workflow.
+
+**Wording discipline:** a passing run is evidence — *"passed N simulated hands/events with zero detected mismatches against the independent reference model"* — never a claim of mathematical proof or formal verification. See `docs/VALIDATION.md`'s "What this proves" / "What this does not prove" sections before writing about this capability anywhere product-facing.
+
+If the harness ever finds a real mismatch, the correct response is to stop and report the exact reproducible failure (seed, shoe, round, op, expected vs. actual — see `docs/VALIDATION.md`'s replay mechanism) before changing any counting logic — the harness exists to expose a bug, never to be adjusted until it agrees with one.
+
+## 11. Live UI
 
 The live investigation screen must be stable, fast, and non-jumpy — no layout shift while cards are being entered or the count is updating.
 
@@ -163,7 +180,7 @@ Secondary configuration (rule changes, seat setup details, table edits) must req
 
 Floor Mode (§4) reuses this same count engine and the same header building blocks in a deliberately smaller arrangement — see [`FloorScreen.tsx`](../src/components/live/FloorScreen.tsx) — rather than a second, independently designed header.
 
-## 11. Voice — End Goal
+## 12. Voice — End Goal
 
 **One tap turns voice ON. One tap turns it OFF.** No modes to remember, no push-to-talk button to hold.
 
@@ -187,21 +204,21 @@ Known, deterministic recognition artifacts may be safely normalized in a target 
 
 "Count" and "status" (§6) are the first read-only, non-mutating voice commands — they prove the same deterministic-parsing/exact-phrase machinery can safely answer a question, not just accept a structured fact, without ever touching the ledger.
 
-## 12. Voice Notes / Natural Observations
+## 13. Voice Notes / Natural Observations
 
 **Today (safe fallback):** an explicit Start Note / End Note state machine. The operator says a start phrase, speaks freely, and says an end phrase (or a cancel phrase to discard). The captured text is stored verbatim through the existing operator-notes mechanism — timestamped, tagged with investigation context, and stored as the **original observation/source text**.
 
-**Long-term goal:** natural conversational capture, without requiring an explicit start/end ritual — the system itself classifies ongoing speech into the A/B/C categories from §11 in real time.
+**Long-term goal:** natural conversational capture, without requiring an explicit start/end ritual — the system itself classifies ongoing speech into the A/B/C categories from §12 in real time.
 
 Whenever a future "cleaned up" or paraphrased version of a note is introduced (for report readability), the **original observation must be preserved and must remain distinguishable from the paraphrase** — never overwrite or silently replace the source text. This is the same principle as §9's ledger integrity, applied to the observation record: the raw capture is the record of truth; anything derived from it is clearly labeled as derived.
 
-## 13. Player / Game Tracking
+## 14. Player / Game Tracking
 
 EyeOnPit tracks, per investigation: seats and the players occupying them, the dealer, cards (per hand, per seat, per dealer), splits, doubles, surrender, insurance, wager amount and wager changes over time, bet spread, player decisions, table rule configuration, shoe/deck state, the count at meaningful moments (e.g. at each wager decision), timestamps throughout, and free-text operator observations.
 
-**Voice wager input (planned, not yet implemented).** Wager entry today is manual-only, through the existing authoritative action (`updateSeatAtTarget` + `computeWagerChange`, dispatched via `mutate` — see [`QuickBetPanel.tsx`](../src/components/live/QuickBetPanel.tsx)). Real field captures show wager language arriving as two separate recognition finals in sequence ("Player bet." then "$30." as distinct utterances) — that is a stateful, cross-utterance streaming problem with the same duplication/replay risks as multi-card streaming (see §11's ambiguity/replay rules) and is deliberately left unimplemented until a provably safe commit strategy exists, exactly as multi-card phrases are. A single-utterance deterministic grammar is designed and ready to implement once prioritized, reusing that same authoritative action with no new mutation logic: `"bet 30"` / `"wager 30"` (applies to whatever seat is currently the active target — rejected if the active target is the dealer, since the dealer has no wager), and `"seat 5 bet 30"` / `"seat 5 wager 30"` (explicit target, same as a spoken card target). The amount is parsed as a plain integer only — never through the card-rank lexicon — so it can never collide with a card command.
+**Voice wager input (planned, not yet implemented).** Wager entry today is manual-only, through the existing authoritative action (`updateSeatAtTarget` + `computeWagerChange`, dispatched via `mutate` — see [`QuickBetPanel.tsx`](../src/components/live/QuickBetPanel.tsx)). Real field captures show wager language arriving as two separate recognition finals in sequence ("Player bet." then "$30." as distinct utterances) — that is a stateful, cross-utterance streaming problem with the same duplication/replay risks as multi-card streaming (see §12's ambiguity/replay rules) and is deliberately left unimplemented until a provably safe commit strategy exists, exactly as multi-card phrases are. A single-utterance deterministic grammar is designed and ready to implement once prioritized, reusing that same authoritative action with no new mutation logic: `"bet 30"` / `"wager 30"` (applies to whatever seat is currently the active target — rejected if the active target is the dealer, since the dealer has no wager), and `"seat 5 bet 30"` / `"seat 5 wager 30"` (explicit target, same as a spoken card target). The amount is parsed as a plain integer only — never through the card-rank lexicon — so it can never collide with a card command.
 
-## 14. Advantage-Play Analysis ("Deep Eye")
+## 15. Advantage-Play Analysis ("Deep Eye")
 
 Deep Eye is EyeOnPit's advantage-play analysis capability — a set of *indicators*, not a verdict. It should surface:
 
@@ -218,7 +235,7 @@ Deep Eye is EyeOnPit's advantage-play analysis capability — a set of *indicato
 
 Every Deep Eye assessment must include a clear, human-readable **WHY** — the evidence and reasoning behind the number, not just the number. Deep Eye informs the surveillance manager; it does not accuse. Human judgment is always final.
 
-## 15. Final Investigation Report
+## 16. Final Investigation Report
 
 At "End Investigation," EyeOnPit generates a detailed, professional player-profile / investigation report — suitable for PDF export, printing, a surveillance binder, a case file, or management review by someone who was **not present** during the investigation.
 
@@ -234,20 +251,20 @@ The report must clearly separate **OBSERVED FACTS** from **DERIVED ANALYSIS** (i
 - Insurance / double / split / surrender behavior
 - Estimated advantage, only where mathematically defensible, with evidence quality and sample size stated alongside it
 - A timeline of the investigation
-- Operator observations (verbatim, per §12)
+- Operator observations (verbatim, per §13)
 - The Deep Eye assessment, with its WHY explanation
 - Disposition / management notes
 - Blank fields that can be completed later (e.g., by a manager after the fact)
 
 A surveillance manager who was not in the room during the investigation should be able to read this report and understand exactly what happened and why it matters.
 
-## 16. Bloodhound Benchmark
+## 17. Bloodhound Benchmark
 
 Legacy Bloodhound is a **benchmark, not a UI template.** EyeOnPit is not obligated to look or feel like Bloodhound — it is obligated to match or exceed what Bloodhound could actually do: game reconstruction, counting, wager correlation, player decision analysis, advantage estimation, and investigation documentation.
 
 EyeOnPit's path to exceeding that benchmark is mobile-first capture, offline-first reliability, natural voice input, a deterministic single-source-of-truth event ledger, faster in-the-moment capture, a modern and non-jumpy UX, explainable (not black-box) analysis, better and more portable reporting, and a fully auditable event history.
 
-## 17. Internal Credit
+## 18. Internal Credit
 
 - **Sidney Impastato — Creator / Developer**
 - **Forge — Architect**
@@ -260,9 +277,10 @@ This credit is discreet — present somewhere in the codebase/app (e.g. the Sett
 
 | Capability | Status | Notes / Source |
 |---|---|---|
-| Launch: Quick / Advanced / Practice | **IMPLEMENTED** | [`EmptyConsole.tsx`](../src/components/live/EmptyConsole.tsx), [`QuickSetupSheet.tsx`](../src/components/live/QuickSetupSheet.tsx), [`lib/onboarding/practiceInvestigationSeed.ts`](../src/lib/onboarding/practiceInvestigationSeed.ts) |
+| Launch: Quick / Floor / Advanced / Practice | **IMPLEMENTED** | [`EmptyConsole.tsx`](../src/components/live/EmptyConsole.tsx) (Floor: one-tap, same `createInvestigation` input as Quick via `buildQuickInvestigationInput`, routes to `/investigations/[id]/floor`), [`QuickSetupSheet.tsx`](../src/components/live/QuickSetupSheet.tsx), [`lib/onboarding/practiceInvestigationSeed.ts`](../src/lib/onboarding/practiceInvestigationSeed.ts) |
 | Practice state integrity (no stale cards/count on a fresh Practice tap) | **IMPLEMENTED** | Root cause was the shared reset helper clearing the round/seat display state but never the CardEvent ledger table for that investigation, so a reused practice record's count survived the "reset" invisibly; fixed via `resetPracticeInvestigationLiveState` in [`lib/db/repositories/investigations.ts`](../src/lib/db/repositories/investigations.ts) (deletes the investigation's CardEvents in the same transaction) and [`practiceInvestigationSeed.ts`](../src/lib/onboarding/practiceInvestigationSeed.ts) (calls it before re-seeding) |
 | Practice vs. production reset separation (production CardEvents can never be silently deleted by a normal operator action) | **IMPLEMENTED** | `resetPracticeInvestigationLiveState` throws if the target investigation is not `isDemo` — enforced in the function itself, in [`lib/db/repositories/investigations.ts`](../src/lib/db/repositories/investigations.ts). Settings' "Current Investigation" section renders the destructive "Reset Practice Data" button only when `isDemo`; a production investigation only ever sees the non-destructive "Start Fresh Investigation" path, in [`SettingsScreen.tsx`](../src/components/settings/SettingsScreen.tsx). Audit-safe production alternatives (`advanceRound({ newShoe: true })`, close + create new) never delete a CardEvent — see §9 |
+| Large-scale deterministic counting/ledger validation harness (SMOKE/STANDARD/STRESS) | **IMPLEMENTED** | [`lib/counting-engine/validation/`](../src/lib/counting-engine/validation/) — see [`docs/VALIDATION.md`](VALIDATION.md). SMOKE runs with `npm test`; `npm run validate:counting` / `:stress` run STANDARD/STRESS. Drives the real production path against an independent, hand-written oracle — see §10 |
 | CardEvent ledger (single source of truth) | **IMPLEMENTED** | [`lib/counting-engine/ledger.ts`](../src/lib/counting-engine/ledger.ts), [`lib/db/repositories/cardEvents.ts`](../src/lib/db/repositories/cardEvents.ts) |
 | Counting systems: Hi-Lo, KO, Zen, Omega II, true count, aces seen | **IMPLEMENTED** | `lib/counting-engine/*` — see [`docs/counting-systems.md`](counting-systems.md) for the authoritative math reference |
 | Context-aware undo/redo (per-target, not whole-round-snapshot) | **IMPLEMENTED** | `mostRecentActiveEventForTarget` in [`lib/counting-engine/ledger.ts`](../src/lib/counting-engine/ledger.ts), `undoTargetCard`/`redoTargetCard` in [`lib/db/repositories/cardEvents.ts`](../src/lib/db/repositories/cardEvents.ts), [`contexts/InvestigationContext.tsx`](../src/contexts/InvestigationContext.tsx) |
@@ -280,17 +298,17 @@ This credit is discreet — present somewhere in the codebase/app (e.g. the Sett
 | Voice: "C1"→Seat 1 style recognition-artifact normalization | **IMPLEMENTED** | `seatFromCToken` in [`lib/voice/parseVoiceCommand.ts`](../src/lib/voice/parseVoiceCommand.ts), scoped to active target context only |
 | Voice: "spot" as a seat-prefix synonym alongside "seat"/"player" | **IMPLEMENTED** | `SEAT_PREFIX_WORDS` in [`lib/voice/parseVoiceCommand.ts`](../src/lib/voice/parseVoiceCommand.ts) |
 | Voice: "next seat" workflow command | **IMPLEMENTED** | Alias for the existing "next" command (same `advanceToNext`/`nextRound` dispatch) — `WORKFLOW_WORDS` in [`lib/voice/parseVoiceCommand.ts`](../src/lib/voice/parseVoiceCommand.ts) |
-| Voice: deterministic safety boundary — a card word inside ordinary sentence structure never creates a CardEvent | **IMPLEMENTED** | `MAX_NOISE_TOKENS` / stray-token cap and failed-target-attempt rejection in `extractFromNoisyTokens`, [`lib/voice/parseVoiceCommand.ts`](../src/lib/voice/parseVoiceCommand.ts) — this is the category-A boundary from §11, not the B/C classifier itself |
+| Voice: deterministic safety boundary — a card word inside ordinary sentence structure never creates a CardEvent | **IMPLEMENTED** | `MAX_NOISE_TOKENS` / stray-token cap and failed-target-attempt rejection in `extractFromNoisyTokens`, [`lib/voice/parseVoiceCommand.ts`](../src/lib/voice/parseVoiceCommand.ts) — this is the category-A boundary from §12, not the B/C classifier itself |
 | Voice: offline/no-network handling (bounded retries, clear "Voice Unavailable" state, investigation unaffected) | **IMPLEMENTED** | `MAX_CONSECUTIVE_NETWORK_ERRORS` logic in [`hooks/useVoiceRecognition.ts`](../src/hooks/useVoiceRecognition.ts), persistent notice + retry in [`components/live/VoiceControl.tsx`](../src/components/live/VoiceControl.tsx) |
 | Voice: blank/whitespace-only final transcript is a silent no-op | **IMPLEMENTED** | Early-return guard in `handleFinalResult`, [`components/live/VoiceControl.tsx`](../src/components/live/VoiceControl.tsx) — distinct from a genuine "Not recognized" rejection |
 | Voice: read-only "Count"/"Status" commands with spoken (headset) feedback | **IMPLEMENTED (foundation)** | Parser kinds in [`lib/voice/parseVoiceCommand.ts`](../src/lib/voice/parseVoiceCommand.ts); text built from the existing CountSnapshot in [`lib/voice/spokenSummary.ts`](../src/lib/voice/spokenSummary.ts) (shares `formatSigned`/`formatTrueCount` with `CountSummaryPanel.tsx` via [`lib/utils/countFormatting.ts`](../src/lib/utils/countFormatting.ts) — no duplicated count/formatting logic); spoken via the feature-detected [`lib/voice/speechOutput.ts`](../src/lib/voice/speechOutput.ts) abstraction; on/off via `voiceAudioFeedback` in [`store/useSettingsStore.ts`](../src/store/useSettingsStore.ts) and Settings. Never mutates investigation state. Platform TTS support/quality is not assumed uniform — see §6 |
 | Voice: hit/stand/double/split/surrender/insurance commands | **PLANNED** | Not yet in the parser/dispatch; part of the full Voice Control Coverage list in §5 |
-| Voice wager mutation ("bet 30", "seat 5 bet 30") | **PLANNED** | Deterministic single-utterance grammar designed (see §13) to reuse the existing `updateSeatAtTarget`/`computeWagerChange` action; not yet wired into the parser or dispatch |
+| Voice wager mutation ("bet 30", "seat 5 bet 30") | **PLANNED** | Deterministic single-utterance grammar designed (see §14) to reuse the existing `updateSeatAtTarget`/`computeWagerChange` action; not yet wired into the parser or dispatch |
 | Voice wager mutation from natural, multi-utterance speech ("Player bet." / "$30." as separate finals) | **FUTURE** | Same class of problem as multi-card streaming below — needs a provably safe cross-utterance commit/dedup strategy first |
 | Voice: multi-card sequential/streaming input ("dealer king ace" as two cards, not one ambiguous rejection) | **FUTURE** | Deliberately still rejected (ambiguous, zero CardEvents) pending a deterministic commit/dedup strategy across interim/final revisions and recognition restarts |
 | Voice Note Mode (Start Note / End Note / Cancel, verbatim capture) | **IMPLEMENTED** | Note-mode state machine in [`components/live/VoiceControl.tsx`](../src/components/live/VoiceControl.tsx), persisted via existing `addOperatorNote` in [`lib/db/repositories/investigations.ts`](../src/lib/db/repositories/investigations.ts) — no parallel notes architecture |
 | Voice: A/B/C real-time speech classification (structured / casino-relevant / irrelevant chatter) beyond the explicit note-mode ritual | **PLANNED** | Only the explicit Start/End Note fallback exists today; no automatic classifier |
-| Voice: fully natural conversational capture (no start/end ritual required) | **FUTURE** | Long-term goal per §12 |
+| Voice: fully natural conversational capture (no start/end ritual required) | **FUTURE** | Long-term goal per §13 |
 | Paraphrase/cleanup layer for notes, distinguishable from original | **FUTURE** | No paraphrasing exists anywhere yet; today's notes are always verbatim, which trivially satisfies "preserve the original" but the cleanup layer itself is not built |
 | Player/game tracking: seats, dealer, cards, splits/doubles/surrender/insurance, wagers, timestamps | **IMPLEMENTED** | Core `Investigation`/`Round`/`Seat` model in [`types/investigation.ts`](../src/types/investigation.ts), captured live via `LiveScreen.tsx` and related components |
 | Advantage-play: bet size vs. true count correlation (Pearson) | **PARTIAL** | Real, computed (not hardcoded) correlation in [`lib/analysis/apLikelihood.ts`](../src/lib/analysis/apLikelihood.ts) via `computeApLikelihoodBySeat`/`computeApLikelihood`, explicitly documented as a non-accusatory reference indicator — but **not yet surfaced in any UI or in the final report** |

@@ -7,14 +7,19 @@ import { useCardEntry } from "@/hooks/useCardEntry";
 import { useRoundControls } from "@/hooks/useRoundControls";
 import { useSpeechRecognitionSupport } from "@/hooks/useSpeechRecognitionSupport";
 import { useVoiceRecognition, type VoiceLifecycleEvent, type VoiceResult } from "@/hooks/useVoiceRecognition";
-import { parseVoiceCommand, type VoiceCommandKind, type VoiceTarget } from "@/lib/voice/parseVoiceCommand";
+import { parseVoiceCommand, type VoiceCommandKind, type VoiceSeat, type VoiceTarget } from "@/lib/voice/parseVoiceCommand";
+import { parseNarration, type NarrationOp } from "@/lib/voice/parseNarration";
+import { formatNarrationConfirmation, type ConfirmationEntry } from "@/lib/voice/narrationConfirmation";
 import { normalizeTranscript } from "@/lib/voice/normalizeTranscript";
 import { resolveCardEntryTarget, type CardTarget } from "@/lib/utils/cardEntryResolution";
+import { canCompleteRound } from "@/lib/utils/roundValidation";
 import { addOperatorNote } from "@/lib/db/repositories/investigations";
 import { diagnostics } from "@/lib/diagnostics/logger";
 import { buildCountAnnouncement, buildStatusAnnouncement } from "@/lib/voice/spokenSummary";
 import { speak } from "@/lib/voice/speechOutput";
 import { useSettingsStore } from "@/store/useSettingsStore";
+import type { CardEventTargetType } from "@/lib/counting-engine/types";
+import type { Investigation, Rank, Round } from "@/types/investigation";
 import { VoiceDiagnosticsPanel, type VoiceDiagnosticEntry } from "./VoiceDiagnosticsPanel";
 
 type StatusState =
@@ -29,9 +34,12 @@ type StatusState =
    * distinct from `unrecognized` so the operator never sees "Not
    * recognized" for a word recognition genuinely understood; that
    * mislabeling is exactly what made a correctly-heard "king" look like a
-   * silent failure.
+   * silent failure. `reason` (narration only) names specifically what
+   * couldn't be applied — e.g. "SEAT 3 isn't available right now" — so the
+   * operator knows what to fix before repeating the narration, rather than
+   * a generic "not available."
    */
-  | { kind: "disabled"; transcript: string }
+  | { kind: "disabled"; transcript: string; reason?: string }
   /** Free dictation is active ("start note"/"note" heard, "end note" not yet heard) — no card/seat/workflow parsing happens while this is showing. `text` is everything captured so far. */
   | { kind: "note-mode"; text: string }
   | { kind: "error"; message: string };
@@ -94,6 +102,131 @@ function toCardTarget(target: VoiceTarget): CardTarget {
   return target.kind === "dealer" ? "dealer" : target.seat;
 }
 
+/** Inverse of toCardTarget — only ever applied to a target narration itself produced or the investigation's own current active target, both always "dealer" or a real seat 1-7, never a split target. */
+function fromCardTarget(target: CardTarget): VoiceTarget {
+  return target === "dealer" ? { kind: "dealer" } : { kind: "seat", seat: target as VoiceSeat };
+}
+
+/**
+ * One already-resolved, ready-to-execute action produced by
+ * `preflightNarration` — carries everything `commitNarration` needs to
+ * actually perform the op without recomputing anything against (possibly
+ * different) live state. For a "card" step, `applyToRound`/`eventMessage`
+ * are already bound to the specific card and the specific
+ * `resolveCardEntryTarget` resolution preflight used to prove it safe —
+ * committing never re-derives these against real investigation/round
+ * state, which is what would reintroduce the exact staleness bug this
+ * design closes.
+ */
+type PreflightStep =
+  | { kind: "selectTarget"; cardTarget: CardTarget; voiceTarget: VoiceTarget; bareOnly: boolean }
+  | {
+      kind: "card";
+      targetType: CardEventTargetType;
+      targetId: number | "dealer";
+      rank: Rank;
+      applyToRound: (round: Round) => Round;
+      eventMessage: string;
+      cardTarget: CardTarget;
+      voiceTarget: VoiceTarget;
+      displayRank: string;
+    }
+  | { kind: "workflow"; action: "done" | "next" | "undo" };
+
+type PreflightResult = { ok: true; steps: PreflightStep[] } | { ok: false; reason: string };
+
+/**
+ * Validates a WHOLE narration's ops before anything commits — the atomicity
+ * guarantee requirement #2 of the natural-narration milestone requires
+ * ("ALL operations commit in order OR ZERO operations commit"). This is a
+ * pure, synchronous simulation: it never calls addCard/completeRound/
+ * setActiveTarget, only the same pure decision functions the single-command
+ * path already uses (resolveCardEntryTarget, canCompleteRound), walked
+ * against a LOCAL `simRound`/`simInvestigation` that folds forward with
+ * each simulated card/done op via the exact same pure updater
+ * (`resolution.applyCard`) the real write will use later — so a "done" (or
+ * a later card) placed after earlier cards in the SAME narration is
+ * evaluated against a round that already reflects them, without any
+ * database round-trip. The very first op that would be infeasible aborts
+ * the whole validation immediately (`ok: false`); every op before it,
+ * however individually valid, is discarded along with it. Being entirely
+ * synchronous (no `await`) is what makes the guarantee real: there is no
+ * window between finishing this walk and the caller actually executing
+ * `steps` for any concurrent action to invalidate what was just proven.
+ *
+ * "next"/"undo" are checked against the caller's existing hook-derived
+ * `nextDisabled`/`undoDisabled` rather than being simulated — neither's
+ * feasibility depends on card content this narration could itself change
+ * (`nextDisabled` is just busy/active-status; `undoDisabled` depends on
+ * undo-history state that lives in React state, not the round, and isn't
+ * safely re-derivable here). This is a disclosed, narrower limitation (see
+ * the milestone report), not a gap in the atomicity guarantee itself — no
+ * required scenario has a narration whose own earlier ops change whether
+ * Next or Undo is allowed.
+ */
+function preflightNarration(
+  ops: NarrationOp[],
+  investigation: Investigation,
+  currentRound: Round,
+  activeTarget: CardTarget,
+  busy: boolean,
+  nextDisabled: boolean,
+  undoDisabled: boolean
+): PreflightResult {
+  let simRound = currentRound;
+  let liveTarget: CardTarget | undefined;
+  const steps: PreflightStep[] = [];
+  // See commitNarration's own doc comment on `isBareTargetOnly` — identical
+  // rule, computed here since this is where the steps themselves are built.
+  const isBareTargetOnly = ops.length === 1 && ops[0].kind === "selectTarget";
+
+  for (const op of ops) {
+    if (op.kind === "selectTarget") {
+      liveTarget = toCardTarget(op.target);
+      steps.push({ kind: "selectTarget", cardTarget: liveTarget, voiceTarget: op.target, bareOnly: isBareTargetOnly });
+      continue;
+    }
+
+    if (op.kind === "card") {
+      const targetToUse = op.target ? toCardTarget(op.target) : (liveTarget ?? activeTarget);
+      const resolution = resolveCardEntryTarget(investigation, simRound, targetToUse, busy);
+      if (resolution.disabled) {
+        return { ok: false, reason: `${resolution.targetLabel} isn't available right now` };
+      }
+      const card = { rank: op.rank, suit: "unspecified" as const };
+      simRound = resolution.applyCard(simRound, card); // simulated only — no addCard call yet
+      liveTarget = targetToUse;
+      steps.push({
+        kind: "card",
+        targetType: resolution.targetType,
+        targetId: resolution.targetId,
+        rank: op.rank,
+        applyToRound: (round) => resolution.applyCard(round, card),
+        eventMessage: resolution.eventMessage(card),
+        cardTarget: targetToUse,
+        voiceTarget: op.target ?? fromCardTarget(targetToUse),
+        displayRank: op.displayRank ?? op.rank,
+      });
+      continue;
+    }
+
+    // workflow
+    if (op.action === "done") {
+      const canDone =
+        investigation.status === "active" && !simRound.completed && canCompleteRound(investigation, simRound).canComplete;
+      if (!canDone) return { ok: false, reason: "Done isn't available yet — the round isn't complete" };
+      simRound = { ...simRound, completed: true }; // simulated only — no completeRound call yet
+    } else if (op.action === "next") {
+      if (nextDisabled) return { ok: false, reason: "Next isn't available right now" };
+    } else {
+      if (undoDisabled) return { ok: false, reason: "Undo isn't available right now" };
+    }
+    steps.push({ kind: "workflow", action: op.action });
+  }
+
+  return { ok: true, steps };
+}
+
 /**
  * Voice entry: seat 1-7 / dealer selection, the ten card ranks (jack/
  * queen/king normalize to "10", the same value CardEntryPad's own keypad
@@ -154,8 +287,18 @@ function toCardTarget(target: VoiceTarget): CardTarget {
  */
 export function VoiceControl() {
   const supported = useSpeechRecognitionSupport();
-  const { investigation, currentRound, cardEvents, busy, addCard, selectSeat, setActiveTarget, refresh } =
-    useInvestigationContext();
+  const {
+    investigation,
+    currentRound,
+    cardEvents,
+    activeTarget,
+    busy,
+    addCard,
+    selectSeat,
+    setActiveTarget,
+    refresh,
+    completeRound,
+  } = useInvestigationContext();
   const { enterCard, disabled: cardDisabled, targetLabel } = useCardEntry();
   const { handleDone, handleNext, handleUndo, doneDisabled, nextDisabled, undoDisabled } = useRoundControls();
   const voiceAudioFeedback = useSettingsStore((s) => s.voiceAudioFeedback);
@@ -323,6 +466,66 @@ export function VoiceControl() {
     ]
   );
 
+  /**
+   * A validated narration commits ALL of its ops or NONE of them — never a
+   * partial prefix. `preflightNarration` (below, module scope) walks the
+   * whole op list FIRST, purely in memory: no addCard/completeRound/
+   * setActiveTarget call happens here, only the same pure decision
+   * functions the single-command path already uses
+   * (resolveCardEntryTarget, canCompleteRound) evaluated against a LOCAL,
+   * incrementally-simulated copy of the round (each simulated card op
+   * folds forward via `resolution.applyCard`, exactly the same pure
+   * updater the real write will use) — so a trailing "done" correctly sees
+   * cards THIS narration's own earlier ops would add, without ever
+   * touching the database. If every op preflights successfully, the
+   * resulting ordered `steps` are then actually executed here, in the same
+   * order, through the exact primitives `dispatch` above already uses. If
+   * any op fails preflight, this returns "blocked" with a reason and
+   * nothing has been written anywhere — not even the ops preflight had
+   * already proven safe. Because preflight is entirely synchronous (no
+   * `await`, no I/O), there is no window between "preflight finished" and
+   * "commit starts" for anything else to invalidate its conclusions.
+   */
+  const commitNarration = useCallback(
+    async (
+      ops: NarrationOp[]
+    ): Promise<{ kind: "committed"; label: string; committedCount: number } | { kind: "blocked"; reason: string }> => {
+      const preflight = preflightNarration(ops, investigation, currentRound, activeTarget, busy, nextDisabled, undoDisabled);
+      if (!preflight.ok) return { kind: "blocked", reason: preflight.reason };
+
+      const entries: ConfirmationEntry[] = [];
+      for (const step of preflight.steps) {
+        if (step.kind === "selectTarget") {
+          setActiveTarget(step.cardTarget);
+          if (step.bareOnly) entries.push({ kind: "target", target: step.voiceTarget });
+          continue;
+        }
+        if (step.kind === "card") {
+          await addCard(
+            { targetType: step.targetType, targetId: step.targetId, rank: step.rank },
+            step.applyToRound,
+            { type: "card", message: step.eventMessage }
+          );
+          setActiveTarget(step.cardTarget);
+          entries.push({ kind: "card", target: step.voiceTarget, displayRank: step.displayRank });
+          continue;
+        }
+        // workflow — preflight already proved each of these feasible; this
+        // just runs the same handlers the single-command path uses.
+        if (step.action === "done") await completeRound();
+        else if (step.action === "next") handleNext();
+        else handleUndo();
+        entries.push({ kind: "workflow", action: step.action });
+      }
+
+      if (entries.length === 0) {
+        return { kind: "blocked", reason: "recognized narration, but nothing in it is currently actionable" };
+      }
+      return { kind: "committed", label: formatNarrationConfirmation(entries), committedCount: entries.length };
+    },
+    [investigation, currentRound, activeTarget, busy, nextDisabled, undoDisabled, addCard, setActiveTarget, completeRound, handleNext, handleUndo]
+  );
+
   const handleFinalResult = useCallback(
     (result: VoiceResult) => {
       result.alternatives.forEach((alt, i) => {
@@ -416,6 +619,52 @@ export function VoiceControl() {
         return;
       }
 
+      // Natural hand narration — tried FIRST, above (never replacing) the
+      // single-command parser below. "no-opinion" means this utterance
+      // contained none of narration's own vocabulary at all (e.g. "count",
+      // "banana"), so control falls straight through to the exact same
+      // parseVoiceCommand path that already handled every transcript
+      // before this feature existed. "reject" means narration recognized
+      // SOME structured content but the utterance as a whole is unsafe —
+      // that is final; it must never also be offered to the single-command
+      // parser for a second opinion.
+      const narration = parseNarration(result.transcript);
+      if (narration.kind === "reject") {
+        diagnostics.info("voice", "narration rejected — ambiguous or unsafe", { transcript: normalized });
+        appendLog("REJECTED", `"${normalized}" — narration rejected (ambiguous or unsafe)`);
+        setStatus({ kind: "unrecognized", transcript: normalized });
+        scheduleReset();
+        return;
+      }
+      if (narration.kind === "ops") {
+        // commitNarration preflights the WHOLE op list (synchronously, no
+        // writes) before executing anything — see its own doc comment and
+        // preflightNarration's. Either everything commits or nothing does;
+        // there is no partial-narration outcome. Wrapped in an IIFE rather
+        // than making handleFinalResult itself async, since
+        // useVoiceRecognition invokes this callback fire-and-forget either
+        // way.
+        void (async () => {
+          const result = await commitNarration(narration.ops);
+          if (result.kind === "blocked") {
+            diagnostics.info("voice", "narration blocked — preflight validation failed, zero events committed", {
+              transcript: normalized,
+              reason: result.reason,
+            });
+            appendLog("REJECTED", `"${normalized}" — ${result.reason}`);
+            setStatus({ kind: "disabled", transcript: normalized, reason: result.reason });
+            scheduleReset();
+            return;
+          }
+          diagnostics.info("voice", "narration accepted", { transcript: normalized, committed: result.committedCount });
+          appendLog("ACCEPTED", result.label);
+          setStatus({ kind: "accepted", label: result.label });
+          if (voiceAudioFeedback) speak(result.label);
+          scheduleReset();
+        })();
+        return;
+      }
+
       const parsed = parseVoiceCommand(result.transcript);
 
       if (!parsed.command) {
@@ -447,7 +696,7 @@ export function VoiceControl() {
       setStatus({ kind: "accepted", label });
       scheduleReset();
     },
-    [dispatch, scheduleReset, appendLog, noteMode, noteText, investigation.localId, refresh]
+    [dispatch, commitNarration, voiceAudioFeedback, scheduleReset, appendLog, noteMode, noteText, investigation.localId, refresh]
   );
 
   const handleInterimResult = useCallback(
@@ -580,7 +829,7 @@ export function VoiceControl() {
           )}
           {status.kind === "disabled" && (
             <p className="font-semibold text-pending">
-              Heard “{status.transcript || "…"}” — that action isn’t available right now
+              Heard “{status.transcript || "…"}” — {status.reason ?? "that action isn’t available right now"}
             </p>
           )}
           {status.kind === "note-mode" && (

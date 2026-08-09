@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { MoreVertical, Users } from "lucide-react";
+import { useState } from "react";
+import { Users } from "lucide-react";
 import { computeApLikelihoodBySeat } from "@/lib/analysis/apLikelihood";
 import { computeHandTotal, isAutoDetectedBlackjack } from "@/lib/utils/blackjackTotal";
 import { formatCard } from "@/lib/utils/cards";
@@ -15,13 +15,8 @@ import { seatRingFor } from "@/lib/utils/seatGroupColor";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import type { CardTarget } from "@/contexts/InvestigationContext";
 import { useSettingsStore } from "@/store/useSettingsStore";
-import { seatHasCurrentRoundData } from "@/lib/db/repositories/investigations";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SeatOptionsSheet } from "./SeatOptionsSheet";
 import { ManageSeatsSheet } from "./ManageSeatsSheet";
-
-const LONG_PRESS_MS = 500;
-const DOUBLE_TAP_MS = 300;
 
 const AP_DOT_CLASSES: Record<string, string> = {
   low: "bg-status-green/70",
@@ -32,6 +27,13 @@ const AP_DOT_CLASSES: Record<string, string> = {
 /** Per-column vertical offset (px) that bows positions 1-6 into an arch, concave toward the dealer — middle positions sit furthest from the dealer, end positions nearest, matching a real table's curved rail. Scaled down from the original [14,6,0,0,6,14] alongside the shorter tiles below — same curve, smaller footprint. */
 const ARCH_TRANSLATE_Y = [9, 4, 0, 0, 4, 9];
 
+interface SeatTilesRowProps {
+  /** Owned by TableMap. While true, a tap on any seat opens its SeatOptionsSheet instead of selecting/occupying it. */
+  editMode: boolean;
+  /** Called the instant a tap-while-editing actually opens a seat's options sheet — TableMap uses this to exit Edit Mode immediately, one-shot. */
+  onSeatOptionsOpened: () => void;
+}
+
 /**
  * Player seats — six permanent positions in a dealer's-eye-view arch, plus
  * an optional Position 7 centered beneath it. Tiles never shift, rise, or
@@ -40,20 +42,25 @@ const ARCH_TRANSLATE_Y = [9, 4, 0, 0, 4, 9];
  * separate on every tile: enabled/occupied (green border), active
  * card-entry target (cyan border, overrides green when both apply), and
  * player grouping (a ring color + optional letter badge, unrelated to
- * either). A single tap only ever changes which target is active — it
- * never enables or disables a seat, and never implies an entry order:
- * any position can be selected and entered in any order. Enabling/disabling
- * takes a deliberate double-tap (or the long-press/⋮ options menu, which
- * also offers it alongside link/unlink/label).
+ * either). A fourth, Edit Mode's accent outline, layers on top of all of
+ * them without touching any of that existing border logic.
+ *
+ * A single tap is the tile's one and only primary action in normal
+ * operation — occupySeat() already no-ops to a plain select when the seat
+ * is already occupied, so one plain `onClick` correctly covers both "sit a
+ * new player down" and "make this the active card-entry target" with no
+ * gesture ambiguity. Marking a seat empty, linking/unlinking, and every
+ * other secondary action live exclusively behind Edit Mode (see TableMap)
+ * or the "Manage Seats" list — never behind a per-tile icon button, a
+ * long-press, or a double-tap on the tile body, all of which too easily
+ * misfired during fast, repeated entry taps.
  */
-export function SeatTilesRow() {
+export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProps) {
   const {
     investigation,
     currentRound,
     activeTarget,
     occupySeat,
-    markSeatEmpty,
-    selectSeat,
     setActiveTarget,
     cardEvents,
   } = useInvestigationContext();
@@ -63,53 +70,14 @@ export function SeatTilesRow() {
   const legacySeats = legacyOverflowSeatNumbersFor(investigation, currentRound);
   const [optionsSeat, setOptionsSeat] = useState<number | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
-  const [disableConfirmSeat, setDisableConfirmSeat] = useState<number | null>(null);
-  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const longPressed = useRef(false);
-  const lastTapRef = useRef<{ seat: number; time: number } | null>(null);
 
-  function startPress(seat: number) {
-    longPressed.current = false;
-    pressTimer.current = setTimeout(() => {
-      longPressed.current = true;
+  function handleTap(seat: number) {
+    if (editMode) {
       setOptionsSeat(seat);
-    }, LONG_PRESS_MS);
-  }
-
-  function toggleEnabled(seat: number) {
-    if (investigation.occupiedSeats.includes(seat)) {
-      if (seatHasCurrentRoundData(currentRound, seat)) {
-        setDisableConfirmSeat(seat);
-      } else {
-        markSeatEmpty(seat);
-      }
-    } else {
-      occupySeat(seat);
-    }
-  }
-
-  function endPress(seat: number) {
-    if (pressTimer.current) clearTimeout(pressTimer.current);
-    if (longPressed.current) return;
-
-    // endPress only ever runs from a pointerup event handler, never during
-    // render — the purity rule can't see that from the closure alone, so
-    // this is a real false positive, not an actual impurity.
-    // eslint-disable-next-line react-hooks/purity
-    const now = Date.now();
-    const last = lastTapRef.current;
-    if (last && last.seat === seat && now - last.time < DOUBLE_TAP_MS) {
-      lastTapRef.current = null;
-      toggleEnabled(seat);
+      onSeatOptionsOpened();
       return;
     }
-    lastTapRef.current = { seat, time: now };
-    // A single tap only ever selects — it never occupies or unoccupies.
-    selectSeat(seat);
-  }
-
-  function cancelPress() {
-    if (pressTimer.current) clearTimeout(pressTimer.current);
+    occupySeat(seat);
   }
 
   function renderSeat(seat: number) {
@@ -152,12 +120,10 @@ export function SeatTilesRow() {
               key={seat}
               role="button"
               tabIndex={0}
-              onPointerDown={() => startPress(seat)}
-              onPointerUp={() => endPress(seat)}
-              onPointerLeave={cancelPress}
-              onContextMenu={(e) => e.preventDefault()}
+              aria-label={editMode ? `Seat ${seat} options` : `Seat ${seat}`}
+              onClick={() => handleTap(seat)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") endPress(seat);
+                if (e.key === "Enter" || e.key === " ") handleTap(seat);
               }}
               style={{
                 touchAction: "manipulation",
@@ -165,7 +131,7 @@ export function SeatTilesRow() {
               }}
               className={`relative flex min-h-[38px] flex-col justify-center gap-0 rounded-xl py-0.5 pl-2 pr-1 transition-shadow duration-200 short:min-h-[52px] ${toneClasses} ${
                 isActive ? "border-2" : "border"
-              }`}
+              } ${editMode ? "outline outline-2 outline-offset-2 outline-accent" : ""}`}
             >
               {ring && showGroupLabels && ring.letter && (
                 <span
@@ -183,20 +149,6 @@ export function SeatTilesRow() {
                   aria-hidden
                 />
               )}
-
-              <button
-                type="button"
-                aria-label={`Seat ${seat} options`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  cancelPress();
-                  setOptionsSeat(seat);
-                }}
-                onPointerDown={(e) => e.stopPropagation()}
-                className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center text-muted-foreground hover:text-foreground"
-              >
-                <MoreVertical className="h-3.5 w-3.5" aria-hidden />
-              </button>
 
               <span className="text-[10px] font-bold leading-none">
                 {isActive ? `ACTIVE · SEAT ${seat}` : `SEAT ${seat}`}
@@ -245,10 +197,8 @@ export function SeatTilesRow() {
                   aria-label={`Seat ${seat} split hand`}
                   onClick={(e) => {
                     e.stopPropagation();
-                    cancelPress();
                     setActiveTarget(splitTargetFor(seat));
                   }}
-                  onPointerDown={(e) => e.stopPropagation()}
                   className={`absolute bottom-0.5 left-0.5 flex h-5 w-5 items-center justify-center rounded text-[9px] font-bold ${
                     isSplitActive
                       ? "bg-accent-secondary text-accent-secondary-foreground"
@@ -303,8 +253,8 @@ export function SeatTilesRow() {
 
       {/* Reachable from the table map in portrait; in `short:` the column
           has no spare row for it, but every action it opens (add/remove
-          seats, position 7 toggle) is still reachable per-seat via the ⋮
-          options menu on each tile. */}
+          seats, position 7 toggle) is still reachable per-seat via Edit
+          Mode (see TableMap) or a row inside this same sheet. */}
       <button
         onClick={() => setManageOpen(true)}
         className="mt-1 rounded-md px-2 text-[10px] font-medium text-muted-foreground hover:text-foreground short:hidden"
@@ -316,19 +266,6 @@ export function SeatTilesRow() {
         <SeatOptionsSheet seatNumber={optionsSeat} onClose={() => setOptionsSeat(null)} />
       )}
       {manageOpen && <ManageSeatsSheet onClose={() => setManageOpen(false)} />}
-
-      <ConfirmDialog
-        open={disableConfirmSeat != null}
-        title="Disable this seat?"
-        message={`Seat ${disableConfirmSeat} contains a bet or hand data. Disable this seat?`}
-        confirmLabel="Disable Seat"
-        destructive
-        onConfirm={() => {
-          if (disableConfirmSeat != null) markSeatEmpty(disableConfirmSeat);
-          setDisableConfirmSeat(null);
-        }}
-        onCancel={() => setDisableConfirmSeat(null)}
-      />
     </div>
   );
 }

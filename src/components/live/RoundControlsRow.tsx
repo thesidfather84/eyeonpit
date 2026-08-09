@@ -26,7 +26,8 @@ import { AddNoteSheet } from "./AddNoteSheet";
  */
 export function RoundControlsRow() {
   const { investigation, currentRound, canRedo, redo, clearActiveEntry, busy } = useInvestigationContext();
-  const { handleDone, handleNext, handleUndo, doneDisabled, nextDisabled, undoDisabled } = useRoundControls();
+  const { handleDone, handleNext, handleUndo, doneDisabled, nextDisabled, undoDisabled, undoLabel } =
+    useRoundControls();
   const [noteOpen, setNoteOpen] = useState(false);
   const [overflowOpen, setOverflowOpen] = useState(false);
 
@@ -55,10 +56,10 @@ export function RoundControlsRow() {
         <button
           onClick={handleUndo}
           disabled={undoDisabled}
-          aria-label="Undo"
-          className="tap-target flex items-center justify-center rounded-lg border border-border bg-surface-raised text-sm font-bold text-foreground disabled:opacity-40"
+          title={undoLabel}
+          className="tap-target flex items-center justify-center truncate rounded-lg border border-border bg-surface-raised px-1 text-[13px] font-bold text-foreground disabled:opacity-40"
         >
-          Undo
+          {undoLabel}
         </button>
         <button
           type="button"

@@ -12,7 +12,7 @@ import { canCompleteRound } from "@/lib/utils/roundValidation";
  * in this beta's voice command set.
  */
 export function useRoundControls() {
-  const { investigation, currentRound, canUndo, undo, completeRound, advanceToNext, nextRound, busy } =
+  const { investigation, currentRound, canUndo, undo, undoLabel, completeRound, advanceToNext, nextRound, busy } =
     useInvestigationContext();
 
   const isActive = investigation.status === "active";
@@ -41,5 +41,5 @@ export function useRoundControls() {
     undo();
   }
 
-  return { handleDone, handleNext, handleUndo, doneDisabled, nextDisabled, undoDisabled };
+  return { handleDone, handleNext, handleUndo, doneDisabled, nextDisabled, undoDisabled, undoLabel };
 }

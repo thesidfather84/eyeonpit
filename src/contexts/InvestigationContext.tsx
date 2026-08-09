@@ -27,13 +27,14 @@ import {
   addCardToRound,
   ensureLegacyLedger,
   getCardEventsForInvestigation,
-  redoCardAdd,
-  undoCardAdd,
+  redoTargetCard,
+  undoTargetCard,
 } from "@/lib/db/repositories/cardEvents";
 import { orderedSeatNumbersFor } from "@/lib/utils/seats";
 import { calculateCountSnapshot } from "@/lib/counting-engine/calculateCounts";
-import { eventsInShoe } from "@/lib/counting-engine/ledger";
+import { eventsInShoe, mostRecentActiveEventForTarget } from "@/lib/counting-engine/ledger";
 import type { CardEvent, CardEventTargetType } from "@/lib/counting-engine/types";
+import { describeLedgerTarget, ledgerTargetFor } from "@/lib/utils/cardEventTarget";
 import { diagnostics } from "@/lib/diagnostics/logger";
 import type {
   EventType,
@@ -49,13 +50,31 @@ import type {
 export type CardTarget = "dealer" | number;
 
 /**
- * Undo/redo covers two independent kinds of change: in-round mutations
- * (cards, bets, actions) and investigation-level seat-config mutations
- * (occupancy, player grouping) — occupying/linking/unlinking a seat never
- * touches `rounds`, so it can't be captured by a Round snapshot.
+ * Undo/redo covers three independent kinds of change. `round` is a whole
+ * prior-round snapshot restore — correct for generic `mutate()` calls
+ * (bets, actions, notes) as long as it's undone in strict LIFO order, which
+ * is the only order `mutate()` ever produces. `target-card` is a card
+ * addition specifically: instead of a snapshot, it carries just enough
+ * (the CardEvent id, its exact ledger target, and its rank) to reverse
+ * *that one card* by popping/re-appending it directly on whatever the
+ * round currently looks like — see popLastCardForTarget/appendCardForTarget
+ * in lib/utils/cardEventTarget.ts. That's what makes it safe to undo
+ * out of LIFO order (context-aware Undo, see `undo()` below): reversing an
+ * earlier target's card never has to touch a later target's already-
+ * entered card, because it never restores a shared snapshot in the first
+ * place. `seat-config` covers investigation-level seat/grouping mutations,
+ * which never touch `rounds` at all so can't be captured by a Round
+ * snapshot.
  */
 type HistoryEntry =
-  | { kind: "round"; round: Round; cardEventId?: string }
+  | { kind: "round"; round: Round }
+  | {
+      kind: "target-card";
+      cardEventId: string;
+      targetType: CardEventTargetType;
+      targetId: number | "dealer";
+      rank: Rank;
+    }
   | {
       kind: "seat-config";
       occupiedSeats: number[];
@@ -80,6 +99,15 @@ interface InvestigationContextValue {
   setActiveTarget: (target: CardTarget) => void;
   canUndo: boolean;
   canRedo: boolean;
+  /**
+   * What Undo will actually affect, e.g. "Undo Seat 3" / "Undo Dealer" —
+   * reflects the active target's own most recent card when one exists,
+   * otherwise whatever the global-last-action fallback would undo (a
+   * specific target's card if that's what it is, "Undo" generically for a
+   * non-card action). Lets the button tell the operator exactly what's
+   * about to happen instead of an ambiguous plain "Undo".
+   */
+  undoLabel: string;
   undo: () => void;
   redo: () => void;
   busy: boolean;
@@ -270,13 +298,14 @@ export function InvestigationProvider({
   /**
    * The single card-entry path. Writes the round's display-array mutation
    * and its structured CardEvent atomically (addCardToRound), then records
-   * the new event's id alongside the round snapshot on the undo stack —
-   * undo/redo of a card addition flips that specific ledger event's status
-   * (undoCardAdd/redoCardAdd) instead of only rewinding the round's display
-   * arrays, so the count stays derived from the ledger even across
-   * undo/redo. Every count anywhere in the app (CountSummaryPanel,
-   * BottomStatusBar, Analysis) is calculated from `cardEvents`, never from
-   * this round-array mutation directly.
+   * a target-scoped undo entry (the event's id, its ledger target, and its
+   * rank — see the `target-card` HistoryEntry) rather than a whole-round
+   * snapshot, so undo/redo of a card addition flips that specific ledger
+   * event's status (undoTargetCard/redoTargetCard) and pops/re-appends
+   * exactly that one card, never any other target's. The count stays
+   * derived from the ledger even across undo/redo. Every count anywhere in
+   * the app (CountSummaryPanel, BottomStatusBar, Analysis) is calculated
+   * from `cardEvents`, never from this round-array mutation directly.
    */
   const addCard = useCallback(
     async (
@@ -300,7 +329,13 @@ export function InvestigationProvider({
           applyToRound,
           event,
         });
-        pushHistory({ kind: "round", round: currentRound, cardEventId: cardEvent.id });
+        pushHistory({
+          kind: "target-card",
+          cardEventId: cardEvent.id,
+          targetType: target.targetType,
+          targetId: target.targetId,
+          rank: target.rank,
+        });
         const afterEvents = [...cardEvents, cardEvent];
         const after = calculateCountSnapshot(
           eventsInShoe(afterEvents, updatedRound.shoeNumber),
@@ -327,21 +362,71 @@ export function InvestigationProvider({
     [investigation, currentRound, cardEvents, activeTarget, refresh, pushHistory]
   );
 
+  /**
+   * Context-aware: reverses the active target's own most recent active
+   * card first, regardless of whether some *other* target's card was
+   * added more recently — the reported bug was Undo always reversing
+   * whatever was globally last (e.g. Seat 5's card) even while the
+   * operator was actively working Seat 3. Only when the active target has
+   * nothing of its own to undo (a fresh target, or its last action was a
+   * non-card one) does this fall back to the pre-existing global
+   * last-action stack, unchanged. See the HistoryEntry doc comment above
+   * for why the target-scoped path is safe out of LIFO order.
+   */
   const undo = useCallback(() => {
-    if (!investigation || !currentRound || history.length === 0) return;
+    if (!investigation || !currentRound) return;
+
+    const ledgerTarget = ledgerTargetFor(activeTarget);
+    const roundEvents = cardEvents.filter((e) => e.roundId === currentRound.id);
+    const targetEvent = mostRecentActiveEventForTarget(
+      roundEvents,
+      currentRound.shoeNumber,
+      ledgerTarget.targetType,
+      ledgerTarget.targetId
+    );
+
+    if (targetEvent) {
+      // This card's own entry may not be at the top of the session stack
+      // (or may not be in it at all, e.g. after a reload) — remove it from
+      // wherever it sits so a later, unrelated global-fallback undo can
+      // never re-target an event this call already reversed.
+      const idx = history.findIndex((h) => h.kind === "target-card" && h.cardEventId === targetEvent.id);
+      if (idx !== -1) setHistory((h) => [...h.slice(0, idx), ...h.slice(idx + 1)]);
+      setFuture((f) => [
+        {
+          kind: "target-card",
+          cardEventId: targetEvent.id,
+          targetType: targetEvent.targetType,
+          targetId: targetEvent.targetId,
+          rank: targetEvent.rank,
+        },
+        ...f,
+      ]);
+      setBusy(true);
+      undoTargetCard(investigation.localId, currentRound.id, targetEvent.id, targetEvent.targetType, targetEvent.targetId)
+        .then(refresh)
+        .finally(() => setBusy(false));
+      return;
+    }
+
+    if (history.length === 0) return;
     const entry = history[history.length - 1];
     setBusy(true);
     setHistory((h) => h.slice(0, -1));
 
-    if (entry.kind === "round") {
-      setFuture((f) => [{ kind: "round", round: currentRound, cardEventId: entry.cardEventId }, ...f]);
-      const restore = entry.cardEventId
-        ? undoCardAdd(investigation.localId, currentRound.id, entry.round, entry.cardEventId)
-        : mutateRound(investigation.localId, currentRound.id, () => entry.round, {
-            type: "correction",
-            message: "Undo: reverted last change",
-          });
-      restore.then(refresh).finally(() => setBusy(false));
+    if (entry.kind === "target-card") {
+      setFuture((f) => [entry, ...f]);
+      undoTargetCard(investigation.localId, currentRound.id, entry.cardEventId, entry.targetType, entry.targetId)
+        .then(refresh)
+        .finally(() => setBusy(false));
+    } else if (entry.kind === "round") {
+      setFuture((f) => [{ kind: "round", round: currentRound }, ...f]);
+      mutateRound(investigation.localId, currentRound.id, () => entry.round, {
+        type: "correction",
+        message: "Undo: reverted last change",
+      })
+        .then(refresh)
+        .finally(() => setBusy(false));
     } else if (entry.kind === "seat-config") {
       setFuture((f) => [snapshotSeatConfig(investigation), ...f]);
       updateInvestigation(investigation.localId, {
@@ -357,23 +442,41 @@ export function InvestigationProvider({
         .then(refresh)
         .finally(() => setBusy(false));
     }
-  }, [investigation, currentRound, history, refresh]);
+  }, [investigation, currentRound, cardEvents, activeTarget, history, refresh]);
 
+  /**
+   * Redo is never context-aware by design — it always reapplies whatever
+   * was most recently undone (top of `future`), regardless of the active
+   * target, exactly like before. Only Undo needed the target-priority
+   * behavior; redoing anything else would be surprising ("I undid Seat 3,
+   * selected Seat 5, and now Redo does something to Seat 5?").
+   */
   const redo = useCallback(() => {
     if (!investigation || !currentRound || future.length === 0) return;
     const entry = future[0];
     setBusy(true);
     setFuture((f) => f.slice(1));
 
-    if (entry.kind === "round") {
-      setHistory((h) => [...h, { kind: "round", round: currentRound, cardEventId: entry.cardEventId }]);
-      const reapply = entry.cardEventId
-        ? redoCardAdd(investigation.localId, currentRound.id, entry.round, entry.cardEventId)
-        : mutateRound(investigation.localId, currentRound.id, () => entry.round, {
-            type: "correction",
-            message: "Redo: reapplied change",
-          });
-      reapply.then(refresh).finally(() => setBusy(false));
+    if (entry.kind === "target-card") {
+      setHistory((h) => [...h, entry]);
+      redoTargetCard(
+        investigation.localId,
+        currentRound.id,
+        entry.cardEventId,
+        entry.targetType,
+        entry.targetId,
+        entry.rank
+      )
+        .then(refresh)
+        .finally(() => setBusy(false));
+    } else if (entry.kind === "round") {
+      setHistory((h) => [...h, { kind: "round", round: currentRound }]);
+      mutateRound(investigation.localId, currentRound.id, () => entry.round, {
+        type: "correction",
+        message: "Redo: reapplied change",
+      })
+        .then(refresh)
+        .finally(() => setBusy(false));
     } else if (entry.kind === "seat-config") {
       setHistory((h) => [...h, snapshotSeatConfig(investigation)]);
       updateInvestigation(investigation.localId, {
@@ -774,6 +877,28 @@ export function InvestigationProvider({
     return <div className="p-4 text-sm text-muted-foreground">Investigation not found.</div>;
   }
 
+  // Mirrors undo()'s own priority: the active target's own most recent
+  // active card, in this round, if it has one — otherwise whatever the
+  // global-last-action fallback would affect. Recomputed every render so
+  // the button always reflects the current active target and ledger state,
+  // not just the session's history stack (a target-specific card can be
+  // undoable here even with an empty `history`, e.g. right after a reload).
+  const ledgerTargetForActive = ledgerTargetFor(activeTarget);
+  const roundEventsForUndo = cardEvents.filter((e) => e.roundId === currentRound.id);
+  const undoTargetEvent = mostRecentActiveEventForTarget(
+    roundEventsForUndo,
+    currentRound.shoeNumber,
+    ledgerTargetForActive.targetType,
+    ledgerTargetForActive.targetId
+  );
+  const fallbackEntry = history[history.length - 1];
+  const undoLabel = undoTargetEvent
+    ? `Undo ${describeLedgerTarget(undoTargetEvent.targetType, undoTargetEvent.targetId)}`
+    : fallbackEntry?.kind === "target-card"
+      ? `Undo ${describeLedgerTarget(fallbackEntry.targetType, fallbackEntry.targetId)}`
+      : "Undo";
+  const canUndo = undoTargetEvent != null || history.length > 0;
+
   return (
     <InvestigationContext.Provider
       value={{
@@ -781,8 +906,9 @@ export function InvestigationProvider({
         currentRound,
         activeTarget,
         setActiveTarget,
-        canUndo: history.length > 0,
+        canUndo,
         canRedo: future.length > 0,
+        undoLabel,
         undo,
         redo,
         busy,

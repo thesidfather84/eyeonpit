@@ -63,6 +63,28 @@ export function mostRecentActiveEvent(events: CardEvent[], shoeNumber: number): 
   return active.reduce((latest, e) => (e.sequence > latest.sequence ? e : latest));
 }
 
+/**
+ * The most recently added ACTIVE event for one specific target (the
+ * dealer, a seat, or a seat's split hand) within a shoe — what
+ * context-aware Undo targets first, before ever falling back to
+ * `mostRecentActiveEvent`'s shoe-wide "global last" behavior. Scoped by
+ * caller to the current round's events (via `roundId`) when "undo only
+ * within this hand" is the intent — this function itself only knows about
+ * shoe/target/status, exactly like `mostRecentActiveEvent`.
+ */
+export function mostRecentActiveEventForTarget(
+  events: CardEvent[],
+  shoeNumber: number,
+  targetType: CardEventTargetType,
+  targetId: number | "dealer"
+): CardEvent | undefined {
+  const active = eventsInShoe(events, shoeNumber).filter(
+    (e) => e.status === "active" && e.targetType === targetType && e.targetId === targetId
+  );
+  if (active.length === 0) return undefined;
+  return active.reduce((latest, e) => (e.sequence > latest.sequence ? e : latest));
+}
+
 /** All round ids whose roundNumber is <= the given round's, within the same shoe — the scope for "count as of the end of this round," used for historical (non-current) round snapshots. */
 export function eventsThroughRound(
   events: CardEvent[],

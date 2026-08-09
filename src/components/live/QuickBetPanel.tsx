@@ -11,7 +11,7 @@ const CHIPS = [5, 10, 25, 100, 500, 1000];
 const BET_STEP = 25;
 
 export function QuickBetPanel({ target }: { target: number }) {
-  const { investigation, currentRound, mutate, undo, canUndo, busy } = useInvestigationContext();
+  const { investigation, currentRound, mutate, undo, canUndo, undoLabel, busy } = useInvestigationContext();
   const t = useTerminology();
   const [customOpen, setCustomOpen] = useState(false);
   const [customValue, setCustomValue] = useState("");
@@ -178,9 +178,10 @@ export function QuickBetPanel({ target }: { target: number }) {
         <button
           disabled={!canUndo || busy}
           onClick={undo}
-          className="tap-target flex-1 rounded-md border border-border bg-surface-raised text-[10px] font-medium text-foreground disabled:opacity-40 short:hidden"
+          title={undoLabel}
+          className="tap-target flex-1 truncate rounded-md border border-border bg-surface-raised px-0.5 text-[10px] font-medium text-foreground disabled:opacity-40 short:hidden"
         >
-          Undo
+          {undoLabel}
         </button>
       </div>
 

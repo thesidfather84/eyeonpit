@@ -10,15 +10,30 @@ import { formatGameConfigSummary } from "@/lib/utils/gameConfig";
 import { LiveMenu } from "./LiveMenu";
 import { EntryLockButton } from "./EntryLockButton";
 import { QuickSetupSheet } from "./QuickSetupSheet";
+import { CountSummaryPanel } from "./CountSummaryPanel";
 
 /**
- * Single compact row, fluid height (clamp, not a fixed px) so it shrinks on
- * short viewports too. Only the menu, id, elapsed time, online dot, and the
- * right-side action buttons are `shrink-0` — those must always stay
- * reachable without scrolling. The table/game-config summary is the one
- * item allowed to truncate: on a narrow phone there isn't room for both it
- * and the action buttons, and the buttons (Settings/Lock/Pause) are the
- * ones an operator actually needs mid-investigation, not this summary text.
+ * One unified status bar — identity (menu/brand/id/timer), the live count
+ * strip, and the top-level controls (online, Quick Setup, Lock, Pause) all
+ * in a single header block. Sized by content (padding, not a fixed height),
+ * so it stays exactly as short as its busiest line needs and never grows
+ * beyond that.
+ *
+ * Three flex children, in DOM order: identity (flexes/truncates, never
+ * wraps internally), the count strip (`order-last` + `w-full` by default —
+ * with nothing else able to share a 100%-wide line, this reliably wraps to
+ * its own second line on a narrow phone), and the controls cluster
+ * (`shrink-0`, always reachable). The wrap decision keys off `short:`, not
+ * a viewport-width breakpoint — the root layout caps the whole app at
+ * `max-w-md` in portrait and only lifts that under `short:` (see
+ * app/layout.tsx), so `short:` is the one signal that real extra width is
+ * actually available; a wide-but-tall desktop dev window is still a narrow
+ * 448px column and needs the same two-line treatment as an iPhone. Once
+ * `short:` is active the count strip's order/width reset to natural, so it
+ * sits inline between identity and controls on one line instead —
+ * "landscape/desktop takes the full width" falls out of that. Beyond the
+ * wrap decision, `short:` also tightens padding/gaps/font size for the
+ * genuinely-scarce-height case.
  */
 export function LiveHeader() {
   const { investigation, currentRound, busy, pause, resume, refresh } = useInvestigationContext();
@@ -29,32 +44,37 @@ export function LiveHeader() {
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
 
   return (
-    <div className="flex h-[clamp(40px,7dvh,52px)] flex-none items-center gap-1.5 border-b border-border bg-surface px-2 short:!h-[clamp(28px,8dvh,36px)] short:gap-1 short:px-1.5">
-      <LiveMenu />
-      <Eye className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-      <span className="hidden shrink-0 text-xs font-bold text-foreground sm:inline">EyeOnPit</span>
+    <div className="flex flex-none flex-wrap items-center gap-x-1.5 gap-y-1 border-b border-border bg-surface px-2 py-1.5 short:!gap-x-1 short:!gap-y-0 short:!py-1">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        <LiveMenu />
+        <Eye className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+        <span className="hidden shrink-0 text-xs font-bold text-foreground sm:inline">EyeOnPit</span>
+        <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
+          {investigation.displayId}
+        </span>
+        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+          {formatElapsedTime(elapsedMs)}
+        </span>
+        <span className="hidden min-w-0 flex-1 truncate text-[11px] text-muted-foreground sm:inline">
+          T{investigation.tableNumber || "—"} · {formatGameConfigSummary(investigation, currentRound.shoeNumber)} · R
+          {currentRound.roundNumber}
+        </span>
+      </div>
 
-      <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
-        {investigation.displayId}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-        T{investigation.tableNumber || "—"} · {formatGameConfigSummary(investigation, currentRound.shoeNumber)} · R
-        {currentRound.roundNumber}
-      </span>
-      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
-        {formatElapsedTime(elapsedMs)}
-      </span>
-      <span
-        className="shrink-0"
-        aria-label={isOnline ? "Online" : "Offline — saved locally"}
-        title={isOnline ? "Online" : "Offline — saved locally"}
-      >
-        <span
-          className={`inline-block h-2 w-2 rounded-full ${isOnline ? "bg-status-green" : "bg-muted-foreground"}`}
-        />
-      </span>
+      <div className="order-last w-full border-t border-border/60 pt-1 short:order-none short:w-auto short:border-t-0 short:pt-0">
+        <CountSummaryPanel />
+      </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
+        <span
+          className="shrink-0"
+          aria-label={isOnline ? "Online" : "Offline — saved locally"}
+          title={isOnline ? "Online" : "Offline — saved locally"}
+        >
+          <span
+            className={`inline-block h-2 w-2 rounded-full ${isOnline ? "bg-status-green" : "bg-muted-foreground"}`}
+          />
+        </span>
         <button
           type="button"
           onClick={() => setQuickSetupOpen(true)}

@@ -880,15 +880,45 @@ export async function completeInvestigation(localId: string): Promise<void> {
 
 /**
  * Wipes only this investigation's live table state back to a single fresh
- * round — cards, wagers, hand state, running counts (derived from round
- * history, so clearing the rounds clears them), and seat occupancy/grouping.
- * Investigation identity (casino, table, dealer, operator, notes,
+ * round — cards, wagers, hand state, seat occupancy/grouping, and the
+ * CardEvent ledger (the authoritative source every counting system derives
+ * its running/true count from — see docs/counting-systems.md). Clearing
+ * `rounds` alone is not enough: the ledger is keyed by
+ * investigationId+shoeNumber and persists independently of the round
+ * display arrays, so without also deleting this investigation's CardEvents
+ * here, a "fresh" round 1 / shoe 1 would still carry the previous session's
+ * count. Investigation identity (casino, table, dealer, operator, notes,
  * displayId/localId/createdAt) and every OTHER investigation are untouched.
- * The "Reset Current Investigation" action in Settings.
+ *
+ * DELETES CARDEVENTS — evidence-destructive, and therefore deliberately
+ * restricted to `isDemo` (Practice) investigations only, enforced here, not
+ * just by convention at the call site. Production CardEvents are
+ * authoritative evidence (see docs/EYEONPIT_PRODUCT_SPEC.md, "Count
+ * Integrity" / "Dual Operational Roles"): a normal operator action must
+ * never be able to silently erase the event ledger of a real investigation,
+ * and Practice data has no evidentiary value to preserve. There is no
+ * production equivalent of this function — the audit-safe ways to reset a
+ * *production* investigation's count/state are `advanceRound(..., {newShoe:
+ * true})` (new shoe boundary, same investigation, every CardEvent kept and
+ * simply excluded from the new shoe's count by `shoeNumber`) or closing the
+ * investigation and starting a new one (`completeInvestigation` +
+ * `createInvestigation` — "Start Fresh Investigation" in Settings). Neither
+ * of those deletes a single CardEvent. Used by
+ * findOrCreatePracticeInvestigation to guarantee a reused practice record
+ * never resurfaces a previous exercise's cards/count, and by the
+ * Practice-only reset action in Settings.
  */
-export async function resetInvestigationLiveState(localId: string): Promise<void> {
+export async function resetPracticeInvestigationLiveState(localId: string): Promise<void> {
+  const db = getDb();
   const investigation = await getInvestigation(localId);
   if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+  if (!investigation.isDemo) {
+    throw new Error(
+      `resetPracticeInvestigationLiveState refused: investigation ${localId} is not a Practice (isDemo) investigation. ` +
+        "Production investigations must never have their CardEvent ledger deleted — use advanceRound({ newShoe: true }) " +
+        "or close/create a new investigation instead."
+    );
+  }
   const now = new Date().toISOString();
 
   const round1 = createRound(1, 1);
@@ -899,12 +929,15 @@ export async function resetInvestigationLiveState(localId: string): Promise<void
     message: "Round 1 started (Shoe 1) — investigation reset",
   });
 
-  await updateInvestigation(localId, {
-    rounds: [round1],
-    occupiedSeats: [],
-    playerGroups: {},
-    seatPlayerGroups: {},
-    activeTarget: "dealer",
+  await db.transaction("rw", db.investigations, db.cardEvents, async () => {
+    await db.cardEvents.where("investigationId").equals(localId).delete();
+    await updateInvestigation(localId, {
+      rounds: [round1],
+      occupiedSeats: [],
+      playerGroups: {},
+      seatPlayerGroups: {},
+      activeTarget: "dealer",
+    });
   });
 }
 

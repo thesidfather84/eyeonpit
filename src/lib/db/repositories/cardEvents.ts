@@ -5,6 +5,7 @@ import { createCardEvent } from "@/lib/counting-engine/ledger";
 import { hasLegacyCardActivity, recoverLegacyLedger } from "@/lib/counting-engine/migration";
 import type { LegacyAmbiguity } from "@/lib/counting-engine/migration";
 import type { CardEvent, CardEventStatus, CardEventTargetType } from "@/lib/counting-engine/types";
+import { appendCardForTarget, cardFromRank, popLastCardForTarget } from "@/lib/utils/cardEventTarget";
 import type { EventType, Investigation, Rank, Round } from "@/types/investigation";
 
 export async function getCardEventsForInvestigation(investigationId: string): Promise<CardEvent[]> {
@@ -102,36 +103,63 @@ export async function addCardToRound(input: AddCardInput): Promise<AddCardResult
 }
 
 /**
- * Reverts a card-add mutation: restores the round's prior display-array
- * snapshot (bets/actions/etc. included, same as the pre-ledger undo) AND
- * marks the specific CardEvent it corresponds to as `undone` — in the same
+ * Reverses one specific target's most recent card without touching any
+ * other target's data: flips exactly that CardEvent to `undone` and pops
+ * the last card from that target's own display array (dealerHand.cards /
+ * a seat's playerCards / a split hand's playerCards), in the same Dexie
  * transaction. The event row is never deleted, only flipped.
+ *
+ * Unlike the whole-round-snapshot restore this replaces, this never
+ * depends on a captured "prior round" state, so it stays correct even when
+ * a *different* target's card was added more recently — the scenario a
+ * snapshot restore would silently corrupt (it would also revert that other
+ * target's already-entered card back out of the round's display array,
+ * even though its CardEvent — and therefore the count — was never touched).
+ * This is exactly what makes per-target ("context-aware") Undo safe: see
+ * InvestigationContext.tsx's `undo()`.
  */
-export async function undoCardAdd(
+export async function undoTargetCard(
   investigationLocalId: string,
   roundId: string,
-  priorRound: Round,
-  cardEventId: string
+  cardEventId: string,
+  targetType: CardEventTargetType,
+  targetId: number | "dealer"
 ): Promise<Round> {
-  return transitionCardAdd(investigationLocalId, roundId, priorRound, cardEventId, "undone", "Undo: reverted last change");
+  return transitionTargetCard(
+    investigationLocalId,
+    roundId,
+    cardEventId,
+    "undone",
+    (round) => popLastCardForTarget(round, targetType, targetId),
+    "Undo: reverted last card"
+  );
 }
 
-/** Restores an undone card: flips its CardEvent back to `active` and reapplies the round snapshot that had it — in the same transaction. */
-export async function redoCardAdd(
+/** Restores an undone card exactly: flips its CardEvent back to `active` and re-appends the same card (reconstructed from the event's own rank) to that target's display array — the precise inverse of `undoTargetCard`. */
+export async function redoTargetCard(
   investigationLocalId: string,
   roundId: string,
-  nextRound: Round,
-  cardEventId: string
+  cardEventId: string,
+  targetType: CardEventTargetType,
+  targetId: number | "dealer",
+  rank: Rank
 ): Promise<Round> {
-  return transitionCardAdd(investigationLocalId, roundId, nextRound, cardEventId, "active", "Redo: reapplied change");
+  return transitionTargetCard(
+    investigationLocalId,
+    roundId,
+    cardEventId,
+    "active",
+    (round) => appendCardForTarget(round, targetType, targetId, cardFromRank(rank)),
+    "Redo: reapplied card"
+  );
 }
 
-async function transitionCardAdd(
+async function transitionTargetCard(
   investigationLocalId: string,
   roundId: string,
-  roundSnapshot: Round,
   cardEventId: string,
   status: CardEventStatus,
+  applyToRound: (round: Round) => Round,
   message: string
 ): Promise<Round> {
   const db = getDb();
@@ -144,11 +172,17 @@ async function transitionCardAdd(
     if (!investigation) {
       throw new Error(`Investigation ${investigationLocalId} not found.`);
     }
+    const round = investigation.rounds.find((r) => r.id === roundId);
+    if (!round) {
+      throw new Error(`Round ${roundId} not found in investigation ${investigationLocalId}.`);
+    }
+
+    const mutatedRound = applyToRound(round);
     const now = new Date().toISOString();
     const updatedRound: Round = {
-      ...roundSnapshot,
+      ...mutatedRound,
       eventLog: [
-        ...roundSnapshot.eventLog,
+        ...mutatedRound.eventLog,
         { id: uuidv4(), timestamp: now, type: "correction" as EventType, message },
       ],
       updatedAt: now,
@@ -158,7 +192,7 @@ async function transitionCardAdd(
     result = updatedRound;
   });
 
-  if (!result) throw new Error("transitionCardAdd: transaction did not produce a result.");
+  if (!result) throw new Error("transitionTargetCard: transaction did not produce a result.");
   return result;
 }
 

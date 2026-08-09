@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { LiveHeader } from "./LiveHeader";
-import { CountSummaryPanel } from "./CountSummaryPanel";
 import { LiveDeckSelector } from "./LiveDeckSelector";
 import { TableMap } from "./TableMap";
 import { ActiveSeatHeader } from "./ActiveSeatHeader";
@@ -19,29 +18,32 @@ import { VoiceControlErrorBoundary } from "./VoiceControlErrorBoundary";
 
 /**
  * Portrait / normal height (the primary case, one-handed): a single
- * stacked column, in priority order — status strip, count strip, table
- * graphic, active seat, round toolbar, card keypad (the largest, most
- * important control). Everything below the keypad — wager, hand status,
- * player actions, guidance — lives in one shared scroll region so it never
- * pushes the keypad, round toolbar, count strip, or table out of view. Every
- * size in this tree is fluid (clamp()-driven, tied to dvh) rather than
- * hard-coded per device, so this degrades continuously from the tallest
- * phone down to the shortest instead of snapping at one breakpoint.
+ * stacked column, in priority order — the unified status bar (identity +
+ * count strip, see LiveHeader), table graphic, active seat, round toolbar,
+ * card keypad (the largest, most important control). Everything below the
+ * keypad — wager, hand status, player actions, guidance — lives in one
+ * shared scroll region so it never pushes the keypad, round toolbar, or
+ * table out of view. Every size in this tree is fluid (clamp()-driven, tied
+ * to dvh) rather than hard-coded per device, so this degrades continuously
+ * from the tallest phone down to the shortest instead of snapping at one
+ * breakpoint.
  *
  * `short:` (real available height under ~500px — a phone rotated to
  * landscape, not device orientation itself) is a genuinely different
- * layout, not a squeezed portrait: a three-column dashboard — a pinned
- * count column (RC/TC always visible, never scrolls, never competes with
- * anything else for space), a table/dealer column (flat 3x2 seat grid, no
- * arch curve — a curve reads fine tall and narrow, not short and wide), and
- * an entry column (round toolbar + keypad). Nothing in this row scrolls.
- * The active-seat banner is redundant with CardEntryPad's own "ENTER CARD →
- * SEAT n" label at this width, so it's dropped here rather than costing an
- * entire row. Hand status, player actions (Double/Split/Insurance/
- * Surrender), and operator guidance are real features an operator still
- * needs but doesn't touch every card — they move into one "Status &
- * Actions" panel instead of permanently occupying space the keypad and
- * count strip need more.
+ * layout, not a squeezed portrait: LiveHeader's own responsive rules fold
+ * the count strip inline into that one row at this width (it's always wide
+ * enough), so the row below it becomes a plain two-column dashboard — a
+ * table/dealer column (flat 3x2 seat grid, no arch curve — a curve reads
+ * fine tall and narrow, not short and wide) and an entry column (round
+ * toolbar + keypad). The former count column now only ever holds
+ * `LiveDeckSelector`, which hides itself once any card is dealt. Nothing in
+ * this row scrolls. The active-seat banner is redundant with CardEntryPad's
+ * own "ENTER CARD → SEAT n" label at this width, so it's dropped here
+ * rather than costing an entire row. Hand status, player actions
+ * (Double/Split/Insurance/Surrender), and operator guidance are real
+ * features an operator still needs but doesn't touch every card — they
+ * move into one "Status & Actions" panel instead of permanently occupying
+ * space the keypad needs more.
  */
 export function LiveScreen() {
   const { investigation, activeTarget } = useInvestigationContext();
@@ -60,8 +62,7 @@ export function LiveScreen() {
       <LiveHeader />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden short:flex-row">
-        <div className="flex flex-none flex-col short:h-full short:w-[19%] short:min-w-[64px] short:justify-center short:border-r short:border-border">
-          <CountSummaryPanel />
+        <div className="flex flex-none flex-col short:h-full short:w-auto short:justify-center short:border-r short:border-border">
           <LiveDeckSelector />
         </div>
 

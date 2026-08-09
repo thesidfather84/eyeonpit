@@ -25,12 +25,14 @@ import {
 
 interface QuickSetupSheetProps {
   onClose: () => void;
-  /** Present = editing a live investigation's config. Absent = pre-creation ("Quick Setup" from the empty console). */
+  /** Present = editing a live investigation's config. Absent = pre-creation ("Advanced" from the launch screen). */
   investigation?: Investigation;
   onCreated?: (investigationLocalId: string) => void;
   onApplied?: () => void;
   initialConfig?: GameConfig;
   initialTableNumber?: string;
+  /** Pre-creation only: opens the full casino/dealer/operator identity form instead. Ignored while editing a live investigation. */
+  onOpenFullSetup?: () => void;
 }
 
 const FORMAT_OPTIONS: { value: BlackjackFormat; label: string }[] = [
@@ -65,6 +67,7 @@ export function QuickSetupSheet({
   onApplied,
   initialConfig,
   initialTableNumber,
+  onOpenFullSetup,
 }: QuickSetupSheetProps) {
   const isEdit = Boolean(investigation);
   const [config, setConfig] = useState<GameConfig>(() => {
@@ -192,7 +195,7 @@ export function QuickSetupSheet({
 
   return (
     <>
-      <BottomSheet open onClose={onClose} title={isEdit ? "Game Setup" : "Quick Setup"}>
+      <BottomSheet open onClose={onClose} title={isEdit ? "Game Setup" : "Advanced Setup"}>
         <div className="flex flex-col gap-5 pb-4">
           <div>
             <p className="mb-2 text-sm font-medium text-foreground">Game</p>
@@ -388,6 +391,16 @@ export function QuickSetupSheet({
           <Button variant="primary" fullWidth disabled={submitting} onClick={handleApply}>
             {submitting ? "Working…" : isEdit ? "Apply" : "Apply and Start"}
           </Button>
+
+          {!isEdit && onOpenFullSetup && (
+            <button
+              type="button"
+              onClick={onOpenFullSetup}
+              className="text-center text-xs text-muted-foreground underline hover:text-foreground"
+            >
+              Need full case details (casino, dealer, operator)?
+            </button>
+          )}
         </div>
       </BottomSheet>
 

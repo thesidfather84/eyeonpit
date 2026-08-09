@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   Download,
   FileText,
+  Headphones,
   HelpCircle,
   History as HistoryIcon,
   Layers,
@@ -201,6 +202,13 @@ export function LiveMenu() {
 
       <BottomSheet open={menuOpen} onClose={() => setMenuOpen(false)} title="Menu">
         <div className="flex flex-col gap-2 pb-4">
+          <Link
+            href={`/investigations/${investigation.localId}/floor`}
+            onClick={() => setMenuOpen(false)}
+            className="tap-target flex items-center gap-3 rounded-xl border border-accent/50 bg-accent/10 px-3 text-sm font-medium text-accent hover:bg-accent/15"
+          >
+            <Headphones className="h-5 w-5" aria-hidden /> Floor Mode
+          </Link>
           {menuItems(t).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -275,7 +283,11 @@ export function LiveMenu() {
 
       <BottomSheet open={overlay === "settings"} onClose={() => setOverlay(null)} title="Settings">
         <SettingsScreen
-          activeInvestigation={{ localId: investigation.localId, displayId: investigation.displayId }}
+          activeInvestigation={{
+            localId: investigation.localId,
+            displayId: investigation.displayId,
+            isDemo: investigation.isDemo,
+          }}
         />
       </BottomSheet>
 

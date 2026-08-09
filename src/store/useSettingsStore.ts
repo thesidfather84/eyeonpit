@@ -55,6 +55,7 @@ function normalizePersistedSettings(raw: unknown): Partial<SettingsState> {
       ? (r.workflowAssistance as WorkflowAssistanceLevel)
       : "basic",
     showGroupLabels: typeof r.showGroupLabels === "boolean" ? r.showGroupLabels : false,
+    voiceAudioFeedback: typeof r.voiceAudioFeedback === "boolean" ? r.voiceAudioFeedback : true,
   };
 
   const looksMalformed =
@@ -85,12 +86,15 @@ interface SettingsState {
   workflowAssistance: WorkflowAssistanceLevel;
   /** Accessibility: shows a small A/B/C letter badge on linked seats, so grouping isn't communicated by ring color alone. Off by default — the color ring is the primary signal, this is an opt-in reinforcement. */
   showGroupLabels: boolean;
+  /** Governs whether voice commands that produce a spoken response ("Count", "Status" — see lib/voice/speechOutput.ts) actually speak, versus only showing the same text visually. On by default: a headset-oriented, hands-free command is of little use silenced. Never affects recognition/listening itself, only this one class of read-only spoken output. */
+  voiceAudioFeedback: boolean;
   completeOnboarding: () => void;
   setShowGuidedTips: (value: boolean) => void;
   dismissHint: (id: string) => void;
   setTerminologyLevel: (level: TerminologyLevel) => void;
   setWorkflowAssistance: (level: WorkflowAssistanceLevel) => void;
   setShowGroupLabels: (value: boolean) => void;
+  setVoiceAudioFeedback: (value: boolean) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -102,6 +106,7 @@ export const useSettingsStore = create<SettingsState>()(
       terminologyLevel: "casinoProfessional",
       workflowAssistance: "basic",
       showGroupLabels: false,
+      voiceAudioFeedback: true,
       completeOnboarding: () => set({ hasCompletedOnboarding: true }),
       setShowGuidedTips: (value) => set({ showGuidedTips: value }),
       dismissHint: (id) =>
@@ -113,6 +118,7 @@ export const useSettingsStore = create<SettingsState>()(
       setTerminologyLevel: (level) => set({ terminologyLevel: level }),
       setWorkflowAssistance: (level) => set({ workflowAssistance: level }),
       setShowGroupLabels: (value) => set({ showGroupLabels: value }),
+      setVoiceAudioFeedback: (value) => set({ voiceAudioFeedback: value }),
     }),
     {
       name: "eyeonpit:settings",

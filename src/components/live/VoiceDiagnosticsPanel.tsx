@@ -15,11 +15,16 @@ export function formatVoiceDiagnosticsLog(entries: VoiceDiagnosticEntry[]): stri
 }
 
 /**
- * Diagnostic beta only — a visible log of every recognition lifecycle
- * event, transcript, alternative, confidence, and error code, plus a
- * one-tap way to get that text off the phone. Purely additive to
- * VoiceControl's existing mic button/status pill; doesn't replace or
- * restructure either.
+ * A visible log of every recognition lifecycle event, transcript,
+ * alternative, confidence, and error code, plus a one-tap way to get that
+ * text off the phone. Hidden during normal operation — VoiceControl only
+ * mounts this component at all once its "Debug" toggle has been
+ * deliberately opened, regardless of how many entries have accumulated in
+ * the background; it never appears on its own just because voice entry is
+ * in use. `entries` (and therefore `id`) come from VoiceControl's own
+ * monotonic counter, which never resets across start/stop sessions — see
+ * `appendLog` there for why the id must be captured *before* the state
+ * update, not read live from inside it.
  */
 export function VoiceDiagnosticsPanel({ entries }: { entries: VoiceDiagnosticEntry[] }) {
   const [copied, setCopied] = useState(false);

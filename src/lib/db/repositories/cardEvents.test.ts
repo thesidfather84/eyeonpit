@@ -6,8 +6,8 @@ import {
   addCardToRound,
   ensureLegacyLedger,
   getCardEventsForInvestigation,
-  redoCardAdd,
-  undoCardAdd,
+  redoTargetCard,
+  undoTargetCard,
 } from "@/lib/db/repositories/cardEvents";
 import {
   advanceRound,
@@ -104,20 +104,50 @@ describe("cardEvents repository — undo/redo via the real transactional path", 
   it("undo flips the specific CardEvent to undone; redo restores exactly that one", async () => {
     const inv = await freshInvestigation();
     const round = inv.rounds[0];
-    const { round: roundBefore, cardEvent } = await dealerAdd(inv.localId, round.id, "10");
-    const withSecondCard = await dealerAdd(inv.localId, roundBefore.id, "5");
+    const { cardEvent: first } = await dealerAdd(inv.localId, round.id, "10");
+    const { cardEvent: second } = await dealerAdd(inv.localId, round.id, "5");
 
-    const undone = await undoCardAdd(inv.localId, round.id, roundBefore, withSecondCard.cardEvent.id);
+    const undone = await undoTargetCard(inv.localId, round.id, second.id, "dealer", "dealer");
     expect(undone.dealerHand.cards.map((c) => c.rank)).toEqual(["10"]);
     let snapshot = calculateCountSnapshot(await getCardEventsForInvestigation(inv.localId), inv.shoeTotalDecks);
     expect(snapshot["Hi-Lo"].running).toBe(-1); // only the "10" is active
 
-    const redone = await redoCardAdd(inv.localId, round.id, withSecondCard.round, withSecondCard.cardEvent.id);
+    const redone = await redoTargetCard(inv.localId, round.id, second.id, "dealer", "dealer", "5");
     expect(redone.dealerHand.cards.map((c) => c.rank)).toEqual(["10", "5"]);
     snapshot = calculateCountSnapshot(await getCardEventsForInvestigation(inv.localId), inv.shoeTotalDecks);
     expect(snapshot["Hi-Lo"].running).toBe(0); // "10" (-1) + "5" (+1)
 
-    void cardEvent; // (first event's id — not directly asserted beyond being distinct from the second)
+    void first; // (first event's id — not directly asserted beyond being distinct from the second)
+  });
+
+  it("undoing an earlier target's card leaves a later, unrelated target's card completely untouched (interleaved multi-seat entry)", async () => {
+    // Regression coverage for the reported bug: Undo must reverse the
+    // specific event it's told to, never "whatever else happens to be
+    // globally last" — even though Seat 5's card was added after Seat 3's.
+    const inv = await freshInvestigation();
+    const round = inv.rounds[0];
+    await occupySeat(inv.localId, 1);
+    await occupySeat(inv.localId, 3);
+    await occupySeat(inv.localId, 5);
+
+    await seatAdd(inv.localId, round.id, 1, "2"); // Seat 1
+    const seat3Card = await seatAdd(inv.localId, round.id, 3, "3"); // Seat 3 — the one we'll undo
+    await seatAdd(inv.localId, round.id, 5, "4"); // Seat 5 — globally the most recent card
+
+    const afterUndo = await undoTargetCard(inv.localId, round.id, seat3Card.cardEvent.id, "seat", 3);
+
+    expect(afterUndo.seats[3]!.playerCards).toEqual([]);
+    expect(afterUndo.seats[1]!.playerCards.map((c) => c.rank)).toEqual(["2"]); // untouched
+    expect(afterUndo.seats[5]!.playerCards.map((c) => c.rank)).toEqual(["4"]); // untouched — this is exactly what a whole-round-snapshot restore would have corrupted
+
+    const events = await getCardEventsForInvestigation(inv.localId);
+    expect(events.find((e) => e.id === seat3Card.cardEvent.id)?.status).toBe("undone");
+    expect(events.filter((e) => e.status === "active")).toHaveLength(2); // seat 1's and seat 5's events only
+
+    // Counts reverse only for the event actually undone — Seat 1's "2"
+    // (+1) and Seat 5's "4" (+1) stay counted; Seat 3's "3" (+1) does not.
+    const snapshot = calculateCountSnapshot(events, inv.shoeTotalDecks);
+    expect(snapshot["Hi-Lo"].running).toBe(2);
   });
 });
 
@@ -282,15 +312,15 @@ describe("mandatory acceptance sequence (run through the real repository/ledger,
     expectAll(await snapshotNow(), { hiLo: 0, ko: 0, zen: 0, omegaII: 1 });
 
     // Undo Dealer A
-    const afterUndoDealerA = await undoCardAdd(investigationId, roundId, player5.round, dealerA.cardEvent.id);
+    const afterUndoDealerA = await undoTargetCard(investigationId, roundId, dealerA.cardEvent.id, "dealer", "dealer");
     expectAll(await snapshotNow(), { hiLo: 1, ko: 1, zen: 1, omegaII: 1 });
 
-    // Undo Player 5
-    await undoCardAdd(investigationId, roundId, player2.round, player5.cardEvent.id);
+    // Undo Player 5 (seat 1)
+    await undoTargetCard(investigationId, roundId, player5.cardEvent.id, "seat", 1);
     expectAll(await snapshotNow(), { hiLo: 0, ko: 0, zen: -1, omegaII: -1 });
 
     // Redo Player 5
-    await redoCardAdd(investigationId, roundId, player5.round, player5.cardEvent.id);
+    await redoTargetCard(investigationId, roundId, player5.cardEvent.id, "seat", 1, "5");
     expectAll(await snapshotNow(), { hiLo: 1, ko: 1, zen: 1, omegaII: 1 });
 
     // Mark the player seat empty — all counts must remain unchanged.

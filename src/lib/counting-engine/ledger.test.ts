@@ -4,6 +4,7 @@ import {
   eventsInShoe,
   eventsThroughRound,
   mostRecentActiveEvent,
+  mostRecentActiveEventForTarget,
   nextSequence,
   withEventStatus,
 } from "./ledger";
@@ -103,6 +104,36 @@ describe("mostRecentActiveEvent", () => {
 
   it("returns undefined when a shoe has no active events", () => {
     expect(mostRecentActiveEvent([baseEvent({ status: "undone" })], 1)).toBeUndefined();
+  });
+});
+
+describe("mostRecentActiveEventForTarget — context-aware Undo's lookup", () => {
+  it("returns the highest-sequence active event for that exact target, ignoring a later event for a different target", () => {
+    const events = [
+      baseEvent({ id: "seat1-a", sequence: 1, targetType: "seat", targetId: 1 }),
+      baseEvent({ id: "seat3-a", sequence: 2, targetType: "seat", targetId: 3 }),
+      baseEvent({ id: "seat5-a", sequence: 3, targetType: "seat", targetId: 5 }), // globally last, but a different seat
+    ];
+    expect(mostRecentActiveEventForTarget(events, 1, "seat", 3)?.id).toBe("seat3-a");
+  });
+
+  it("distinguishes seat vs. split for the same seat number", () => {
+    const events = [
+      baseEvent({ id: "seat3-primary", sequence: 1, targetType: "seat", targetId: 3 }),
+      baseEvent({ id: "seat3-split", sequence: 2, targetType: "split", targetId: 3 }),
+    ];
+    expect(mostRecentActiveEventForTarget(events, 1, "seat", 3)?.id).toBe("seat3-primary");
+    expect(mostRecentActiveEventForTarget(events, 1, "split", 3)?.id).toBe("seat3-split");
+  });
+
+  it("ignores an undone event for the target and returns undefined if that was its only card", () => {
+    const events = [baseEvent({ id: "dealer-a", sequence: 1, status: "undone", targetType: "dealer", targetId: "dealer" })];
+    expect(mostRecentActiveEventForTarget(events, 1, "dealer", "dealer")).toBeUndefined();
+  });
+
+  it("returns undefined when the target has no events at all", () => {
+    const events = [baseEvent({ sequence: 1, targetType: "seat", targetId: 1 })];
+    expect(mostRecentActiveEventForTarget(events, 1, "seat", 7)).toBeUndefined();
   });
 });
 

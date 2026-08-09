@@ -9,7 +9,7 @@ import {
   createInvestigation,
   listInvestigations,
   resetAllData,
-  resetInvestigationLiveState,
+  resetPracticeInvestigationLiveState,
 } from "@/lib/db/repositories/investigations";
 import { DEFAULT_GAME_CONFIG } from "@/types/investigation";
 import { findOrCreatePracticeInvestigation } from "@/lib/onboarding/practiceInvestigationSeed";
@@ -39,9 +39,13 @@ interface SettingsScreenProps {
    * Only present when Settings is opened from inside a live investigation
    * (LiveMenu) — the standalone /settings route has no investigation
    * context to read, so it passes nothing and the two investigation-scoped
-   * actions below stay hidden there.
+   * actions below stay hidden there. `isDemo` decides which of the two
+   * "Current Investigation" actions renders — see the section below: a
+   * production investigation only ever gets the non-destructive "Start
+   * Fresh Investigation" path, never the CardEvent-deleting reset, which is
+   * reserved for disposable Practice investigations only.
    */
-  activeInvestigation?: { localId: string; displayId: string } | null;
+  activeInvestigation?: { localId: string; displayId: string; isDemo: boolean } | null;
 }
 
 export function SettingsScreen({ activeInvestigation }: SettingsScreenProps = {}) {
@@ -55,6 +59,8 @@ export function SettingsScreen({ activeInvestigation }: SettingsScreenProps = {}
     setWorkflowAssistance,
     showGroupLabels,
     setShowGroupLabels,
+    voiceAudioFeedback,
+    setVoiceAudioFeedback,
   } = useSettingsStore();
   const {
     updateAvailable,
@@ -149,11 +155,16 @@ export function SettingsScreen({ activeInvestigation }: SettingsScreenProps = {}
     }
   }
 
-  async function handleResetCurrent() {
-    if (!activeInvestigation) return;
+  // Practice-only — see resetPracticeInvestigationLiveState's own guard.
+  // There is no production equivalent of this button: a real investigation
+  // only ever exposes "Start Fresh Investigation" (handleStartFresh above),
+  // which closes/archives it and starts a clean one without deleting any
+  // CardEvent.
+  async function handleResetPracticeData() {
+    if (!activeInvestigation?.isDemo) return;
     setResettingCurrent(true);
     try {
-      await resetInvestigationLiveState(activeInvestigation.localId);
+      await resetPracticeInvestigationLiveState(activeInvestigation.localId);
       window.location.reload();
     } finally {
       setResettingCurrent(false);
@@ -204,6 +215,23 @@ export function SettingsScreen({ activeInvestigation }: SettingsScreenProps = {}
             }`}
           >
             {showGroupLabels ? "ON" : "OFF"}
+          </button>
+        </div>
+        <div className="mt-3 flex items-center justify-between">
+          <div>
+            <span className="block text-sm font-medium text-foreground">Spoken voice feedback</span>
+            <span className="block text-xs text-muted-foreground">
+              Speak &quot;Count&quot;/&quot;Status&quot; voice responses aloud (Floor Mode, headset use) — otherwise shown as text only
+            </span>
+          </div>
+          <button
+            onClick={() => setVoiceAudioFeedback(!voiceAudioFeedback)}
+            aria-pressed={voiceAudioFeedback}
+            className={`tap-target rounded-full px-4 text-xs font-bold ${
+              voiceAudioFeedback ? "bg-accent text-accent-foreground" : "border border-border text-muted-foreground"
+            }`}
+          >
+            {voiceAudioFeedback ? "ON" : "OFF"}
           </button>
         </div>
       </section>
@@ -306,9 +334,17 @@ export function SettingsScreen({ activeInvestigation }: SettingsScreenProps = {}
           <Button variant="secondary" onClick={() => setStartFreshConfirming(true)}>
             Start Fresh Investigation
           </Button>
-          <Button variant="destructive" onClick={() => setResetCurrentConfirming(true)}>
-            Reset Current Investigation
-          </Button>
+          {activeInvestigation.isDemo ? (
+            <Button variant="destructive" onClick={() => setResetCurrentConfirming(true)}>
+              Reset Practice Data
+            </Button>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              To reset the count or shoe without losing any recorded evidence, use{" "}
+              <span className="font-medium text-foreground">New Shoe</span> from the Live menu instead — every
+              card already recorded stays in this investigation&apos;s permanent history either way.
+            </p>
+          )}
         </section>
       )}
 
@@ -335,6 +371,9 @@ export function SettingsScreen({ activeInvestigation }: SettingsScreenProps = {}
         <AboutRow label="Service Worker" value={swSupported ? (activeScriptURL ? "Active" : "Registering…") : "Unsupported"} />
         <AboutRow label="Active Cache" value={cacheNames.length > 0 ? cacheNames.join(", ") : "—"} />
         <AboutRow label="Update Waiting" value={updateAvailable ? "Yes" : "No"} />
+        <p className="mt-2 border-t border-border pt-2 text-[10px] leading-relaxed text-muted-foreground">
+          Sidney Impastato — Creator / Developer · Forge — Architect
+        </p>
       </section>
 
       <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
@@ -367,12 +406,12 @@ export function SettingsScreen({ activeInvestigation }: SettingsScreenProps = {}
 
       <ConfirmDialog
         open={resetCurrentConfirming}
-        title="Reset this investigation?"
-        message={`Clears all cards, wagers, hand state, running counts, and seat occupancy for "${activeInvestigation?.displayId}" back to a fresh Round 1. Casino/table/dealer details and notes are kept. Every other saved investigation is untouched. This cannot be undone.`}
-        confirmLabel="Reset Investigation"
+        title="Reset this practice investigation?"
+        message={`Clears all cards, wagers, hand state, running counts, and seat occupancy for "${activeInvestigation?.displayId}" back to a fresh Round 1 — this is a Practice investigation, so its data is disposable by design. Casino/table/dealer details are kept. Every other saved investigation is untouched. This cannot be undone.`}
+        confirmLabel="Reset Practice Data"
         destructive
         busy={resettingCurrent}
-        onConfirm={handleResetCurrent}
+        onConfirm={handleResetPracticeData}
         onCancel={() => setResetCurrentConfirming(false)}
       />
 

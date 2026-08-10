@@ -27,6 +27,7 @@ import {
   addCardToRound,
   ensureLegacyLedger,
   getCardEventsForInvestigation,
+  occupySeatAndAddCard as occupySeatAndAddCardRepo,
   redoTargetCard,
   undoTargetCard,
 } from "@/lib/db/repositories/cardEvents";
@@ -119,6 +120,19 @@ interface InvestigationContextValue {
   cardEvents: CardEvent[];
   /** The single card-entry path: writes the round's display-array mutation and its structured CardEvent atomically, and makes the addition undoable/redoable via the ledger rather than a whole-round snapshot. */
   addCard: (
+    target: { targetType: CardEventTargetType; targetId: number | "dealer"; rank: Rank },
+    applyToRound: (round: Round) => Round,
+    event: { type: EventType; message: string }
+  ) => Promise<void>;
+  /**
+   * For a single recognized command that names BOTH an empty seat and a
+   * card in the same breath ("seat two five") — occupies the seat and
+   * writes the card in one Dexie transaction (see occupySeatAndAddCard in
+   * cardEvents.ts) so the two can never partially succeed. Use `addCard`
+   * instead whenever the target is dealer or an already-occupied seat.
+   */
+  occupySeatAndAddCard: (
+    seatNumber: number,
     target: { targetType: CardEventTargetType; targetId: number | "dealer"; rank: Rank },
     applyToRound: (round: Round) => Round,
     event: { type: EventType; message: string }
@@ -360,6 +374,79 @@ export function InvestigationProvider({
       }
     },
     [investigation, currentRound, cardEvents, activeTarget, refresh, pushHistory]
+  );
+
+  /**
+   * The atomic counterpart to `addCard` for a single recognized voice
+   * command that names an empty seat AND a card together ("seat two
+   * five") — see occupySeatAndAddCard in cardEvents.ts for why the seat's
+   * creation and the card's CardEvent/display mutation must land in the
+   * same Dexie transaction rather than as two independent writes. Pushes
+   * TWO history entries, in the same order a manual "tap the empty seat,
+   * then tap a card" sequence would produce — a seat-config snapshot
+   * first, then the target-scoped card entry — so Undo reverses them one
+   * at a time exactly as it would for two separate operator actions, even
+   * though both landed in one transaction.
+   */
+  const occupySeatAndAddCard = useCallback(
+    async (
+      seatNumber: number,
+      target: { targetType: CardEventTargetType; targetId: number | "dealer"; rank: Rank },
+      applyToRound: (round: Round) => Round,
+      event: { type: EventType; message: string }
+    ) => {
+      if (!investigation || !currentRound) return;
+      setBusy(true);
+      try {
+        pushHistory(snapshotSeatConfig(investigation));
+        const before = calculateCountSnapshot(
+          eventsInShoe(cardEvents, currentRound.shoeNumber),
+          investigation.shoeTotalDecks
+        );
+        const { round: updatedRound, cardEvent } = await occupySeatAndAddCardRepo(
+          { localId: investigation.localId, seatNumber },
+          {
+            investigationLocalId: investigation.localId,
+            roundId: currentRound.id,
+            targetType: target.targetType,
+            targetId: target.targetId,
+            rank: target.rank,
+            applyToRound,
+            event,
+          }
+        );
+        pushHistory({
+          kind: "target-card",
+          cardEventId: cardEvent.id,
+          targetType: target.targetType,
+          targetId: target.targetId,
+          rank: target.rank,
+        });
+        const afterEvents = [...cardEvents, cardEvent];
+        const after = calculateCountSnapshot(
+          eventsInShoe(afterEvents, updatedRound.shoeNumber),
+          investigation.shoeTotalDecks
+        );
+        diagnostics.debug("count-engine", event.message, {
+          investigationId: investigation.localId,
+          shoeNumber: updatedRound.shoeNumber,
+          roundNumber: updatedRound.roundNumber,
+          activeTarget,
+          countingSystem: investigation.countingSystem,
+          hiLoBefore: before["Hi-Lo"].running,
+          hiLoAfter: after["Hi-Lo"].running,
+          koAfter: after.KO.running,
+          zenAfter: after.Zen.running,
+          omegaIIAfter: after["Omega II"].running,
+          cardsSeenAfter: after.exposedCardCount,
+        });
+        setActiveTarget(seatNumber);
+        await refresh();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [investigation, currentRound, cardEvents, activeTarget, refresh, pushHistory, setActiveTarget]
   );
 
   /**
@@ -915,6 +1002,7 @@ export function InvestigationProvider({
         mutate,
         cardEvents,
         addCard,
+        occupySeatAndAddCard,
         refresh,
         pause,
         resume,

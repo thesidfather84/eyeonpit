@@ -56,8 +56,15 @@ async function countInvestigationsForDate(isoDate: string): Promise<number> {
   return db.investigations.where("investigationDate").equals(isoDate).count();
 }
 
-/** A brand-new, empty hand for a seat — the one place every SeatRoundRecord's defaults are defined. */
-function createEmptySeatRecord(
+/**
+ * A brand-new, empty hand for a seat — the one place every SeatRoundRecord's
+ * defaults are defined. Exported so voice entry can simulate exactly what
+ * `occupySeat` below will create (see cardEntryResolution usage in
+ * VoiceControl.tsx/parseNarration.ts) without duplicating this shape —
+ * an explicit voice target naming an empty seat needs to know, in the
+ * same beat, that the seat is about to become enabled.
+ */
+export function createEmptySeatRecord(
   seatNumber: number,
   betAmount: number | null = null,
   wagerChange: WagerChange = { direction: "first", amount: null, overridden: false },

@@ -100,6 +100,7 @@ function ActiveTargetProbe() {
   return (
     <div>
       <div data-testid="active-target">{String(activeTarget)}</div>
+      <div data-testid="occupied-seats">{investigation.occupiedSeats.join(",")}</div>
       <div data-testid="round-count">{investigation.rounds.length}</div>
       <div data-testid="round-completed">{String(round.completed)}</div>
       <div data-testid="dealer-card-count">{round.dealerHand.cards.length}</div>
@@ -1088,13 +1089,35 @@ describe("VoiceControl — ATOMIC COMMIT: a multi-op narration commits ALL of it
   // never a valid seat number at all, so parseNarration itself never
   // produces ops). These are RUNTIME preflight failures — the narration
   // parses into a perfectly valid ops list, but one op's target isn't
-  // actually usable right now (an unoccupied seat, or a round that isn't
-  // completable). Before this fix, commitNarration would silently skip
-  // just that one infeasible op and keep committing the rest; now the
-  // whole narration must preflight successfully BEFORE anything commits.
+  // actually usable right now. Before this fix, commitNarration would
+  // silently skip just that one infeasible op and keep committing the
+  // rest; now the whole narration must preflight successfully BEFORE
+  // anything commits.
+  //
+  // NOTE: an unoccupied seat is no longer a usable failure trigger here —
+  // per the real-device Floor fix, an explicit voice target naming an
+  // empty seat now occupies it (tap parity), so these use a seat whose
+  // hand is already LOCKED (an outcome already recorded — see
+  // isSeatLocked) as the genuinely infeasible target instead.
+  async function lockSeat(investigationId: string, seatNumber: number) {
+    const { occupySeat, getInvestigation, mutateRound } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, seatNumber);
+    const inv = await getInvestigation(investigationId);
+    const roundId = inv!.rounds[inv!.rounds.length - 1].id;
+    await mutateRound(
+      investigationId,
+      roundId,
+      (round) => ({
+        ...round,
+        seats: { ...round.seats, [seatNumber]: { ...round.seats[seatNumber]!, outcome: "win" } },
+      }),
+      { type: "correction", message: `test setup: lock seat ${seatNumber}` }
+    );
+  }
 
-  it('failure at the FIRST mutating op ("seat three five dealer king ace done", seat 3 never occupied) -> zero events anywhere, including the later valid dealer cards', async () => {
+  it('failure at the FIRST mutating op ("seat three five dealer king ace done", seat 3 already locked) -> zero events anywhere, including the later valid dealer cards', async () => {
     const investigationId = await freshInvestigationId();
+    await lockSeat(investigationId, 3);
     render(
       <InvestigationProvider investigationId={investigationId}>
         <VoiceControl />
@@ -1110,8 +1133,9 @@ describe("VoiceControl — ATOMIC COMMIT: a multi-op narration commits ALL of it
     expect(screen.getByTestId("round-completed").textContent).toBe("false");
   });
 
-  it('failure in the MIDDLE ("dealer king ace seat three five done", seat 3 never occupied) -> zero events, including the earlier valid "dealer king ace"', async () => {
+  it('failure in the MIDDLE ("dealer king ace seat three five done", seat 3 already locked) -> zero events, including the earlier valid "dealer king ace"', async () => {
     const investigationId = await freshInvestigationId();
+    await lockSeat(investigationId, 3);
     render(
       <InvestigationProvider investigationId={investigationId}>
         <VoiceControl />
@@ -1198,6 +1222,190 @@ describe("VoiceControl — ATOMIC COMMIT: a multi-op narration commits ALL of it
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("2");
     expect(screen.getByTestId("seat-1-card-count").textContent).toBe("3");
   });
+});
+
+describe("VoiceControl — REAL DEVICE FIX: target synonyms are identical AND an explicit empty-seat target occupies + activates (tap parity)", () => {
+  // Before this fix: "Seat 2" alone set the active target to 2 without
+  // occupying it, so the UI showed "ACTIVE — SEAT 2" while the card pad
+  // simultaneously said "Seat not enabled" — internally inconsistent.
+  // occupySeat is the same production path SeatTilesRow's own tap handler
+  // calls (it already no-ops to a plain select when a seat is already
+  // occupied), so routing voice through it exactly mirrors a tap.
+  it.each(["Seat 2", "Spot 2", "Player 2", "C2"])(
+    '"%s" on an empty seat -> Seat 2 becomes occupied AND active, identically for every synonym',
+    async (transcript) => {
+      const investigationId = await freshInvestigationId();
+      render(
+        <InvestigationProvider investigationId={investigationId}>
+          <VoiceControl />
+          <ActiveTargetProbe />
+        </InvestigationProvider>
+      );
+      await startListening();
+      await act(async () => sayFinal(transcript));
+
+      await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("2"));
+      await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe("2"));
+    }
+  );
+
+  it('"seat two five" (seat 2 never occupied) -> seat 2 is occupied, activated, AND the card is entered — no separate "enable seat two" step required', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("seat two five"));
+
+    await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe("2"));
+    await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("2"));
+    // seat-card-count probes only render for seats 1-3, which covers seat 2.
+    await waitFor(() => expect(screen.getByTestId("seat-2-card-count").textContent).toBe("1"));
+  });
+});
+
+describe("VoiceControl — ATOMICITY FOLLOW-UP: combined 'empty seat + card' voice commands go through the atomic occupySeatAndAddCard path", () => {
+  // The exact path audited: dispatch's "card" case with an explicit target
+  // (the legacy 2-op equivalent "seat two five" defers to here, not
+  // narration — see isTrivialLegacyEquivalent). Repository-level proof of
+  // the transaction itself (including the forced-failure rollback case)
+  // lives in cardEvents.test.ts; these confirm the SAME atomic path is
+  // actually what VoiceControl dispatches through, for every target
+  // synonym, and that the pre-existing "already occupied" path is
+  // unchanged.
+  it.each(["seat two five", "spot two five", "player two five", "C2 five"])(
+    '"%s" on an empty seat -> occupied + exactly one CardEvent, identically for every synonym',
+    async (transcript) => {
+      const investigationId = await freshInvestigationId();
+      render(
+        <InvestigationProvider investigationId={investigationId}>
+          <VoiceControl />
+          <ActiveTargetProbe />
+        </InvestigationProvider>
+      );
+      await startListening();
+      await act(async () => sayFinal(transcript));
+
+      await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe("2"));
+      await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("2"));
+      await waitFor(() => expect(screen.getByTestId("seat-2-card-count").textContent).toBe("1"));
+
+      const { getCardEventsForInvestigation } = await import("@/lib/db/repositories/cardEvents");
+      const events = await getCardEventsForInvestigation(investigationId);
+      expect(events).toHaveLength(1);
+      expect(events[0].rank).toBe("5");
+    }
+  );
+
+  it('an ALREADY-occupied Seat 2 + "seat two five" -> unchanged normal path: no new player group, exactly one card entered', async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat, getInvestigation } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 2);
+    const before = await getInvestigation(investigationId);
+    const groupCountBefore = Object.keys(before!.playerGroups).length;
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("seat two five"));
+
+    await waitFor(() => expect(screen.getByTestId("seat-2-card-count").textContent).toBe("1"));
+    const after = await getInvestigation(investigationId);
+    expect(Object.keys(after!.playerGroups)).toHaveLength(groupCountBefore);
+  });
+});
+
+describe("VoiceControl — REAL DEVICE FIX: natural hand connectors and leading-seat shorthand, end to end", () => {
+  it('"spot 3 has a 5 and a 7" -> Seat 3 occupied + active, cards 5 and 7 entered', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("spot 3 has a 5 and a 7"));
+
+    await waitFor(() => screen.getByText("✓ S3: 5 7"));
+    expect(screen.getByTestId("occupied-seats").textContent).toBe("3");
+    expect(screen.getByTestId("active-target").textContent).toBe("3");
+    expect(screen.getByTestId("seat-3-card-count").textContent).toBe("2");
+  });
+
+  it('"player 2 has 4 8" -> Seat 2 occupied + active, cards 4 and 8 entered', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("player 2 has 4 8"));
+
+    await waitFor(() => screen.getByText("✓ S2: 4 8"));
+    expect(screen.getByTestId("occupied-seats").textContent).toBe("2");
+    expect(screen.getByTestId("seat-2-card-count").textContent).toBe("2");
+  });
+
+  it('"seat one has king ace" -> Seat 1 occupied + active, cards K and A entered', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("seat one has king ace"));
+
+    await waitFor(() => screen.getByText("✓ S1: K A"));
+    expect(screen.getByTestId("occupied-seats").textContent).toBe("1");
+    expect(screen.getByTestId("seat-1-card-count").textContent).toBe("2");
+  });
+
+  it('"one has a king and an ace" (leading-seat shorthand, no "seat"/"spot"/"player" word) -> Seat 1 occupied + active, cards K and A entered', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("one has a king and an ace"));
+
+    await waitFor(() => screen.getByText("✓ S1: K A"));
+    expect(screen.getByTestId("occupied-seats").textContent).toBe("1");
+    expect(screen.getByTestId("seat-1-card-count").textContent).toBe("2");
+  });
+
+  it.each(["I ordered five pizzas", "seat three raised his bet after the five"])(
+    '"%s" -> zero CardEvents (connector grammar never reopens ordinary-conversation noise tolerance)',
+    async (transcript) => {
+      const investigationId = await freshInvestigationId();
+      render(
+        <InvestigationProvider investigationId={investigationId}>
+          <VoiceControl />
+          <ActiveTargetProbe />
+        </InvestigationProvider>
+      );
+      await startListening();
+      await act(async () => sayFinal(transcript));
+
+      await waitFor(() => screen.getByText(/Not recognized/));
+      expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+      expect(screen.getByTestId("seat-3-card-count").textContent).toBe("0");
+    }
+  );
 });
 
 describe("VoiceControl — safety", () => {

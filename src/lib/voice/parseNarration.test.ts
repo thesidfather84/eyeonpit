@@ -304,3 +304,103 @@ describe("parseNarration — inert-but-recognized action vocabulary never trips 
     }
   );
 });
+
+describe("parseNarration — REAL DEVICE FIX: natural hand connectors inside an established target/card-entry context", () => {
+  it('"dealer has a king and an ace" -> Dealer K, A', () => {
+    expect(cardOps(parseNarration("dealer has a king and an ace"))).toEqual([
+      { kind: "card", target: { kind: "dealer" }, rank: "10", displayRank: "K" },
+      { kind: "card", target: { kind: "dealer" }, rank: "A" },
+    ]);
+  });
+
+  it('"spot 3 has a 5 and a 7" -> Seat 3: 5, 7 (real captured transcript that was previously rejected)', () => {
+    const result = parseNarration("spot 3 has a 5 and a 7");
+    expect(result.kind).toBe("ops");
+    expect(cardOps(result)).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 3 }, rank: "5" },
+      { kind: "card", target: { kind: "seat", seat: 3 }, rank: "7" },
+    ]);
+  });
+
+  it('"player 2 has 4 8 6" -> Seat 2: 4, 8, 6', () => {
+    expect(cardOps(parseNarration("player 2 has 4 8 6"))).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 2 }, rank: "4" },
+      { kind: "card", target: { kind: "seat", seat: 2 }, rank: "8" },
+      { kind: "card", target: { kind: "seat", seat: 2 }, rank: "6" },
+    ]);
+  });
+
+  it('"player 2 has 4 8" -> Seat 2: 4, 8', () => {
+    expect(cardOps(parseNarration("player 2 has 4 8"))).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 2 }, rank: "4" },
+      { kind: "card", target: { kind: "seat", seat: 2 }, rank: "8" },
+    ]);
+  });
+
+  it('"seat one has king ace" -> Seat 1: K, A', () => {
+    expect(cardOps(parseNarration("seat one has king ace"))).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 1 }, rank: "10", displayRank: "K" },
+      { kind: "card", target: { kind: "seat", seat: 1 }, rank: "A" },
+    ]);
+  });
+
+  it("connector words are gated on an established target — plain unscoped conversation is unaffected", () => {
+    // Same safety examples as the F/G describe block above, re-verified
+    // specifically against the new connector vocabulary: none of these
+    // ever establish a target, so "has"/"and"/etc. inside them still count
+    // as ordinary noise exactly as before, not free connector grammar.
+    expect(parseNarration("I ordered five pizzas").kind).toBe("reject");
+    expect(parseNarration("seat three raised his bet after the five").kind).toBe("reject");
+    expect(parseNarration("that guy has a king tattoo").kind).toBe("reject");
+  });
+});
+
+describe("parseNarration — REAL DEVICE FIX: natural leading-seat shorthand (number + connector at clause start)", () => {
+  it('"one has king ace" -> Seat 1: K, A', () => {
+    expect(cardOps(parseNarration("one has king ace"))).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 1 }, rank: "10", displayRank: "K" },
+      { kind: "card", target: { kind: "seat", seat: 1 }, rank: "A" },
+    ]);
+  });
+
+  it('"one has a king and an ace" -> Seat 1: K, A (real captured transcript that was previously rejected)', () => {
+    const result = parseNarration("one has a king and an ace");
+    expect(result.kind).toBe("ops");
+    expect(cardOps(result)).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 1 }, rank: "10", displayRank: "K" },
+      { kind: "card", target: { kind: "seat", seat: 1 }, rank: "A" },
+    ]);
+  });
+
+  it('"2 has 5 7" -> Seat 2: 5, 7 (digit form)', () => {
+    expect(cardOps(parseNarration("2 has 5 7"))).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 2 }, rank: "5" },
+      { kind: "card", target: { kind: "seat", seat: 2 }, rank: "7" },
+    ]);
+  });
+
+  it('"three has a 4 and an 8" -> Seat 3: 4, 8', () => {
+    expect(cardOps(parseNarration("three has a 4 and an 8"))).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 3 }, rank: "4" },
+      { kind: "card", target: { kind: "seat", seat: 3 }, rank: "8" },
+    ]);
+  });
+
+  it("a bare number NOT followed by a connector is still just a card, never a seat guess", () => {
+    // "I have one five three seven" -> "one" is followed by "five", not a
+    // connector, so it stays the Ace it always was; multiple distinct
+    // unscoped ranks plus several stray words rejects exactly as before.
+    expect(parseNarration("I have one five three seven").kind).toBe("reject");
+  });
+
+  it("the shorthand never fires mid-hand — a number arriving after a target is already established is an ordinary scoped card, not a new seat", () => {
+    // "dealer king ace one" — "one" here is Ace for the DEALER (a third
+    // card), not a switch to Seat 1, because currentTarget is already set
+    // when "one" is reached; the shorthand is gated on `!currentTarget`.
+    expect(cardOps(parseNarration("dealer king ace one"))).toEqual([
+      { kind: "card", target: { kind: "dealer" }, rank: "10", displayRank: "K" },
+      { kind: "card", target: { kind: "dealer" }, rank: "A" },
+      { kind: "card", target: { kind: "dealer" }, rank: "A" },
+    ]);
+  });
+});

@@ -18,6 +18,7 @@ import { FloorScreen } from "./FloorScreen";
 import { LiveScreen } from "./LiveScreen";
 
 class MockSpeechRecognition {
+  static current: MockSpeechRecognition | null = null;
   continuous = false;
   interimResults = false;
   maxAlternatives = 1;
@@ -32,6 +33,9 @@ class MockSpeechRecognition {
   onspeechend: (() => void) | null = null;
   onsoundend: (() => void) | null = null;
   onaudioend: (() => void) | null = null;
+  constructor() {
+    MockSpeechRecognition.current = this;
+  }
   start() {
     this.onstart?.();
   }
@@ -41,6 +45,14 @@ class MockSpeechRecognition {
   abort() {
     this.onend?.();
   }
+}
+
+/** Mirrors VoiceControl.test.tsx's own makeResultEvent — kept local/self-contained rather than shared, matching this file's existing convention of duplicating its own minimal MockSpeechRecognition instead of importing one. */
+function makeFinalResultEvent(transcript: string) {
+  const alt = { transcript, confidence: 0.9 };
+  const result = { isFinal: true, length: 1, 0: alt };
+  const results = { length: 1, 0: result };
+  return { results, resultIndex: 0 };
 }
 
 beforeEach(() => {
@@ -165,6 +177,111 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
     );
 
     await screen.findByRole("button", { name: "Start voice command" });
+  });
+});
+
+describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
+  it("shows the dealer and all seven seats at a glance, empty seats reading as a dash", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const field = await screen.findByTestId("floor-play-field");
+    // A fresh investigation starts with the dealer as the active target.
+    await within(field).findByRole("button", { name: "Dealer, active" });
+    for (let seat = 1; seat <= 7; seat++) {
+      const seatButton = within(field).getByTestId(`floor-seat-${seat}`);
+      expect(seatButton.getAttribute("aria-label")).toBe(`Seat ${seat}, empty`);
+      expect(within(seatButton).getByText("—")).toBeTruthy();
+    }
+  });
+
+  it("tapping an empty seat in the play field occupies AND selects it — same production path as the seat map's own tap handler", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const field = await screen.findByTestId("floor-play-field");
+    const seat2 = within(field).getByTestId("floor-seat-2");
+    await act(async () => {
+      seat2.click();
+    });
+
+    await waitFor(() => expect(seat2.getAttribute("aria-label")).toBe("Seat 2, active"));
+    // ActiveSeatHeader (an existing, separately-tested component) renders
+    // once a seat becomes the active target — its appearance here confirms
+    // the play field drove the SAME context state, not a parallel one.
+    await waitFor(() => screen.getByText(/ACTIVE — SEAT 2/));
+  });
+
+  it("tapping an already-occupied seat just selects it (no re-occupy, no duplicate player group)", async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 4);
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const field = await screen.findByTestId("floor-play-field");
+    const seat4 = within(field).getByTestId("floor-seat-4");
+    await waitFor(() => expect(seat4.getAttribute("aria-label")).toBe("Seat 4, occupied"));
+
+    await act(async () => {
+      seat4.click();
+    });
+    await waitFor(() => expect(seat4.getAttribute("aria-label")).toBe("Seat 4, active"));
+  });
+
+  it("cards entered through the manual keypad for the dealer and a seat show up in the play field immediately — same round/display state, no separate data model", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const field = await screen.findByTestId("floor-play-field");
+    const aceButton = await screen.findByRole("button", { name: "A" });
+    await act(async () => {
+      aceButton.click();
+    });
+
+    await waitFor(() => {
+      const dealerRow = within(field).getByTestId("floor-dealer");
+      expect(within(dealerRow).getByText("A")).toBeTruthy();
+    });
+  });
+
+  it('a natural narration ("seat two five") is immediately visible in the play field — one glance confirms what EyeOnPit heard', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const field = await screen.findByTestId("floor-play-field");
+    const micButton = await screen.findByRole("button", { name: "Start voice command" });
+    await act(async () => {
+      micButton.click();
+    });
+    await act(async () => {
+      MockSpeechRecognition.current?.onresult?.(makeFinalResultEvent("seat two five"));
+    });
+
+    await waitFor(() => {
+      const seat2 = within(field).getByTestId("floor-seat-2");
+      expect(seat2.getAttribute("aria-label")).toBe("Seat 2, active");
+      expect(within(seat2).getByText("5")).toBeTruthy();
+    });
   });
 });
 

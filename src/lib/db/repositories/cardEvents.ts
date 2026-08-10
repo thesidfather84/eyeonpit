@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import { getDb } from "@/lib/db/client";
-import { getInvestigation, updateInvestigation } from "@/lib/db/repositories/investigations";
+import { getInvestigation, occupySeat, updateInvestigation } from "@/lib/db/repositories/investigations";
 import { createCardEvent } from "@/lib/counting-engine/ledger";
 import { hasLegacyCardActivity, recoverLegacyLedger } from "@/lib/counting-engine/migration";
 import type { LegacyAmbiguity } from "@/lib/counting-engine/migration";
@@ -99,6 +99,45 @@ export async function addCardToRound(input: AddCardInput): Promise<AddCardResult
   });
 
   if (!result) throw new Error("addCardToRound: transaction did not produce a result.");
+  return result;
+}
+
+/**
+ * Composes `occupySeat` (investigations.ts) and `addCardToRound` (above)
+ * into ONE Dexie transaction — for a single recognized voice utterance
+ * that names an empty seat AND a card in the same breath ("seat two
+ * five"), so the seat's occupation (occupiedSeats/playerGroups/its round
+ * seat record) and the card's CardEvent/display mutation succeed or fail
+ * TOGETHER. Without this, "seat two five" spoken as one utterance could
+ * leave seat 2 occupied with an empty hand while the spoken card silently
+ * never lands, if the second write failed after the first had already
+ * committed — an inconsistent partial interpretation of a single
+ * recognized command.
+ *
+ * This duplicates none of the seat/group or ledger/counting logic —
+ * `occupySeat` and `addCardToRound` run exactly as they do standalone;
+ * Dexie's transaction context (its PSD zone) is inherited by any nested
+ * call made from inside this callback, including the `updateInvestigation`
+ * / `getInvestigation` calls buried inside both of those functions, so
+ * every read/write below joins this one transaction and rolls back
+ * together on any failure. `addCardToRound` already establishes this exact
+ * pattern (see its own doc comment) for the round-display-array mutation +
+ * CardEvent write; this only extends the same boundary one step earlier to
+ * also cover the seat's own creation.
+ */
+export async function occupySeatAndAddCard(
+  seat: { localId: string; seatNumber: number },
+  cardInput: AddCardInput
+): Promise<AddCardResult> {
+  const db = getDb();
+  let result: AddCardResult | undefined;
+
+  await db.transaction("rw", db.investigations, db.cardEvents, async () => {
+    await occupySeat(seat.localId, seat.seatNumber);
+    result = await addCardToRound(cardInput);
+  });
+
+  if (!result) throw new Error("occupySeatAndAddCard: transaction did not produce a result.");
   return result;
 }
 

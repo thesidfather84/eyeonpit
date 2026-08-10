@@ -5,6 +5,7 @@ import { ArrowLeftRight, Headphones } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { CountSummaryPanel } from "./CountSummaryPanel";
+import { FloorPlayField } from "./FloorPlayField";
 import { ActiveSeatHeader } from "./ActiveSeatHeader";
 import { RoundControlsRow } from "./RoundControlsRow";
 import { CardEntryPad } from "./CardEntryPad";
@@ -29,6 +30,13 @@ import { VoiceControlErrorBoundary } from "./VoiceControlErrorBoundary";
  * actions, notes, and reporting remain Surveillance-only for now (reachable
  * any time via the link back below — nothing about the investigation is
  * gated by which shell most recently viewed it).
+ *
+ * FloorPlayField (below CountSummaryPanel) is the one addition beyond that
+ * original set — a compact, low-attention dealer/seat summary so the
+ * operator can confirm what a narration was just heard as without leaving
+ * Floor Mode for Surveillance's full table. It is deliberately NOT
+ * SeatTilesRow/TableMap; see that component's own doc comment for the
+ * scope line between the two.
  */
 export function FloorScreen() {
   const { investigation, activeTarget } = useInvestigationContext();
@@ -61,6 +69,8 @@ export function FloorScreen() {
       <div className="flex-none border-b border-border bg-surface px-2 py-1">
         <CountSummaryPanel />
       </div>
+
+      <FloorPlayField />
 
       {activeSeat != null && <ActiveSeatHeader target={activeSeat} />}
 

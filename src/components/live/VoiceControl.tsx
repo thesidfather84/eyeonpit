@@ -13,7 +13,7 @@ import { formatNarrationConfirmation, type ConfirmationEntry } from "@/lib/voice
 import { normalizeTranscript } from "@/lib/voice/normalizeTranscript";
 import { resolveCardEntryTarget, type CardTarget } from "@/lib/utils/cardEntryResolution";
 import { canCompleteRound } from "@/lib/utils/roundValidation";
-import { addOperatorNote } from "@/lib/db/repositories/investigations";
+import { addOperatorNote, createEmptySeatRecord } from "@/lib/db/repositories/investigations";
 import { diagnostics } from "@/lib/diagnostics/logger";
 import { buildCountAnnouncement, buildStatusAnnouncement } from "@/lib/voice/spokenSummary";
 import { speak } from "@/lib/voice/speechOutput";
@@ -183,6 +183,18 @@ function preflightNarration(
   for (const op of ops) {
     if (op.kind === "selectTarget") {
       liveTarget = toCardTarget(op.target);
+      // An explicit voice target naming an empty seat is the narration
+      // equivalent of tapping that seat tile — occupySeat both creates the
+      // seat's round record AND makes it active (see commitNarration,
+      // which routes this step through the same occupySeat context
+      // function SeatTilesRow itself calls). Simulated here too, purely in
+      // memory, so a card for THIS seat later in the SAME narration
+      // resolves as available without a database round-trip — otherwise
+      // "seat two five seven" would preflight-fail on "five" even though
+      // the seat is about to exist by the time it's actually entered.
+      if (typeof liveTarget === "number" && !simRound.seats[liveTarget]) {
+        simRound = { ...simRound, seats: { ...simRound.seats, [liveTarget]: createEmptySeatRecord(liveTarget) } };
+      }
       steps.push({ kind: "selectTarget", cardTarget: liveTarget, voiceTarget: op.target, bareOnly: isBareTargetOnly });
       continue;
     }
@@ -237,7 +249,9 @@ function preflightNarration(
  * needs a tap in between (see useVoiceRecognition for the restart
  * mechanics). Every command dispatches through the *same* hooks
  * CardEntryPad and RoundControlsRow themselves use (useCardEntry,
- * useRoundControls) or the *same* exported context actions (selectSeat,
+ * useRoundControls) or the *same* exported context actions (occupySeat —
+ * the same tap-parity path SeatTilesRow itself calls, so an explicit
+ * voice target naming an empty seat occupies it exactly like a tap would —
  * setActiveTarget) — this component contains no card-entry, round-advance,
  * or undo logic of its own, only parsing and dispatch. It never touches
  * the running count or the card ledger directly, and note text is saved
@@ -294,7 +308,8 @@ export function VoiceControl() {
     activeTarget,
     busy,
     addCard,
-    selectSeat,
+    occupySeat,
+    occupySeatAndAddCard,
     setActiveTarget,
     refresh,
     completeRound,
@@ -370,7 +385,17 @@ export function VoiceControl() {
     (command: VoiceCommandKind): string | null => {
       switch (command.kind) {
         case "select-seat":
-          selectSeat(command.seat);
+          // An explicit voice target naming a seat ("seat 2"/"spot 2"/
+          // "player 2"/"C2" — all four already normalize to the identical
+          // { kind: "select-seat", seat } command above in
+          // parseVoiceCommand) is the voice equivalent of tapping that
+          // seat tile: SeatTilesRow's own tap handler always calls
+          // `occupySeat`, never a select-only path, and voice must match
+          // that exactly (occupySeat already no-ops to a plain select when
+          // the seat is already occupied) — otherwise the UI can show
+          // "ACTIVE — SEAT 2" while the card pad still says "not enabled,"
+          // which is the exact bug this closes.
+          void occupySeat(command.seat);
           return `Seat ${command.seat} selected`;
         case "select-dealer":
           setActiveTarget("dealer");
@@ -386,14 +411,39 @@ export function VoiceControl() {
           // operator had tapped that seat/dealer tile first.
           if (command.target) {
             const cardTarget = toCardTarget(command.target);
-            const resolution = resolveCardEntryTarget(investigation, currentRound, cardTarget, busy);
+            // Same tap-parity rule as "select-seat" above: an explicit
+            // target named alongside a card must occupy an empty seat
+            // first, not just fail with "not enabled." Simulated here
+            // (createEmptySeatRecord mirrors exactly what occupySeat's own
+            // ensureSeatRecord call will create) so the resolution below
+            // sees the seat as available in the SAME beat, without waiting
+            // on a round-trip. The actual occupy-then-enter is NOT two
+            // independent writes chained by a Promise: occupySeatAndAddCard
+            // wraps both in one Dexie transaction (see cardEvents.ts), so
+            // "seat two five" can never leave the seat occupied with an
+            // empty hand if the card write were to fail — either both land
+            // or neither does.
+            const needsOccupy = typeof cardTarget === "number" && !investigation.occupiedSeats.includes(cardTarget);
+            const roundForResolution = needsOccupy
+              ? { ...currentRound, seats: { ...currentRound.seats, [cardTarget as number]: createEmptySeatRecord(cardTarget as number) } }
+              : currentRound;
+            const resolution = resolveCardEntryTarget(investigation, roundForResolution, cardTarget, busy);
             if (resolution.disabled) return null;
             const card = { rank: command.rank, suit: "unspecified" as const };
-            addCard(
-              { targetType: resolution.targetType, targetId: resolution.targetId, rank: command.rank },
-              (round) => resolution.applyCard(round, card),
-              { type: "card", message: resolution.eventMessage(card) }
-            );
+            if (needsOccupy) {
+              void occupySeatAndAddCard(
+                cardTarget as number,
+                { targetType: resolution.targetType, targetId: resolution.targetId, rank: command.rank },
+                (round) => resolution.applyCard(round, card),
+                { type: "card", message: resolution.eventMessage(card) }
+              );
+            } else {
+              addCard(
+                { targetType: resolution.targetType, targetId: resolution.targetId, rank: command.rank },
+                (round) => resolution.applyCard(round, card),
+                { type: "card", message: resolution.eventMessage(card) }
+              );
+            }
             setActiveTarget(cardTarget);
             return `${resolution.targetLabel}: ${command.displayRank ?? command.rank}`;
           }
@@ -451,7 +501,8 @@ export function VoiceControl() {
       cardEvents,
       busy,
       addCard,
-      selectSeat,
+      occupySeat,
+      occupySeatAndAddCard,
       setActiveTarget,
       enterCard,
       cardDisabled,
@@ -496,7 +547,12 @@ export function VoiceControl() {
       const entries: ConfirmationEntry[] = [];
       for (const step of preflight.steps) {
         if (step.kind === "selectTarget") {
-          setActiveTarget(step.cardTarget);
+          // Tap parity: a seat target always goes through occupySeat (it
+          // already no-ops to a plain select when the seat is already
+          // occupied), exactly like SeatTilesRow's own tap handler — never
+          // a select-only path for a seat. Dealer has no occupancy concept.
+          if (step.cardTarget === "dealer") setActiveTarget("dealer");
+          else await occupySeat(step.cardTarget);
           if (step.bareOnly) entries.push({ kind: "target", target: step.voiceTarget });
           continue;
         }
@@ -523,7 +579,20 @@ export function VoiceControl() {
       }
       return { kind: "committed", label: formatNarrationConfirmation(entries), committedCount: entries.length };
     },
-    [investigation, currentRound, activeTarget, busy, nextDisabled, undoDisabled, addCard, setActiveTarget, completeRound, handleNext, handleUndo]
+    [
+      investigation,
+      currentRound,
+      activeTarget,
+      busy,
+      nextDisabled,
+      undoDisabled,
+      addCard,
+      occupySeat,
+      setActiveTarget,
+      completeRound,
+      handleNext,
+      handleUndo,
+    ]
   );
 
   const handleFinalResult = useCallback(

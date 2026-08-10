@@ -87,6 +87,27 @@ export type NarrationResult =
  */
 const INERT_ACTION_WORDS = new Set(["hit", "stand", "double", "split", "surrender", "insurance"]);
 
+/**
+ * Natural hand-connector grammar ("dealer HAS a king AND an ace", "spot 3
+ * has a 5 AND a 7") — inert filler, exactly like INERT_ACTION_WORDS, that
+ * never produces an op and never counts as noise. "a"/"an" already fall
+ * through to the pre-existing, unconditional NOISE_FILLER_WORDS check
+ * below (they were always swallowed everywhere, target or not), so they
+ * are deliberately NOT listed here — only the connector words that are
+ * NOT already universally safe to ignore need this narrower, context-
+ * gated set.
+ *
+ * SAFETY: recognized ONLY once a target has actually been established
+ * (`currentTarget` is set) — see the two call sites below. Ordinary
+ * conversation ("that guy HAS a king tattoo") never establishes a target,
+ * so "has" there still counts as an ordinary noise token exactly as
+ * before, keeping it well over MAX_NOISE_TOKENS and rejected. Gating on
+ * target-context, rather than swallowing these words unconditionally, is
+ * what keeps this from silently reopening the noise tolerance the "Team
+ * 5" fix closed.
+ */
+const HAND_CONNECTOR_WORDS = new Set(["has", "and", "with", "gets", "got", "shows"]);
+
 const SINGLE_WORD_WORKFLOW: Record<string, "done" | "next" | "undo"> = {
   done: "done",
   next: "next",
@@ -309,6 +330,31 @@ export function parseNarration(rawTranscript: string): NarrationResult {
       setTarget({ kind: "seat", seat: cSeat });
       continue;
     }
+
+    // Natural leading-seat shorthand ("one has king ace", "2 has 5 7") — a
+    // bare seat-number word/digit (1-7) at the START of a clause (no
+    // target established yet), IMMEDIATELY followed by a recognized hand
+    // connector, unambiguously opens that seat as the target. This is
+    // deliberately narrow: "one"/"two".../"seven" are ALSO card-rank words
+    // (RANK_WORDS), so without the connector lookahead a bare number is
+    // always just a card, exactly as before — "I have one five three
+    // seven" or "the score was five to one" never hits this branch because
+    // the very next token isn't a connector. Only fires when no target is
+    // active (`!currentTarget`), which is what makes this "the beginning
+    // of a clause": a workflow op or a real target word always resets
+    // `currentTarget` to undefined first, so this can never fire mid-hand
+    // and reinterpret a plain continuation card as a NEW seat.
+    if (!currentTarget && SEAT_NUMBER_BY_WORD[token] != null && HAND_CONNECTOR_WORDS.has(tokens[i + 1] ?? "")) {
+      recognizedAnything = true;
+      setTarget({ kind: "seat", seat: SEAT_NUMBER_BY_WORD[token] });
+      continue;
+    }
+
+    // Hand connectors ("has", "and", "with", "gets", "got", "shows") are
+    // inert grammar INSIDE an already-established explicit target/card-
+    // entry context — see HAND_CONNECTOR_WORDS's own doc comment for why
+    // this is gated on `currentTarget` rather than unconditional.
+    if (currentTarget && HAND_CONNECTOR_WORDS.has(token)) continue;
 
     if (INERT_ACTION_WORDS.has(token)) {
       recognizedAnything = true; // valid narration vocabulary — never counted as noise, even though it produces no op (see INERT_ACTION_WORDS doc comment)

@@ -6,6 +6,7 @@ import {
   addCardToRound,
   ensureLegacyLedger,
   getCardEventsForInvestigation,
+  occupySeatAndAddCard,
   redoTargetCard,
   undoTargetCard,
 } from "@/lib/db/repositories/cardEvents";
@@ -76,6 +77,89 @@ describe("cardEvents repository — idempotency", () => {
     expect(events.filter((e) => e.id === cardEvent.id)).toHaveLength(1);
     const snapshot = calculateCountSnapshot(events, inv.shoeTotalDecks);
     expect(snapshot["Hi-Lo"].running).toBe(-1); // one "10", not two
+  });
+});
+
+describe("occupySeatAndAddCard — atomic 'occupy empty seat + enter card' for a single recognized voice command", () => {
+  // Real-device follow-up: "Seat 2 five" spoken as one utterance implies
+  // BOTH occupying seat 2 AND entering the 5. Before this function existed,
+  // VoiceControl chained `occupySeat(...).then(enterCard)` — two
+  // independent Dexie writes with a real failure window between them. This
+  // wraps both in one db.transaction (see cardEvents.ts) so they can only
+  // ever land together or not at all.
+  function seatCardInput(investigationId: string, roundId: string, seatNumber: number, rank: CardCode["rank"]) {
+    return {
+      investigationLocalId: investigationId,
+      roundId,
+      targetType: "seat" as const,
+      targetId: seatNumber,
+      rank,
+      applyToRound: (round: Investigation["rounds"][number]) => {
+        const seat = round.seats[seatNumber];
+        if (!seat) return round;
+        return {
+          ...round,
+          seats: { ...round.seats, [seatNumber]: { ...seat, playerCards: [...seat.playerCards, { rank, suit: "unspecified" as const }] } },
+        };
+      },
+      event: { type: "card" as const, message: `Seat ${seatNumber}: ${rank}` },
+    };
+  }
+
+  it("empty Seat 2 -> occupied AND exactly one CardEvent recorded, in one transaction", async () => {
+    const inv = await freshInvestigation();
+    const round = inv.rounds[0];
+    expect(inv.occupiedSeats).not.toContain(2);
+
+    const { round: updatedRound, cardEvent } = await occupySeatAndAddCard(
+      { localId: inv.localId, seatNumber: 2 },
+      seatCardInput(inv.localId, round.id, 2, "5")
+    );
+
+    expect(updatedRound.seats[2]?.playerCards).toEqual([{ rank: "5", suit: "unspecified" }]);
+    expect(cardEvent.rank).toBe("5");
+
+    const fresh = await getInvestigation(inv.localId);
+    expect(fresh!.occupiedSeats).toContain(2);
+    expect(fresh!.rounds[0].seats[2]?.playerCards).toHaveLength(1);
+    const events = await getCardEventsForInvestigation(inv.localId);
+    expect(events).toHaveLength(1);
+  });
+
+  it("a forced card-entry failure after the seat would have been occupied leaves NO partial mutation — the whole transaction rolls back, including the seat occupation itself", async () => {
+    const inv = await freshInvestigation();
+    expect(inv.occupiedSeats).not.toContain(2);
+
+    // A bogus roundId makes addCardToRound throw ("Round ... not found")
+    // partway through the SAME transaction occupySeat's writes already
+    // joined — proving this isn't just "the card didn't happen" but a true
+    // all-or-nothing rollback: the seat must NOT end up occupied either.
+    await expect(
+      occupySeatAndAddCard(
+        { localId: inv.localId, seatNumber: 2 },
+        seatCardInput(inv.localId, "does-not-exist", 2, "5")
+      )
+    ).rejects.toThrow();
+
+    const fresh = await getInvestigation(inv.localId);
+    expect(fresh!.occupiedSeats).not.toContain(2);
+    expect(fresh!.rounds[0].seats[2]).toBeUndefined();
+    const events = await getCardEventsForInvestigation(inv.localId);
+    expect(events).toHaveLength(0);
+  });
+
+  it("an already-occupied seat is unaffected by occupySeatAndAddCard's own occupy step — no duplicate player group, existing hand preserved", async () => {
+    const inv = await freshInvestigation();
+    await occupySeat(inv.localId, 2);
+    const afterOccupy = await getInvestigation(inv.localId);
+    const groupCountBefore = Object.keys(afterOccupy!.playerGroups).length;
+    const round = afterOccupy!.rounds[0];
+
+    await occupySeatAndAddCard({ localId: inv.localId, seatNumber: 2 }, seatCardInput(inv.localId, round.id, 2, "5"));
+
+    const fresh = await getInvestigation(inv.localId);
+    expect(Object.keys(fresh!.playerGroups)).toHaveLength(groupCountBefore); // occupySeat no-ops when already occupied
+    expect(fresh!.rounds[0].seats[2]?.playerCards).toEqual([{ rank: "5", suit: "unspecified" }]);
   });
 });
 

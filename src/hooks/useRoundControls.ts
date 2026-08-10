@@ -3,7 +3,7 @@
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { canCompleteRound } from "@/lib/utils/roundValidation";
 import { useSettingsStore } from "@/store/useSettingsStore";
-import { speak } from "@/lib/voice/speechOutput";
+import { logSpeechSkipped, speak } from "@/lib/voice/speechOutput";
 import { buildStatusAnnouncement } from "@/lib/voice/spokenSummary";
 import { getInvestigation } from "@/lib/db/repositories/investigations";
 import { getCardEventsForInvestigation } from "@/lib/db/repositories/cardEvents";
@@ -98,7 +98,16 @@ export function useRoundControls(floorMode = false) {
     } else {
       await completeRound();
     }
-    if (voiceAudioFeedback && floorSpokenCountContent !== "off") {
+    // A real-device field report couldn't tell from the diagnostics log
+    // alone whether Done's promised count announcement actually got
+    // spoken — logSpeechSkipped makes the negative case (deliberately NOT
+    // speaking) just as visible in Debug as speak() itself now is (see
+    // speechOutput.ts's own diagnostic pub/sub).
+    if (!voiceAudioFeedback) {
+      logSpeechSkipped("Done: voice audio feedback is off — count not spoken");
+    } else if (floorSpokenCountContent === "off") {
+      logSpeechSkipped("Done: Floor Spoken Count is off — count not spoken");
+    } else {
       speak(buildStatusAnnouncement(investigation, cardEvents, shoeNumber, floorSpokenCountContent));
     }
   }
@@ -116,14 +125,20 @@ export function useRoundControls(floorMode = false) {
     if (undoDisabled) return;
     const investigationLocalId = investigation.localId;
     await undo();
-    if (voiceAudioFeedback && floorSpokenCountContent !== "off") {
-      const fresh = await getInvestigation(investigationLocalId);
-      if (!fresh) return;
-      const freshEvents = await getCardEventsForInvestigation(investigationLocalId);
-      const freshRound = fresh.rounds[fresh.rounds.length - 1];
-      const summary = buildStatusAnnouncement(fresh, freshEvents, freshRound.shoeNumber, floorSpokenCountContent);
-      speak(`Undone. ${summary}`);
+    if (!voiceAudioFeedback) {
+      logSpeechSkipped("Undo: voice audio feedback is off — count not spoken");
+      return;
     }
+    if (floorSpokenCountContent === "off") {
+      logSpeechSkipped("Undo: Floor Spoken Count is off — count not spoken");
+      return;
+    }
+    const fresh = await getInvestigation(investigationLocalId);
+    if (!fresh) return;
+    const freshEvents = await getCardEventsForInvestigation(investigationLocalId);
+    const freshRound = fresh.rounds[fresh.rounds.length - 1];
+    const summary = buildStatusAnnouncement(fresh, freshEvents, freshRound.shoeNumber, floorSpokenCountContent);
+    speak(`Undone. ${summary}`);
   }
 
   return { handleDone, handleNext, handleUndo, doneDisabled, nextDisabled, undoDisabled, undoLabel };

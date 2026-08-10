@@ -1,4 +1,4 @@
-import { calculateCountSnapshot } from "@/lib/counting-engine/calculateCounts";
+import { activeEventsInOrder, calculateCountSnapshot } from "@/lib/counting-engine/calculateCounts";
 import { roundTrueCountForDisplay } from "@/lib/counting-engine/calculateTrueCount";
 import { COUNTING_SYSTEMS } from "@/lib/counting-engine/countTags";
 import { eventsInShoe } from "@/lib/counting-engine/ledger";
@@ -115,4 +115,56 @@ export function buildNewShoeAnnouncement(investigation: Investigation, cardEvent
   const snapshot = calculateCountSnapshot(shoeEvents, investigation.shoeTotalDecks);
   const primary = investigation.countingSystem;
   return `Shoe ${shoeNumber} started. ${speakableSystemName(primary)} ${formatSigned(snapshot[primary].running)}.`;
+}
+
+/**
+ * "K O -29." — a specific counting system's own running count, answering a
+ * natural question like "What's the KO?" (see parseReadOnlyQuery.ts).
+ * Every enabled system is already computed by calculateCountSnapshot
+ * regardless of which one is the investigation's chosen primary — this
+ * just picks the one the operator asked for by name, out of the same
+ * snapshot every other spoken/visual surface reads.
+ */
+export function buildSystemAnnouncement(
+  investigation: Investigation,
+  cardEvents: CardEvent[],
+  shoeNumber: number,
+  system: CountingSystem
+): string {
+  const shoeEvents = eventsInShoe(cardEvents, shoeNumber);
+  const snapshot = calculateCountSnapshot(shoeEvents, investigation.shoeTotalDecks);
+  return `${speakableSystemName(system)} ${formatSigned(snapshot[system].running)}.`;
+}
+
+/**
+ * "True count -0.5." — Hi-Lo's own true count specifically, answering
+ * "What is the true count?" regardless of which system is the
+ * investigation's chosen primary (see parseReadOnlyQuery.ts's TC phrases
+ * and their own doc comment on why Hi-Lo specifically). "N/A" is spoken
+ * as-is if decksRemaining/trueCount genuinely has none yet — never a
+ * fabricated 0.
+ */
+export function buildTrueCountAnnouncement(investigation: Investigation, cardEvents: CardEvent[], shoeNumber: number): string {
+  const shoeEvents = eventsInShoe(cardEvents, shoeNumber);
+  const snapshot = calculateCountSnapshot(shoeEvents, investigation.shoeTotalDecks);
+  const trueCount = formatTrueCount(roundTrueCountForDisplay(snapshot["Hi-Lo"].trueCount));
+  return `True count ${trueCount}.`;
+}
+
+/**
+ * "3 aces seen." — the exact same tally CountSummaryPanel's own ACES chip
+ * shows (activeEventsInOrder + a rank === "A" filter), not a second aces-
+ * counting calculation. Read-only, no CardEvent access beyond counting.
+ */
+export function buildAcesAnnouncement(cardEvents: CardEvent[], shoeNumber: number): string {
+  const shoeEvents = eventsInShoe(cardEvents, shoeNumber);
+  const acesSeen = activeEventsInOrder(shoeEvents).filter((event) => event.rank === "A").length;
+  return `${acesSeen} ace${acesSeen === 1 ? "" : "s"} seen.`;
+}
+
+/** "5.2 decks remaining." — CountSnapshot's own decksRemaining, formatted exactly like the DECKS chip in CountSummaryPanel (one decimal place). */
+export function buildDecksRemainingAnnouncement(investigation: Investigation, cardEvents: CardEvent[], shoeNumber: number): string {
+  const shoeEvents = eventsInShoe(cardEvents, shoeNumber);
+  const snapshot = calculateCountSnapshot(shoeEvents, investigation.shoeTotalDecks);
+  return `${snapshot.decksRemaining.toFixed(1)} decks remaining.`;
 }

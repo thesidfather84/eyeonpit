@@ -14,6 +14,7 @@ import { InvestigationProvider, useInvestigationContext } from "@/contexts/Inves
 import { LockProvider } from "@/contexts/LockContext";
 import { EntryLockProvider } from "@/contexts/EntryLockContext";
 import { createInvestigation } from "@/lib/db/repositories/investigations";
+import { resetLastSpokenText } from "@/lib/voice/speechOutput";
 import { CardEntryPad } from "./CardEntryPad";
 import { CountSummaryPanel } from "./CountSummaryPanel";
 import { VoiceControl } from "./VoiceControl";
@@ -172,6 +173,10 @@ beforeEach(() => {
   (window as unknown as { speechSynthesis?: unknown }).speechSynthesis = mockSpeechSynthesis;
   (window as unknown as { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance =
     MockSpeechSynthesisUtterance;
+  // Module-level (deliberately — see its own doc comment), so it survives
+  // remounts within a real session but must not leak "Repeat" state
+  // across unrelated tests sharing this module.
+  resetLastSpokenText();
 });
 
 afterEach(() => {
@@ -1963,9 +1968,15 @@ describe("VoiceControl — diagnostics panel", () => {
     await act(async () => {
       debugButton.click();
     });
-    // Only now, after a deliberate tap, does the log actually show.
+    // Only now, after a deliberate tap, does the log actually show. At
+    // least one "STARTED" entry must be present — exactly one vs. more
+    // than one depends on whether the continuous session's own auto-
+    // restart timer (RESTART_DELAY_MS) has fired yet by this point, which
+    // is real-clock-dependent (and thus can differ under heavy parallel
+    // test-suite load) and irrelevant to what this test actually checks:
+    // that the panel stays collapsed until a deliberate toggle.
     screen.getByText("Voice Diagnostics");
-    screen.getByText("STARTED");
+    expect(screen.getAllByText("STARTED").length).toBeGreaterThan(0);
   });
 
   it("appending multiple voice sessions, including multi-alternative results, never produces duplicate diagnostic entry keys", async () => {
@@ -2122,5 +2133,301 @@ describe("VoiceControl — diagnostics panel", () => {
     expect(loggedText).toContain("STARTED");
     expect(loggedText).toContain("ACCEPTED");
     expect(loggedText).toContain("ace");
+  });
+});
+
+describe("VoiceControl — natural read-only questions (real iPhone acceptance fix — these exact phrases were previously REJECTED)", () => {
+  it.each([
+    ["what is the count", /Hi-Lo/],
+    ["what is the KO", /K O/],
+    ["what is the Zen", /Zen/],
+    ["what is the Omega", /Omega II/],
+    ["Aces", /aces seen/],
+  ] as const)('"%s" is ACCEPTED and answered, zero CardEvents, zero round changes', async (phrase, expectedTextPattern) => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal(phrase));
+
+    await waitFor(() => screen.getByText(expectedTextPattern));
+    expect(screen.queryByText(/Not recognized/)).toBeNull();
+    expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1);
+    // Read-only, no matter which of the five natural questions was asked.
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+    expect(screen.getByTestId("active-target").textContent).toBe("dealer");
+  });
+
+  it('"what is the KO", "what is the Zen", and "what is the Omega" each speak their OWN system\'s value, not a copy of Hi-Lo\'s', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    // Ace: Hi-Lo -1, KO -1, Zen -1, Omega II 0 — Omega II diverges from
+    // the other three, proving the KO/Zen queries below aren't just
+    // echoing Hi-Lo's own value under a different label.
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("ace"));
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("what is the omega"));
+    await waitFor(() => screen.getByText("✓ Omega II 0."));
+
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("what is the KO"));
+    // KO is unbalanced — this file's freshInvestigationId() uses a 6-deck
+    // shoe, so KO's own Initial Running Count (-4 * (6-1) = -20) applies
+    // on top of the ace's -1, same as every other KO-aware test in this
+    // file already accounts for.
+    await waitFor(() => screen.getByText("✓ K O -21."));
+  });
+});
+
+describe("VoiceControl — Repeat (audio replay only — never a re-execution of the last command, real iPhone acceptance fix)", () => {
+  it('"repeat" re-speaks the exact previous EyeOnPit audio response, with zero CardEvents', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    const before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("status"));
+    await waitFor(() => screen.getByText("✓ Hi-Lo 0."));
+    expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1);
+    const firstSpoken = mockSpeechSynthesis.speak.mock.calls[0][0] as MockSpeechSynthesisUtterance;
+
+    await awaitRestartFrom(before);
+    mockSpeechSynthesis.speak.mockClear();
+    await act(async () => sayFinal("repeat"));
+
+    await waitFor(() => expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1));
+    const repeated = mockSpeechSynthesis.speak.mock.calls[0][0] as MockSpeechSynthesisUtterance;
+    expect(repeated.text).toBe(firstSpoken.text);
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+
+  it('"repeat" with nothing previously spoken says "No previous message." rather than replaying anything', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("repeat"));
+
+    await waitFor(() => screen.getByText("✓ No previous message."));
+    expect(mockSpeechSynthesis.speak).not.toHaveBeenCalled();
+  });
+
+  it('"repeat" replays Done\'s own spoken count — proving it works across the module-level funnel, not just VoiceControl\'s own speak() calls (handleDone lives in a different hook, useRoundControls)', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    const before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king")); // Hi-Lo -1
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    mockSpeechSynthesis.speak.mockClear();
+    const beforeDone = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("done"));
+    await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+    await waitFor(() => expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1));
+    const doneSpoken = mockSpeechSynthesis.speak.mock.calls[0][0] as MockSpeechSynthesisUtterance;
+    expect(doneSpoken.text).toBe("Hi-Lo -1.");
+
+    await awaitRestartFrom(beforeDone);
+    mockSpeechSynthesis.speak.mockClear();
+    await act(async () => sayFinal("repeat"));
+
+    await waitFor(() => expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1));
+    const repeated = mockSpeechSynthesis.speak.mock.calls[0][0] as MockSpeechSynthesisUtterance;
+    expect(repeated.text).toBe("Hi-Lo -1.");
+    // Repeat is audio-only — it must not have re-run Done (no second round
+    // completed, no extra CardEvent).
+    expect(screen.getByTestId("round-count").textContent).toBe("1");
+  });
+});
+
+describe("VoiceControl — read-only query safety (section 9/10): natural flexibility never leaks into mutation parsing", () => {
+  it('"What is the five?" creates ZERO CardEvents — never read as "enter a 5"', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("What is the five?"));
+
+    await waitFor(() => screen.getByText(/Not recognized/));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+
+  it.each(["information", "hello", "text"])('"%s" stays rejected — no general chat, zero mutations', async (phrase) => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal(phrase));
+
+    await waitFor(() => screen.getByText(/Not recognized/));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+});
+
+describe("VoiceControl — Done speech diagnostics (real iPhone acceptance fix: proving Done's announcement was actually spoken)", () => {
+  it("Debug log shows SPEAK then SPEAK END around Done's own count announcement", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    const before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king"));
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("done"));
+    await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+    await waitFor(() => expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1));
+
+    await openDiagnostics();
+    // Label and detail render as separate spans within the same log line,
+    // e.g. `SPEAK` + ` — "Hi-Lo -1."` — a regex substring match against
+    // the detail span, rather than the exact quoted string, since the
+    // element's own text content includes the leading " — ".
+    await waitFor(() => screen.getByText("SPEAK"));
+    await waitFor(() => screen.getByText(/Hi-Lo -1\./));
+
+    // This file's mockSpeechSynthesis.speak is a bare vi.fn() spy — it
+    // never itself invokes the utterance's onend the way a real
+    // SpeechSynthesis would, so "SPEAK END" (which speechOutput.ts only
+    // emits from inside that callback) needs it triggered manually here,
+    // the same pattern the existing "TTS self-hearing protection" tests
+    // already use.
+    const utterance = mockSpeechSynthesis.speak.mock.calls[0][0] as MockSpeechSynthesisUtterance;
+    await act(async () => {
+      utterance.onend?.();
+    });
+    await waitFor(() => screen.getByText("SPEAK END"));
+  });
+
+  it('logs SPEAK SKIPPED (with why) when voice audio feedback is off, instead of silently doing nothing', async () => {
+    const { useSettingsStore } = await import("@/store/useSettingsStore");
+    useSettingsStore.getState().setVoiceAudioFeedback(false);
+
+    try {
+      const investigationId = await freshInvestigationId();
+      render(
+        <InvestigationProvider investigationId={investigationId}>
+          <VoiceControl />
+          <ActiveTargetProbe />
+        </InvestigationProvider>
+      );
+      await startListening();
+      const before = MockSpeechRecognition.instances.length;
+      await act(async () => sayFinal("king"));
+      await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+      await awaitRestartFrom(before);
+      await act(async () => sayFinal("done"));
+      await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+
+      await openDiagnostics();
+      await waitFor(() => screen.getByText(/voice audio feedback is off/));
+      expect(mockSpeechSynthesis.speak).not.toHaveBeenCalled();
+    } finally {
+      useSettingsStore.getState().setVoiceAudioFeedback(true);
+    }
+  });
+
+  it('logs SPEAK SKIPPED (with why) when Floor Spoken Count is off, instead of silently doing nothing', async () => {
+    const { useSettingsStore } = await import("@/store/useSettingsStore");
+    useSettingsStore.getState().setFloorSpokenCountContent("off");
+
+    try {
+      const investigationId = await freshInvestigationId();
+      render(
+        <InvestigationProvider investigationId={investigationId}>
+          <VoiceControl />
+          <ActiveTargetProbe />
+        </InvestigationProvider>
+      );
+      await startListening();
+      const before = MockSpeechRecognition.instances.length;
+      await act(async () => sayFinal("king"));
+      await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+      await awaitRestartFrom(before);
+      await act(async () => sayFinal("done"));
+      await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+
+      await openDiagnostics();
+      await waitFor(() => screen.getByText(/Floor Spoken Count is off/));
+      expect(mockSpeechSynthesis.speak).not.toHaveBeenCalled();
+    } finally {
+      useSettingsStore.getState().setFloorSpokenCountContent("hiloRc");
+    }
+  });
+});
+
+describe("VoiceControl — Done and the immediately-following Status refer to the SAME shoe-level authoritative count (section 8)", () => {
+  it("Done's spoken announcement and Status's answer right after are identical — Done never speaks a reset/new-round value", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    const before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king")); // Hi-Lo -1
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    mockSpeechSynthesis.speak.mockClear();
+    const beforeDone = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("done"));
+    await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+    await waitFor(() => expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1));
+    const doneSpoken = mockSpeechSynthesis.speak.mock.calls[0][0] as MockSpeechSynthesisUtterance;
+
+    await awaitRestartFrom(beforeDone);
+    mockSpeechSynthesis.speak.mockClear();
+    await act(async () => sayFinal("status"));
+    await waitFor(() => expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1));
+    const statusSpoken = mockSpeechSynthesis.speak.mock.calls[0][0] as MockSpeechSynthesisUtterance;
+
+    expect(doneSpoken.text).toBe("Hi-Lo -1.");
+    expect(statusSpoken.text).toBe(doneSpoken.text);
   });
 });

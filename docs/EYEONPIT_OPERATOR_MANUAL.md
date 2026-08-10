@@ -120,6 +120,45 @@ guessing, and nothing gets recorded.
 
 ---
 
+## Asking EyeOnPit a question — voice command cheat sheet
+
+**Questions are read-only. Card narration changes the investigation.**
+Those are the only two kinds of thing EyeOnPit's voice understands — a
+question never adds a card, never completes a hand, never advances
+anything. It's always safe to ask.
+
+You don't need exact wording for questions either — any of these work:
+
+**The count**, in general:
+> "Status" · "Count" · "What is the count?" · "What's the count?" ·
+> "Give me the count." · "Tell me the count." · "Current count." ·
+> "Where is the count?"
+
+**A specific counting system** — Hi-Lo, KO, Zen, or Omega (Omega II):
+> "What's the Hi-Lo?" · "Hi-Lo?" · "What's the KO?" · "KO?" ·
+> "What's the Zen?" · "Zen?" · "What's the Omega?" · "Omega?" · "Omega two?"
+
+**Running count / true count specifically:**
+> "Running count?" · "RC?" · "True count?" · "TC?"
+
+**Aces and decks:**
+> "How many aces?" · "Aces seen?" · "Decks remaining?" · "How many decks
+> left?"
+
+**Hear it again:**
+> "Repeat"
+
+"Repeat" says the exact last thing EyeOnPit said, word for word — it
+never redoes anything. Say "Repeat" right after Done and it just says the
+count again; it doesn't complete another hand. If EyeOnPit hasn't said
+anything yet, it says "No previous message."
+
+**Card narration** is everything else — an actual card, next to a target:
+"Dealer king five," "Player one seven three." That's the only thing that
+writes to the investigation; see "Talking to EyeOnPit" above.
+
+---
+
 ## Done, Next, and New Shoe — what they actually mean
 
 - **Done** = *this hand is finished.* Say or tap it once the round is
@@ -148,7 +187,11 @@ extra options for an in-progress round.
 
 ## Hearing the count
 
-- **"Status"** speaks the count right now, any time, without changing
+See the voice command cheat sheet above for every natural way to ask —
+this section covers what gets spoken and how to configure it.
+
+- **"Status"** (or any of its natural phrasings, e.g. "What's the
+  count?") speaks the count right now, any time, without changing
   anything. By default it's just the primary system's running count —
   for example, *"Hi-Lo minus three."*
 - **"Full Status"** always speaks everything available (every enabled

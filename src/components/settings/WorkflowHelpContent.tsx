@@ -3,7 +3,7 @@ const WORKFLOW_STEPS = [
   "Put in a headset (AirPods or similar) if you're using voice, then turn Voice on — it keeps listening continuously.",
   "Watch the table and narrate what you see naturally: \"Dealer king five. Player one seven three.\"",
   "Say or tap Done when the hand finishes — in Floor, that's the whole step: EyeOnPit saves the hand, speaks the count, and is already ready for the next one.",
-  "Say \"Status\" any time to hear the count again — it never changes anything.",
+  "Ask naturally any time — \"What's the count?\", \"What's the KO?\", \"True count?\", \"How many aces?\", \"Repeat\" — questions never change anything, only card narration does.",
   "Say \"New Shoe\" when the dealer shuffles — say \"Confirm New Shoe\" if asked; earlier shoes stay saved.",
   "Say \"Pause Investigation\" to step away, \"Resume Investigation\" to continue.",
   "If voice ever mishears something, tap the seat/dealer and use the card keypad — nothing about voice is required.",

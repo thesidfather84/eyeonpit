@@ -53,6 +53,61 @@ export function onSpeechEnd(listener: SpeechLifecycleListener): () => void {
   return () => endListeners.delete(listener);
 }
 
+/**
+ * "the last thing EyeOnPit actually said" — module-level so it captures
+ * every `speak()` call from every caller (VoiceControl's own Count/Status/
+ * New Shoe/End Investigation announcements AND useRoundControls' handleDone/
+ * handleUndo, which live in a different hook entirely) through the ONE
+ * funnel every spoken utterance already passes through. This is what
+ * "Repeat" (see parseReadOnlyQuery.ts / VoiceControl.tsx) replays — never a
+ * re-execution of whatever command produced the text, just the audio.
+ */
+let lastSpokenText: string | null = null;
+
+export function getLastSpokenText(): string | null {
+  return lastSpokenText;
+}
+
+/** Test-only: `lastSpokenText` is module-level (deliberately, see its own doc comment) so it survives across component remounts within a real session — but that same persistence would leak "Repeat" state across unrelated tests sharing this module unless explicitly cleared. Call from a test file's `beforeEach`, never from application code. */
+export function resetLastSpokenText(): void {
+  lastSpokenText = null;
+}
+
+/**
+ * Diagnostic instrumentation for speech OUTPUT — real-device field reports
+ * showed the (separate) recognition diagnostics log didn't make it obvious
+ * whether a promised announcement (e.g. after Done) was actually spoken.
+ * Fires around every `speak()` call, PLUS `logSpeechSkipped` for callers
+ * that deliberately decide not to call `speak()` at all (voiceAudioFeedback
+ * off, floorSpokenCountContent "off") — the skip is just as much a fact
+ * worth logging as the speech itself. VoiceControl subscribes once (same
+ * pattern as onSpeechStart/onSpeechEnd) and funnels these into its own
+ * Debug log; nothing here touches the ordinary, non-debug UI.
+ */
+export type SpeechDiagnosticEvent =
+  | { kind: "speak"; text: string }
+  | { kind: "speak-end"; text: string }
+  | { kind: "speak-error"; text: string }
+  | { kind: "speak-unsupported"; text: string }
+  | { kind: "speak-skipped"; reason: string };
+type SpeechDiagnosticListener = (event: SpeechDiagnosticEvent) => void;
+const diagnosticListeners = new Set<SpeechDiagnosticListener>();
+
+/** Subscribes to speech-output diagnostic events. Returns an unsubscribe function. */
+export function onSpeechDiagnostic(listener: SpeechDiagnosticListener): () => void {
+  diagnosticListeners.add(listener);
+  return () => diagnosticListeners.delete(listener);
+}
+
+function emitDiagnostic(event: SpeechDiagnosticEvent): void {
+  diagnosticListeners.forEach((listener) => listener(event));
+}
+
+/** For a caller that decided NOT to speak (setting-gated) — logs why, without ever calling into speechSynthesis. */
+export function logSpeechSkipped(reason: string): void {
+  emitDiagnostic({ kind: "speak-skipped", reason });
+}
+
 interface SpeechSynthesisWindow {
   speechSynthesis?: SpeechSynthesis;
   SpeechSynthesisUtterance?: typeof SpeechSynthesisUtterance;
@@ -79,17 +134,29 @@ export function isSpeechOutputSupported(): boolean {
  * progress and the mic permanently suppressed.
  */
 export function speak(text: string): boolean {
-  if (!isSpeechOutputSupported()) return false;
+  lastSpokenText = text;
+  if (!isSpeechOutputSupported()) {
+    emitDiagnostic({ kind: "speak-unsupported", text });
+    return false;
+  }
   try {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "en-US";
+    emitDiagnostic({ kind: "speak", text });
     utterance.onstart = () => startListeners.forEach((listener) => listener());
-    utterance.onend = () => endListeners.forEach((listener) => listener());
-    utterance.onerror = () => endListeners.forEach((listener) => listener());
+    utterance.onend = () => {
+      endListeners.forEach((listener) => listener());
+      emitDiagnostic({ kind: "speak-end", text });
+    };
+    utterance.onerror = () => {
+      endListeners.forEach((listener) => listener());
+      emitDiagnostic({ kind: "speak-error", text });
+    };
     window.speechSynthesis.speak(utterance);
     return true;
   } catch {
+    emitDiagnostic({ kind: "speak-error", text });
     return false;
   }
 }

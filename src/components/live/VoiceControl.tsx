@@ -23,11 +23,16 @@ import { getCardEventsForInvestigation } from "@/lib/db/repositories/cardEvents"
 import { eventsInShoe } from "@/lib/counting-engine/ledger";
 import { diagnostics } from "@/lib/diagnostics/logger";
 import {
+  buildAcesAnnouncement,
   buildCountAnnouncement,
+  buildDecksRemainingAnnouncement,
   buildNewShoeAnnouncement,
   buildStatusAnnouncement,
+  buildSystemAnnouncement,
+  buildTrueCountAnnouncement,
 } from "@/lib/voice/spokenSummary";
-import { onSpeechEnd, onSpeechStart, speak } from "@/lib/voice/speechOutput";
+import { getLastSpokenText, onSpeechDiagnostic, onSpeechEnd, onSpeechStart, speak } from "@/lib/voice/speechOutput";
+import { parseReadOnlyQuery } from "@/lib/voice/parseReadOnlyQuery";
 import { useSettingsStore } from "@/store/useSettingsStore";
 import type { CardEventTargetType } from "@/lib/counting-engine/types";
 import type { Investigation, Rank, Round } from "@/types/investigation";
@@ -924,6 +929,87 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         return;
       }
 
+      // READ-ONLY QUERY LAYER (real-iPhone acceptance fix) — natural
+      // questions ("What is the count?", "What's the KO?", "How many
+      // aces?", "Repeat") that must NEVER mutate the CardEvent ledger.
+      // Deliberately checked here: after the exact-phrase lifecycle
+      // commands above (themselves already a bounded, exact-match layer)
+      // and BEFORE narration/legacy dispatch — speech -> normalize ->
+      // read-only query -> narration/mutation -> otherwise reject. See
+      // parseReadOnlyQuery.ts for the full bounded phrase tables; "count"
+      // and "status" (and every natural phrasing of the same question) are
+      // now ONE intent, both governed by floorSpokenCountContent — "Full
+      // Status" above remains the one deliberate "give me everything
+      // regardless of the setting" phrase, so there is exactly one way to
+      // ask for that, not two.
+      const readOnlyQuery = parseReadOnlyQuery(normalized);
+      if (readOnlyQuery) {
+        if (readOnlyQuery.kind === "repeat") {
+          // Audio replay ONLY — never a re-execution of whatever command
+          // produced the text (see getLastSpokenText's own doc comment:
+          // it's the last thing speak() was actually given, module-level,
+          // so this also replays Done's own count announcement even
+          // though that speak() call happens inside useRoundControls, a
+          // different hook entirely).
+          const previous = getLastSpokenText();
+          const text = previous ?? "No previous message.";
+          appendLog("ACCEPTED", `REPEAT: "${text}"`);
+          setStatus({ kind: "accepted", label: text });
+          if (voiceAudioFeedback && previous) speak(text);
+          scheduleReset();
+          return;
+        }
+
+        let text: string;
+        if (readOnlyQuery.kind === "status") {
+          // Exactly "status"'s own pre-existing behavior (see the dispatch
+          // "status" case below, now unreachable for these phrases but
+          // left as-is): the visual pill always shows a real count —
+          // falling back to hiloRc wording when the setting is "off" —
+          // but audio only plays when BOTH voiceAudioFeedback and the
+          // content setting allow it.
+          const spoken =
+            floorSpokenCountContent === "off"
+              ? null
+              : buildStatusAnnouncement(investigation, cardEvents, currentRound.shoeNumber, floorSpokenCountContent);
+          text = spoken ?? buildStatusAnnouncement(investigation, cardEvents, currentRound.shoeNumber, "hiloRc");
+          appendLog("ACCEPTED", text);
+          setStatus({ kind: "accepted", label: text });
+          if (voiceAudioFeedback && spoken) speak(spoken);
+          scheduleReset();
+          return;
+        }
+
+        // Every other query kind is an explicit, deliberate question by
+        // name — spoken unconditionally whenever voiceAudioFeedback (the
+        // master switch) is on, exactly like "Count"/"Full Status" already
+        // do; floorSpokenCountContent only trims UNPROMPTED announcements
+        // (Done, bare "Status"), never something the operator specifically
+        // asked for.
+        switch (readOnlyQuery.kind) {
+          case "system":
+            text = buildSystemAnnouncement(investigation, cardEvents, currentRound.shoeNumber, readOnlyQuery.system);
+            break;
+          case "rc":
+            text = buildSystemAnnouncement(investigation, cardEvents, currentRound.shoeNumber, "Hi-Lo");
+            break;
+          case "tc":
+            text = buildTrueCountAnnouncement(investigation, cardEvents, currentRound.shoeNumber);
+            break;
+          case "aces":
+            text = buildAcesAnnouncement(cardEvents, currentRound.shoeNumber);
+            break;
+          case "decks":
+            text = buildDecksRemainingAnnouncement(investigation, cardEvents, currentRound.shoeNumber);
+            break;
+        }
+        appendLog("ACCEPTED", text);
+        setStatus({ kind: "accepted", label: text });
+        if (voiceAudioFeedback) speak(text);
+        scheduleReset();
+        return;
+      }
+
       // Natural hand narration — tried FIRST, above (never replacing) the
       // single-command parser below. "no-opinion" means this utterance
       // contained none of narration's own vocabulary at all (e.g. "count",
@@ -1005,6 +1091,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       dispatch,
       commitNarration,
       voiceAudioFeedback,
+      floorSpokenCountContent,
       scheduleReset,
       appendLog,
       noteMode,
@@ -1091,6 +1178,36 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       unsubscribeEnd();
     };
   }, [suppressForSpeech, resumeAfterSpeech]);
+
+  // Real-device field reports (the "was Done's count actually spoken?"
+  // acceptance issue) showed the recognition-side diagnostics log alone
+  // didn't prove speech OUTPUT actually happened. Subscribes to every
+  // speak()/skip event from the single funnel in speechOutput.ts — this
+  // covers useRoundControls' handleDone/handleUndo too, not just this
+  // component's own Count/Status/New Shoe/End Investigation announcements
+  // — and funnels them into the SAME Debug log every other diagnostic
+  // entry already uses. Debug-only: never touches the ordinary status pill.
+  useEffect(() => {
+    return onSpeechDiagnostic((event) => {
+      switch (event.kind) {
+        case "speak":
+          appendLog("SPEAK", `"${event.text}"`);
+          break;
+        case "speak-end":
+          appendLog("SPEAK END", `"${event.text}"`);
+          break;
+        case "speak-error":
+          appendLog("SPEAK ERROR", `"${event.text}"`);
+          break;
+        case "speak-unsupported":
+          appendLog("SPEAK UNSUPPORTED", `"${event.text}" — speech synthesis unavailable`);
+          break;
+        case "speak-skipped":
+          appendLog("SPEAK SKIPPED", event.reason);
+          break;
+      }
+    });
+  }, [appendLog]);
 
   function handleToggle() {
     if (listening) {

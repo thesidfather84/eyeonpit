@@ -3,104 +3,88 @@
 import { useState } from "react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { LiveHeader } from "./LiveHeader";
-import { LiveDeckSelector } from "./LiveDeckSelector";
 import { TableMap } from "./TableMap";
 import { ActiveSeatHeader } from "./ActiveSeatHeader";
 import { HandStatusLine } from "./HandStatusLine";
-import { QuickBetPanel } from "./QuickBetPanel";
-import { PlayerActionsRow } from "./PlayerActionsRow";
+import { PlayerDetailBar } from "./PlayerDetailBar";
+import { PlayerDetailSheet } from "./PlayerDetailSheet";
 import { CardEntryPad } from "./CardEntryPad";
 import { OperatorAssistantBar } from "./OperatorAssistantBar";
 import { RoundControlsRow } from "./RoundControlsRow";
-import { LandscapeStatusSheet } from "./LandscapeStatusSheet";
 import { VoiceControl } from "./VoiceControl";
 import { VoiceControlErrorBoundary } from "./VoiceControlErrorBoundary";
 
 /**
- * Portrait / normal height (the primary case, one-handed): a single
- * stacked column, in priority order — the unified status bar (identity +
- * count strip, see LiveHeader), table graphic, active seat, round toolbar,
- * card keypad (the largest, most important control). Everything below the
- * keypad — wager, hand status, player actions, guidance — lives in one
- * shared scroll region so it never pushes the keypad, round toolbar, or
- * table out of view. Every size in this tree is fluid (clamp()-driven, tied
- * to dvh) rather than hard-coded per device, so this degrades continuously
- * from the tallest phone down to the shortest instead of snapping at one
- * breakpoint.
+ * Count-first live screen — priority order, top to bottom: the unified
+ * status bar (identity + the dominant HI-LO count block, see LiveHeader/
+ * CountSummaryPanel), table graphic, the one active-target statement (see
+ * ActiveSeatHeader — dealer or seat, always shown, never omitted), round
+ * toolbar, card keypad (the largest, most important control). Wagers and
+ * player actions (Double/Split/Insurance/Surrender) are valuable but are
+ * NOT primary counting controls, so they collapse to one compact
+ * PlayerDetailBar row by default; PlayerDetailSheet reveals the existing
+ * QuickBetPanel/PlayerActionsRow controls unchanged on demand, for both
+ * portrait and landscape alike (no more separate landscape-only sheet).
+ * HandStatusLine and OperatorAssistantBar stay inline, always visible —
+ * workflow status/guidance, not wager/action detail.
  *
- * `short:` (real available height under ~500px — a phone rotated to
- * landscape, not device orientation itself) is a genuinely different
- * layout, not a squeezed portrait: LiveHeader's own responsive rules fold
- * the count strip inline into that one row at this width (it's always wide
- * enough), so the row below it becomes a plain two-column dashboard — a
- * table/dealer column (flat 3x2 seat grid, no arch curve — a curve reads
- * fine tall and narrow, not short and wide) and an entry column (round
- * toolbar + keypad). The former count column now only ever holds
- * `LiveDeckSelector`, which hides itself once any card is dealt. Nothing in
- * this row scrolls. The active-seat banner is redundant with CardEntryPad's
- * own "ENTER CARD → SEAT n" label at this width, so it's dropped here
- * rather than costing an entire row. Hand status, player actions
- * (Double/Split/Insurance/Surrender), and operator guidance are real
- * features an operator still needs but doesn't touch every card — they
- * move into one "Status & Actions" panel instead of permanently occupying
- * space the keypad needs more.
+ * Deck configuration (shoe size/format/rules) is setup, not live-frequency
+ * information — it lives entirely behind LiveHeader's Quick Setup sheet
+ * now, never a permanent row on this screen.
+ *
+ * Every size in this tree is fluid (clamp()-driven, tied to dvh) rather
+ * than hard-coded per device, so this degrades continuously from the
+ * tallest phone down to the shortest instead of snapping at one
+ * breakpoint. `short:` (real available height under ~500px — a phone
+ * rotated to landscape, not device orientation itself) turns the table +
+ * entry column into a genuine two-column dashboard instead of a stacked
+ * column, and LiveHeader's own responsive rules fold the count strip
+ * inline into one row at that width — but the active-target statement,
+ * card keypad, and collapsed player-detail row behave identically in both
+ * orientations now.
  */
 export function LiveScreen() {
   const { investigation, activeTarget } = useInvestigationContext();
   const activeSeat = typeof activeTarget === "number" ? activeTarget : null;
-  // A seat can be the active target without being enabled/occupied — single
-  // tap only ever selects now, it never occupies. Wager/action/result
-  // controls need a real seat record to act on, so they only appear once
-  // the selected seat is actually enabled (split targets are negative seat
-  // numbers, always tied to an already-occupied seat).
+  // Wager/action controls need a real seat record to act on, so
+  // PlayerDetailBar/Sheet only appear once the active seat is actually
+  // enabled (occupied) — split targets are negative seat numbers, always
+  // tied to an already-occupied seat.
   const activeSeatEnabled =
     activeSeat != null && investigation.occupiedSeats.includes(Math.abs(activeSeat));
-  const [statusSheetOpen, setStatusSheetOpen] = useState(false);
+  const [playerDetailOpen, setPlayerDetailOpen] = useState(false);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
       <LiveHeader />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden short:flex-row">
-        <div className="flex flex-none flex-col short:h-full short:w-auto short:justify-center short:border-r short:border-border">
-          <LiveDeckSelector />
-        </div>
-
-        <div className="flex-none short:flex short:h-full short:w-[36%] short:min-w-0 short:flex-col short:border-r short:border-border short:p-1">
+        <div className="flex-none short:flex short:h-full short:w-[42%] short:min-w-0 short:flex-col short:border-r short:border-border short:p-1">
           <TableMap />
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden short:w-[45%]">
-          {activeSeat != null && <ActiveSeatHeader target={activeSeat} />}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden short:flex-1">
+          <ActiveSeatHeader target={activeTarget} />
           <RoundControlsRow />
           <CardEntryPad />
 
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto short:hidden">
-            {activeSeatEnabled && <QuickBetPanel target={activeSeat!} />}
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+            {activeSeatEnabled && (
+              <PlayerDetailBar target={activeSeat!} onOpen={() => setPlayerDetailOpen(true)} />
+            )}
             <HandStatusLine />
-            {activeSeatEnabled && <PlayerActionsRow target={activeSeat!} />}
             <OperatorAssistantBar />
-          </div>
-
-          <div className="hidden short:flex short:min-h-0 short:flex-1 short:flex-col short:justify-end short:overflow-hidden">
-            {activeSeatEnabled && <QuickBetPanel target={activeSeat!} />}
-            <button
-              type="button"
-              onClick={() => setStatusSheetOpen(true)}
-              className="tap-target flex flex-none items-center justify-center gap-1 border-t border-border bg-surface-raised text-[11px] font-medium text-muted-foreground"
-            >
-              Status &amp; Actions ▾
-            </button>
           </div>
         </div>
       </div>
 
-      <LandscapeStatusSheet
-        open={statusSheetOpen}
-        onClose={() => setStatusSheetOpen(false)}
-        activeSeat={activeSeat}
-        activeSeatEnabled={activeSeatEnabled}
-      />
+      {activeSeatEnabled && (
+        <PlayerDetailSheet
+          open={playerDetailOpen}
+          onClose={() => setPlayerDetailOpen(false)}
+          target={activeSeat!}
+        />
+      )}
 
       {/* Voice-entry beta (v1.1) — mounted here specifically so it unmounts
           along with the rest of this screen under the privacy lock (see

@@ -144,13 +144,12 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
     await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("0"));
   });
 
-  it("shows the active seat's bet/context, exactly like ActiveSeatHeader does on Surveillance, once a seat is occupied and selected", async () => {
+  it("shows the active seat's identity, exactly like ActiveSeatHeader does on Surveillance, once a seat is selected", async () => {
     function SelectSeatOnMount() {
       const { selectSeat } = useInvestigationContext();
-      // selectSeat is what a tap on an empty seat tile does on Surveillance
-      // (occupies it and makes it active) — FloorScreen has no seat map of
-      // its own, so this harness drives the identical context action
-      // directly, exactly as voice's "seat three" command does.
+      // selectSeat only ever selects (never occupies) — FloorScreen has no
+      // seat map of its own, so this harness drives the identical context
+      // action directly, exactly as voice's "seat three" command does.
       useEffect(() => {
         selectSeat(3);
       }, [selectSeat]);
@@ -165,7 +164,10 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
       </InvestigationProvider>
     );
 
-    await waitFor(() => screen.getByText(/ACTIVE — SEAT 3/));
+    // ActiveSeatHeader is the ONE place that states the active target now —
+    // "SEAT 3" / "ENTER CARDS", no more "ACTIVE — SEAT n / group / bet".
+    await waitFor(() => screen.getByText("SEAT 3"));
+    screen.getByText("ENTER CARDS");
   });
 
   it("the large mic control (VoiceControl) is present, same as Surveillance", async () => {
@@ -217,7 +219,9 @@ describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
     // ActiveSeatHeader (an existing, separately-tested component) renders
     // once a seat becomes the active target — its appearance here confirms
     // the play field drove the SAME context state, not a parallel one.
-    await waitFor(() => screen.getByText(/ACTIVE — SEAT 2/));
+    // occupySeat auto-creates a player group ("SEAT 2 · P1"), so this
+    // matches on the seat identity via regex rather than an exact string.
+    await waitFor(() => screen.getByText(/SEAT 2/));
   });
 
   it("tapping an already-occupied seat just selects it (no re-occupy, no duplicate player group)", async () => {
@@ -327,5 +331,104 @@ describe("FloorScreen and LiveScreen share the same underlying investigation/led
       expect(counts[0].textContent).toBe("-1");
       expect(counts[1].textContent).toBe("-1");
     });
+  });
+
+  it("a card entered through Surveillance's keypad is immediately reflected in Floor's count and compact play field — the reverse direction", async () => {
+    const investigationId = await freshInvestigationId();
+
+    render(
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <div data-testid="surveillance-pane">
+              <LiveScreen />
+            </div>
+            <div data-testid="floor-pane">
+              <FloorScreen />
+            </div>
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
+    );
+
+    await waitFor(() => {
+      const counts = screen.getAllByLabelText("HI-LO running count");
+      expect(counts[0].textContent).toBe("0");
+      expect(counts[1].textContent).toBe("0");
+    });
+
+    // Enter a card through Surveillance's own keypad, not Floor's.
+    const surveillancePane = screen.getByTestId("surveillance-pane");
+    const aceButton = within(surveillancePane).getByRole("button", { name: "A" });
+    await act(async () => {
+      aceButton.click();
+    });
+
+    await waitFor(() => {
+      const counts = screen.getAllByLabelText("HI-LO running count");
+      expect(counts[0].textContent).toBe("-1");
+      expect(counts[1].textContent).toBe("-1");
+    });
+
+    // Floor's compact play field reflects the same dealer card too — not
+    // just the header count, the actual round/display state.
+    const floorPane = screen.getByTestId("floor-pane");
+    const floorPlayField = within(floorPane).getByTestId("floor-play-field");
+    const floorDealer = within(floorPlayField).getByTestId("floor-dealer");
+    within(floorDealer).getByText("A");
+  });
+
+  it("occupying a seat through Surveillance's table map is immediately visible in Floor's compact play field — one investigation, one set of seats, no separate copies", async () => {
+    const investigationId = await freshInvestigationId();
+
+    render(
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <div data-testid="surveillance-pane">
+              <LiveScreen />
+            </div>
+            <div data-testid="floor-pane">
+              <FloorScreen />
+            </div>
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
+    );
+
+    const surveillancePane = await screen.findByTestId("surveillance-pane");
+    const seatTile = within(surveillancePane).getByRole("button", { name: "Seat 3" });
+    await act(async () => {
+      seatTile.click();
+    });
+
+    const floorPane = screen.getByTestId("floor-pane");
+    await waitFor(() => {
+      const floorSeat3 = within(floorPane).getByTestId("floor-seat-3");
+      expect(floorSeat3.getAttribute("aria-label")).toBe("Seat 3, active");
+    });
+  });
+});
+
+describe("FloorScreen — stays the stripped-down field instrument even with an active, occupied seat", () => {
+  it("no wager chips, no player-action buttons, and no permanent deck-preset row — Floor never grows Surveillance's full wager/player-detail surface", async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat, updateInvestigation } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 1);
+    await updateInvestigation(investigationId, { activeTarget: 1 });
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    await screen.findByTestId("active-seat-header");
+    expect(screen.queryByRole("button", { name: "$25" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Double" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Split" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Insurance" })).toBeNull();
+    expect(screen.queryByTestId("player-detail-bar")).toBeNull();
+    expect(screen.queryByText("Decks")).toBeNull();
   });
 });

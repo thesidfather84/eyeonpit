@@ -41,7 +41,6 @@ import { VoiceControlErrorBoundary } from "./VoiceControlErrorBoundary";
 export function FloorScreen() {
   const { investigation, activeTarget } = useInvestigationContext();
   const isOnline = useOnlineStatus();
-  const activeSeat = typeof activeTarget === "number" ? activeTarget : null;
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -72,7 +71,7 @@ export function FloorScreen() {
 
       <FloorPlayField />
 
-      {activeSeat != null && <ActiveSeatHeader target={activeSeat} />}
+      <ActiveSeatHeader target={activeTarget} />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <RoundControlsRow />

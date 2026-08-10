@@ -4,14 +4,11 @@ import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { resolveSeatTarget } from "@/lib/utils/seatTarget";
 
 /**
- * "Apply this bet to all N linked spots" — the one shared implementation,
- * used by both QuickBetPanel (portrait, inline in the wager panel) and
- * LandscapeStatusSheet (landscape, inside the "Status & Actions" panel —
- * there's no spare row for it inline at that height). Same
- * applyBetToLinkedSpots call, same disabled/visibility rules, either way;
- * only where it's mounted differs. Renders nothing when the active seat
- * isn't actually linked to another spot — the caller never needs to check
- * that itself.
+ * "Apply this bet to all N linked spots" — mounted once, inside
+ * QuickBetPanel, which itself only ever renders inside PlayerDetailSheet
+ * (see that component) for both portrait and landscape. Renders nothing
+ * when the active seat isn't actually linked to another spot — the caller
+ * never needs to check that itself.
  */
 export function ApplyToLinkedBetButton({
   target,

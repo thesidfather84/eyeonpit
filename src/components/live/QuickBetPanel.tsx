@@ -11,7 +11,7 @@ const CHIPS = [5, 10, 25, 100, 500, 1000];
 const BET_STEP = 25;
 
 export function QuickBetPanel({ target }: { target: number }) {
-  const { investigation, currentRound, mutate, undo, canUndo, undoLabel, busy } = useInvestigationContext();
+  const { investigation, currentRound, mutate, busy } = useInvestigationContext();
   const t = useTerminology();
   const [customOpen, setCustomOpen] = useState(false);
   const [customValue, setCustomValue] = useState("");
@@ -59,7 +59,7 @@ export function QuickBetPanel({ target }: { target: number }) {
     <div className="flex-none border-b border-border bg-surface p-0.5 short:p-1">
       <div className="mb-0 flex items-center justify-between short:text-[10px]">
         <span className="text-[11px] font-bold leading-none text-foreground short:text-[10px]">
-          {t.currentBet.toUpperCase()} — SEAT {seatNumber}
+          {t.currentBet.toUpperCase()}
           {isSplit ? " · SPLIT" : ""}
         </span>
         <span className="flex items-center gap-2 text-[11px] leading-none short:text-[10px]">
@@ -172,26 +172,18 @@ export function QuickBetPanel({ target }: { target: number }) {
         >
           Clear
         </button>
-        {/* Undo here is the same undo() the primary Undo button
-            (RoundControlsRow) already exposes — in `short:` that one's
-            close enough that duplicating it here isn't worth the width. */}
-        <button
-          disabled={!canUndo || busy}
-          onClick={undo}
-          title={undoLabel}
-          className="tap-target flex-1 truncate rounded-md border border-border bg-surface-raised px-0.5 text-[10px] font-medium text-foreground disabled:opacity-40 short:hidden"
-        >
-          {undoLabel}
-        </button>
       </div>
 
-      {/* In `short:` (landscape) this moves into the "Status & Actions"
-          panel instead — same ApplyToLinkedBetButton, same
-          applyBetToLinkedSpots call, just mounted from
-          LandscapeStatusSheet there instead of here. */}
+      {/* No wager-scoped Undo button here — it used to duplicate the exact
+          same undo()/canUndo/undoLabel RoundControlsRow's primary Undo
+          already exposes (same context state, same action), which is
+          exactly the "two generic Undo controls visible at once" pattern
+          the count-first UI pass removed. That one Undo already reverses a
+          bet change like any other action (see useInvestigationContext's
+          undo()); nothing here needs a second button for it. */}
       <ApplyToLinkedBetButton
         target={target}
-        className="tap-target mt-1 w-full rounded-md border border-border bg-surface-raised text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-40 short:hidden"
+        className="tap-target mt-1 w-full rounded-md border border-border bg-surface-raised text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-40"
       />
     </div>
   );

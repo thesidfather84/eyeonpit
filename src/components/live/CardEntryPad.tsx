@@ -21,31 +21,34 @@ const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
  * above this pad) and the same context function either way; a second
  * button for the identical action only cost this pad the vertical space
  * its buttons need most.
+ *
+ * There is no "ENTER CARD → SEAT n" label here anymore either — that fact
+ * now lives in exactly one place, ActiveSeatHeader (directly above this,
+ * always rendered, dealer or seat), which is what "ENTER CARDS" as its own
+ * second line already states. Repeating it here was exactly the "same fact
+ * stated four times" duplication the count-first UI pass removed. This
+ * keeps only its own status text (not the target name): "Seat not
+ * enabled…", "Hand locked", or the last card's own event message.
  */
 export function CardEntryPad() {
   const { currentRound } = useInvestigationContext();
-  const { enterCard, disabled, locked, notEnabled, targetLabel } = useCardEntry();
+  const { enterCard, disabled, locked, notEnabled } = useCardEntry();
 
   const lastCardEvent = [...currentRound.eventLog].reverse().find((e) => e.type === "card");
 
   return (
     <div className="flex flex-none flex-col gap-0.5 border-b border-border bg-surface px-2 py-0.5 short:gap-0 short:border-b-0 short:px-1.5 short:py-0.5">
-      <div className="flex items-baseline gap-2">
-        <p className="min-w-0 shrink truncate text-xs font-bold leading-none text-accent-secondary short:text-[10px]">
-          ENTER CARD → {targetLabel}
+      {(lastCardEvent || locked || notEnabled) && (
+        <p
+          className={`min-w-0 truncate text-[10px] leading-none short:text-[9px] ${locked || notEnabled ? "font-semibold text-pending" : "text-muted-foreground"}`}
+        >
+          {notEnabled
+            ? "Seat not enabled — double-tap to enable"
+            : locked
+              ? "Hand locked"
+              : lastCardEvent!.message}
         </p>
-        {(lastCardEvent || locked || notEnabled) && (
-          <p
-            className={`min-w-0 flex-1 truncate text-right text-[10px] leading-none short:text-[9px] ${locked || notEnabled ? "font-semibold text-pending" : "text-muted-foreground"}`}
-          >
-            {notEnabled
-              ? "Seat not enabled — double-tap to enable"
-              : locked
-                ? "Hand locked"
-                : lastCardEvent!.message}
-          </p>
-        )}
-      </div>
+      )}
       {/* Compact keypad, sized off available height (clamp, not a device
           breakpoint) rather than a device breakpoint pair — `short:` only
           lowers the floor further, since a landscape phone has width to

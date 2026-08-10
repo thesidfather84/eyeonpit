@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -97,11 +97,35 @@ function ExportOverlayContent() {
 
 /**
  * Reads `?review=1` (set by the post-End-Investigation redirect — see
- * handleEndInvestigation below) and opens the Reports overlay automatically,
- * so the operator lands directly on the investigation they just finished
- * instead of on a bare, otherwise-empty Live screen. Isolated in its own
- * component since useSearchParams requires a Suspense boundary — mirrors
- * EmptyConsole's own AutoOpenFromQuery (`?open=new`) exactly.
+ * handleEndInvestigation below) and opens the Reports overlay automatically
+ * EXACTLY ONCE, so the operator lands directly on the investigation they
+ * just finished instead of a bare, otherwise-empty Live screen. Isolated
+ * in its own component since useSearchParams requires a Suspense
+ * boundary — mirrors EmptyConsole's own AutoOpenFromQuery (`?open=new`).
+ *
+ * BUG FIX (real iPhone production bug — the X on Investigation Summary
+ * appeared not to close it): the effect below used to run every time
+ * `onOpen` changed identity, and `onOpen={() => setOverlay("reports")}` at
+ * the call site is a fresh inline closure on every LiveMenu render.
+ * Tapping X calls `setOverlay(null)`, which itself re-renders LiveMenu,
+ * which recreates that inline closure, which re-ran this effect — and
+ * since the URL still had `?review=1` (never consumed), the effect
+ * immediately called `onOpen()` again and reopened the sheet in the same
+ * render pass. The operator's tap looked like it did nothing.
+ *
+ * Two independent fixes, both real one-shot mechanisms:
+ * 1. `openedRef` — once this effect has opened the sheet a single time,
+ *    it never calls `onOpen` again for the lifetime of this component,
+ *    regardless of how many times the effect itself re-runs.
+ * 2. The query param is stripped from the URL right after consuming it —
+ *    via the plain `history.replaceState` Web API, deliberately NOT
+ *    Next's `useRouter().replace()`. Next's `useRouter` throws outright
+ *    ("invariant expected app router to be mounted") in any render tree
+ *    without a real App Router context, which every test mounting
+ *    LiveMenu directly (not through Next's own page routing) is —
+ *    `history.replaceState` needs no router context at all, updates the
+ *    URL bar with no reload/remount exactly like `router.replace` would,
+ *    and works identically in the browser and under jsdom.
  */
 function AutoOpenReviewFromQuery({ onOpen }: { onOpen: () => void }) {
   // Optional chaining, not a bare call: outside of a real Next.js router
@@ -110,8 +134,15 @@ function AutoOpenReviewFromQuery({ onOpen }: { onOpen: () => void }) {
   // returns null rather than an empty ReadonlyURLSearchParams. The real
   // app always has a router context here, so this is purely defensive.
   const searchParams = useSearchParams();
+  const openedRef = useRef(false);
   useEffect(() => {
-    if (searchParams?.get("review") === "1") onOpen();
+    if (openedRef.current) return;
+    if (searchParams?.get("review") !== "1") return;
+    openedRef.current = true;
+    onOpen();
+    const url = new URL(window.location.href);
+    url.searchParams.delete("review");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
   }, [searchParams, onOpen]);
   return null;
 }

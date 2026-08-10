@@ -13,7 +13,7 @@
 //    evidence and count for THAT investigation immediately, no extra tap.
 // 2. From there, Return Home ("+ New") and History/Export all remain
 //    reachable — the operator is never trapped on a closed screen.
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { InvestigationProvider } from "@/contexts/InvestigationContext";
 import { LockProvider } from "@/contexts/LockContext";
@@ -120,5 +120,111 @@ describe("End & Review — landing on the just-finished investigation (operator-
     // so closing Reports and reopening the menu still works.
     const menuButton = screen.getByRole("button", { name: "Menu" });
     expect(menuButton).toBeTruthy();
+  });
+
+  it('real production bug repro: tapping X on the auto-opened Reports sheet actually closes it, and it stays closed — the ?review=1 param must not force it back open on the next render', async () => {
+    const investigationId = await freshClosedInvestigationWithEvidence();
+
+    render(
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <LiveScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
+    );
+
+    await screen.findByText("Round-by-Round Evidence");
+
+    const closeButtons = screen.getAllByRole("button", { name: "Close" });
+    await act(async () => {
+      closeButtons[closeButtons.length - 1].click();
+    });
+
+    expect(screen.queryByText("Round-by-Round Evidence")).toBeNull();
+
+    // The bug: closing changes LiveMenu's own `overlay` state, which
+    // re-renders LiveMenu, which (before the fix) recreated the inline
+    // onOpen callback AutoOpenReviewFromQuery depends on, re-running its
+    // effect — and since the URL still has ?review=1 (never consumed),
+    // that effect calls onOpen() again and reopens the sheet. Any
+    // subsequent re-render must not resurrect it.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("Round-by-Round Evidence")).toBeNull();
+
+    // Real-world equivalent of "give React a few more render/effect
+    // cycles and see if it comes back" — waitFor polls repeatedly; if the
+    // sheet ever reappears within this window, this fails exactly like
+    // the real trapped-operator bug did.
+    await expect(
+      waitFor(() => expect(screen.queryByText("Round-by-Round Evidence")).not.toBeNull(), { timeout: 500 })
+    ).rejects.toThrow();
+
+    // Closing the summary must not have touched investigation state.
+    const inv = await import("@/lib/db/repositories/investigations").then((m) =>
+      m.getInvestigation(investigationId)
+    );
+    expect(inv!.status).toBe("closed");
+    const events = await getCardEventsForInvestigation(investigationId);
+    expect(events).toHaveLength(1);
+
+    // Operator isn't trapped or on a blank screen — the live shell
+    // (header, count, Menu, "+ New") is still right there underneath.
+    screen.getByRole("button", { name: "+ New" });
+    screen.getByRole("button", { name: "Menu" });
+  });
+
+  it("the one-shot ?review=1 query param is consumed (stripped from the URL via history.replaceState) after the first auto-open — not left there to force a reopen on a later reload or shared link", async () => {
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+    try {
+      const investigationId = await freshClosedInvestigationWithEvidence();
+
+      render(
+        <LockProvider>
+          <EntryLockProvider>
+            <InvestigationProvider investigationId={investigationId}>
+              <LiveScreen />
+            </InvestigationProvider>
+          </EntryLockProvider>
+        </LockProvider>
+      );
+
+      await screen.findByText("Round-by-Round Evidence");
+
+      await waitFor(() => expect(replaceStateSpy).toHaveBeenCalledTimes(1));
+      const [, , replacedTo] = replaceStateSpy.mock.calls[0] as [unknown, string, string];
+      expect(replacedTo).not.toContain("review");
+    } finally {
+      replaceStateSpy.mockRestore();
+    }
+  });
+
+  it("tapping the backdrop (mobile tap-to-dismiss — the same interaction a real touch produces) closes the summary just as reliably as the X button", async () => {
+    const investigationId = await freshClosedInvestigationWithEvidence();
+
+    render(
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <LiveScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
+    );
+
+    await screen.findByText("Round-by-Round Evidence");
+
+    const backdrop = screen.getAllByRole("button", { name: "Close" })[0];
+    await act(async () => {
+      backdrop.click();
+    });
+
+    expect(screen.queryByText("Round-by-Round Evidence")).toBeNull();
+    await expect(
+      waitFor(() => expect(screen.queryByText("Round-by-Round Evidence")).not.toBeNull(), { timeout: 500 })
+    ).rejects.toThrow();
   });
 });

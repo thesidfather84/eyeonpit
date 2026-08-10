@@ -51,4 +51,41 @@ describe("investigationToJson", () => {
     const bundle: InvestigationExportBundle = JSON.parse(await investigationToJson(inv));
     expect(bundle.cardEvents).toEqual([]);
   });
+
+  it("attaches currentCountSnapshot computed fresh from cardEvents — never relies on the current round's own (always-null) runningCount/trueCount cache fields", async () => {
+    const inv = await createInvestigation({
+      casino: "",
+      tableNumber: "",
+      dealerName: "",
+      investigationDate: "2026-08-10",
+      operatorName: "",
+      countingSystem: "Hi-Lo",
+      shoeTotalDecks: 6,
+      status: "active",
+    });
+    const round = inv.rounds[0];
+    // Three low cards -> Hi-Lo +3, still on the current (never-superseded) round.
+    for (const rank of ["2", "3", "4"] as const) {
+      await addCardToRound({
+        investigationLocalId: inv.localId,
+        roundId: round.id,
+        targetType: "dealer",
+        targetId: "dealer",
+        rank,
+        applyToRound: (r) => ({ ...r, dealerHand: { cards: [...r.dealerHand.cards, { rank, suit: "unspecified" }] } }),
+        event: { type: "card", message: `Dealer: ${rank}` },
+      });
+    }
+
+    const bundle: InvestigationExportBundle = JSON.parse(await investigationToJson(inv));
+
+    // The historical-only cache field is null by design for the still-open
+    // round — this is the exact shape a raw export previously left a
+    // reader to misread as "the count is missing."
+    const currentRound = bundle.investigation.rounds[bundle.investigation.rounds.length - 1];
+    expect(currentRound.runningCount).toBeNull();
+    expect(currentRound.trueCount).toBeNull();
+    // currentCountSnapshot is the authoritative fix: computed fresh, always present.
+    expect(bundle.currentCountSnapshot["Hi-Lo"].running).toBe(3);
+  });
 });

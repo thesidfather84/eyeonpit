@@ -27,26 +27,45 @@ const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
  * always rendered, dealer or seat), which is what "ENTER CARDS" as its own
  * second line already states. Repeating it here was exactly the "same fact
  * stated four times" duplication the count-first UI pass removed. This
- * keeps only its own status text (not the target name): "Seat not
- * enabled…", "Hand locked", or the last card's own event message.
+ * keeps only its own status text (not the target name).
+ *
+ * `blockReason` (operator-loop milestone, §15: every blocked state must
+ * explain WHY and, where there's an action, WHAT TO DO NEXT) is the single
+ * priority-ordered explanation for every way this pad can go dark — a
+ * brand-new operator seeing disabled buttons must never wonder whether
+ * EyeOnPit broke. Investigation-paused is checked first since it silently
+ * blocks everything else the same shared `resolveCardEntryTarget` gate
+ * does (see cardEntryResolution.ts's `disabled` check), and previously had
+ * NO explanatory text anywhere near the keypad at all — an operator in
+ * Floor Mode (no LiveHeader Pause icon to glance at) had nothing telling
+ * them why the pad had gone dead. "Seat not enabled" wording was also
+ * updated to match current reality: a single tap on the seat (or its
+ * spoken name) enables it now, not a double-tap.
  */
 export function CardEntryPad() {
-  const { currentRound } = useInvestigationContext();
+  const { investigation, currentRound } = useInvestigationContext();
   const { enterCard, disabled, locked, notEnabled } = useCardEntry();
 
   const lastCardEvent = [...currentRound.eventLog].reverse().find((e) => e.type === "card");
 
+  let blockReason: string | null = null;
+  if (investigation.status === "paused") {
+    blockReason = "Investigation paused — resume to continue";
+  } else if (notEnabled) {
+    blockReason = "Seat not enabled — tap the seat, or say its name, to enable it";
+  } else if (locked) {
+    blockReason = "Hand locked — result already recorded";
+  } else if (currentRound.completed) {
+    blockReason = "Round complete — say or tap Next for the next hand";
+  }
+
   return (
     <div className="flex flex-none flex-col gap-0.5 border-b border-border bg-surface px-2 py-0.5 short:gap-0 short:border-b-0 short:px-1.5 short:py-0.5">
-      {(lastCardEvent || locked || notEnabled) && (
+      {(lastCardEvent || blockReason) && (
         <p
-          className={`min-w-0 truncate text-[10px] leading-none short:text-[9px] ${locked || notEnabled ? "font-semibold text-pending" : "text-muted-foreground"}`}
+          className={`min-w-0 truncate text-[10px] leading-none short:text-[9px] ${blockReason ? "font-semibold text-pending" : "text-muted-foreground"}`}
         >
-          {notEnabled
-            ? "Seat not enabled — double-tap to enable"
-            : locked
-              ? "Hand locked"
-              : lastCardEvent!.message}
+          {blockReason ?? lastCardEvent!.message}
         </p>
       )}
       {/* Compact keypad, sized off available height (clamp, not a device

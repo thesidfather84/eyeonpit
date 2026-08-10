@@ -251,6 +251,84 @@ describe("useVoiceRecognition — offline/no-network behavior (mobile-first, off
   });
 });
 
+describe("useVoiceRecognition — suppressForSpeech/resumeAfterSpeech (TTS self-hearing protection)", () => {
+  it("suppressForSpeech stops the current session and its own onend does NOT auto-restart — but listening stays true throughout (an internal mute, not a user-visible stop)", async () => {
+    const { result } = renderHook(() => useVoiceRecognition({ onFinalResult: vi.fn() }));
+    act(() => result.current.start());
+    expect(MockSpeechRecognition.instances).toHaveLength(1);
+
+    act(() => result.current.suppressForSpeech());
+
+    expect(result.current.listening).toBe(true); // unlike stop(), never flips false
+    // Give any (incorrectly) scheduled restart a chance to fire.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(MockSpeechRecognition.instances).toHaveLength(1); // no new session while suppressed
+  });
+
+  it("resumeAfterSpeech begins a fresh session once TTS finishes, with listening never having flipped false", async () => {
+    const { result } = renderHook(() => useVoiceRecognition({ onFinalResult: vi.fn() }));
+    act(() => result.current.start());
+
+    act(() => result.current.suppressForSpeech());
+    expect(MockSpeechRecognition.instances).toHaveLength(1);
+
+    act(() => result.current.resumeAfterSpeech());
+
+    expect(result.current.listening).toBe(true);
+    expect(MockSpeechRecognition.instances).toHaveLength(2); // the fresh session resumeAfterSpeech begins
+  });
+
+  it("a normal final-result restart already in flight is cancelled by a subsequent suppressForSpeech — the race a real 'done -> speak' sequence could hit", async () => {
+    const onFinalResult = vi.fn();
+    const { result } = renderHook(() => useVoiceRecognition({ onFinalResult }));
+    act(() => result.current.start());
+
+    // A command's own onresult ends its native session, which schedules an
+    // ordinary RESTART_DELAY_MS-later restart — exactly what happens right
+    // before a spoken "Done" summary would call suppressForSpeech.
+    act(() => {
+      MockSpeechRecognition.latest().onresult?.(finalResult("done"));
+    });
+    expect(MockSpeechRecognition.instances).toHaveLength(1); // restart not yet fired
+
+    // Speech begins before that pending restart timer elapses.
+    act(() => result.current.suppressForSpeech());
+
+    // The pending restart must never land while suppressed.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(MockSpeechRecognition.instances).toHaveLength(1);
+    expect(result.current.listening).toBe(true);
+
+    act(() => result.current.resumeAfterSpeech());
+    expect(MockSpeechRecognition.instances).toHaveLength(2);
+  });
+
+  it("suppressForSpeech is a no-op when voice mode is already off", async () => {
+    const { result } = renderHook(() => useVoiceRecognition({ onFinalResult: vi.fn() }));
+    expect(result.current.listening).toBe(false);
+
+    act(() => result.current.suppressForSpeech());
+    act(() => result.current.resumeAfterSpeech());
+
+    // Neither call should have started anything.
+    expect(MockSpeechRecognition.instances).toHaveLength(0);
+    expect(result.current.listening).toBe(false);
+  });
+
+  it("stop() during suppression still turns listening off for good — resumeAfterSpeech afterward does not resurrect a session", async () => {
+    const { result } = renderHook(() => useVoiceRecognition({ onFinalResult: vi.fn() }));
+    act(() => result.current.start());
+    act(() => result.current.suppressForSpeech());
+
+    act(() => result.current.stop());
+    expect(result.current.listening).toBe(false);
+
+    act(() => result.current.resumeAfterSpeech());
+    expect(result.current.listening).toBe(false);
+    expect(MockSpeechRecognition.instances).toHaveLength(1); // no new session
+  });
+});
+
 describe("useVoiceRecognition — session/dispatch guarantees", () => {
   it("a final result never dispatches twice across a restart (no duplicate CardEvents from the same spoken command)", async () => {
     const onFinalResult = vi.fn();

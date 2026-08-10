@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
+  ArrowLeftRight,
   Download,
   FileText,
   Headphones,
@@ -12,6 +14,8 @@ import {
   Layers,
   ListPlus,
   Menu as MenuIcon,
+  Pause,
+  Play,
   Settings,
   XOctagon,
 } from "lucide-react";
@@ -92,13 +96,45 @@ function ExportOverlayContent() {
 }
 
 /**
+ * Reads `?review=1` (set by the post-End-Investigation redirect — see
+ * handleEndInvestigation below) and opens the Reports overlay automatically,
+ * so the operator lands directly on the investigation they just finished
+ * instead of on a bare, otherwise-empty Live screen. Isolated in its own
+ * component since useSearchParams requires a Suspense boundary — mirrors
+ * EmptyConsole's own AutoOpenFromQuery (`?open=new`) exactly.
+ */
+function AutoOpenReviewFromQuery({ onOpen }: { onOpen: () => void }) {
+  // Optional chaining, not a bare call: outside of a real Next.js router
+  // context (every test that mounts LiveMenu without mocking
+  // next/navigation, e.g. via FloorScreen/LiveScreen), useSearchParams()
+  // returns null rather than an empty ReadonlyURLSearchParams. The real
+  // app always has a router context here, so this is purely defensive.
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    if (searchParams?.get("review") === "1") onOpen();
+  }, [searchParams, onOpen]);
+  return null;
+}
+
+/**
  * The sole way to reach History/Reports/Export/Settings/Help from the Live
  * screen — everything renders as an overlay on top of Live, which stays
  * mounted underneath. New Shoe / End Investigation live here too (moved out
  * of the fixed bottom bar to keep that bar to routine round actions only);
  * both still require confirmation.
+ *
+ * Also mounted from FloorScreen (see that component) — `mode` decides
+ * whether the top switch-shell link reads "Floor Mode" (→ /floor, shown
+ * in Surveillance) or "Surveillance" (→ /live, shown in Floor), and
+ * Pause/Resume lives here specifically so Floor — which has no header of
+ * its own the way Surveillance's LiveHeader does — still has a
+ * discoverable, single place to reach it, identical to Surveillance's.
+ * Everything else in this menu (New Shoe, Misdeal, End Investigation,
+ * History, Reports, Export, Settings, Help) is unconditionally identical
+ * in both shells: one investigation, one ledger, two views — the menu
+ * itself is no exception to that rule.
  */
-export function LiveMenu() {
+export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "floor" }) {
   const {
     investigation,
     currentRound,
@@ -106,6 +142,8 @@ export function LiveMenu() {
     completeRoundAndStartNewShoe,
     voidRoundAndStartNewShoe,
     misdealAndAdvance,
+    pause,
+    resume,
     busy,
   } = useInvestigationContext();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -126,7 +164,17 @@ export function LiveMenu() {
 
   function handleNewShoeSelected() {
     setMenuOpen(false);
-    if (currentRound.completed) {
+    // A round that's open but genuinely empty (Floor's own Done-and-advance
+    // — operator-loop correction — leaves exactly this behind after every
+    // hand) has nothing to complete-first-or-void: `startNewShoe()` itself
+    // is documented safe to call directly whenever the current round is
+    // "already completed (or empty)" (see InvestigationContext.tsx's own
+    // interface comment), so treat it the same as completed here rather
+    // than showing the incomplete-round prompt for a round with nothing in it.
+    const roundHasCards =
+      currentRound.dealerHand.cards.length > 0 ||
+      Object.values(currentRound.seats).some((seat) => seat && seat.playerCards.length > 0);
+    if (currentRound.completed || !roundHasCards) {
       setShoeConfirmOpen(true);
     } else {
       setIncompletePromptOpen(true);
@@ -161,28 +209,29 @@ export function LiveMenu() {
         statusBefore: investigation.status,
       });
       await completeInvestigation(investigation.localId);
-      diagnostics.info("investigation-lifecycle", "status written to closed, navigating to / to force ConsoleShell to re-resolve", {
+      // "End & Review" means review, not "return home" — the operator must
+      // land on the investigation they just finished, not on the launch
+      // screen with no path back to it short of History. Surveillance's own
+      // Live screen already renders correctly for a closed investigation
+      // (LiveHeader always mounts LiveMenu regardless of isClosed — only
+      // the pause/"+ New" control on the right swaps), so it's the
+      // "existing review/report experience" to route to rather than
+      // building a new one — `?review=1` (read by AutoOpenReviewFromQuery
+      // above) opens straight into Reports so the operator doesn't need an
+      // extra tap to actually see what they just recorded.
+      //
+      // A full `window.location.assign` (not client-side router.push) is
+      // required here for the same reason a full navigation to "/" was
+      // required before: this same InvestigationContext/VoiceControl tree
+      // must fully remount against the now-closed investigation rather
+      // than trusting an in-place refresh() to have reached every
+      // consumer. Always genuinely a different URL from wherever this was
+      // called from (Floor's own route, or this exact route without the
+      // query) — never the "identical URL is a no-op" case "/" used to be.
+      diagnostics.info("investigation-lifecycle", "status written to closed, navigating to its review screen", {
         investigationId: investigation.localId,
       });
-      // ConsoleShell resolves the active investigation via useActiveInvestigation,
-      // which fetches once on mount and never re-queries — refresh() alone updates
-      // this context's own copy in place but leaves ConsoleShell pointed at the
-      // now-closed investigation forever, since its resolved id never becomes
-      // null again. A full navigation back to "/" forces ConsoleShell to remount
-      // and re-resolve against Dexie's current (closed) status, landing on
-      // EmptyConsole instead of leaving the operator stuck on a closed console.
-      //
-      // window.location.assign("/") alone is not enough when already at "/"
-      // (the common case — root is the primary entry point): browsers treat
-      // navigating to an identical URL as a no-op, so nothing actually
-      // reloads. reload() is used explicitly in that case; assign() still
-      // handles the /investigations/[id]/live deep-link case correctly,
-      // since that URL genuinely differs from "/".
-      if (window.location.pathname === "/") {
-        window.location.reload();
-      } else {
-        window.location.assign("/");
-      }
+      window.location.assign(`/investigations/${investigation.localId}/live?review=1`);
     } finally {
       setEnding(false);
       setEndConfirmOpen(false);
@@ -192,6 +241,10 @@ export function LiveMenu() {
 
   return (
     <>
+      <Suspense fallback={null}>
+        <AutoOpenReviewFromQuery onOpen={() => setOverlay("reports")} />
+      </Suspense>
+
       <button
         onClick={() => setMenuOpen(true)}
         aria-label="Menu"
@@ -202,13 +255,23 @@ export function LiveMenu() {
 
       <BottomSheet open={menuOpen} onClose={() => setMenuOpen(false)} title="Menu">
         <div className="flex flex-col gap-2 pb-4">
-          <Link
-            href={`/investigations/${investigation.localId}/floor`}
-            onClick={() => setMenuOpen(false)}
-            className="tap-target flex items-center gap-3 rounded-xl border border-accent/50 bg-accent/10 px-3 text-sm font-medium text-accent hover:bg-accent/15"
-          >
-            <Headphones className="h-5 w-5" aria-hidden /> Floor Mode
-          </Link>
+          {mode === "floor" ? (
+            <Link
+              href={`/investigations/${investigation.localId}/live`}
+              onClick={() => setMenuOpen(false)}
+              className="tap-target flex items-center gap-3 rounded-xl border border-accent/50 bg-accent/10 px-3 text-sm font-medium text-accent hover:bg-accent/15"
+            >
+              <ArrowLeftRight className="h-5 w-5" aria-hidden /> Surveillance
+            </Link>
+          ) : (
+            <Link
+              href={`/investigations/${investigation.localId}/floor`}
+              onClick={() => setMenuOpen(false)}
+              className="tap-target flex items-center gap-3 rounded-xl border border-accent/50 bg-accent/10 px-3 text-sm font-medium text-accent hover:bg-accent/15"
+            >
+              <Headphones className="h-5 w-5" aria-hidden /> Floor Mode
+            </Link>
+          )}
           {menuItems(t).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -218,6 +281,24 @@ export function LiveMenu() {
               <Icon className="h-5 w-5" aria-hidden /> {label}
             </button>
           ))}
+          <button
+            onClick={() => {
+              setMenuOpen(false);
+              void (investigation.status === "paused" ? resume() : pause());
+            }}
+            disabled={busy || (investigation.status !== "active" && investigation.status !== "paused")}
+            className="tap-target flex items-center gap-3 rounded-xl border border-border bg-surface-raised px-3 text-sm font-medium text-foreground hover:bg-surface disabled:opacity-40"
+          >
+            {investigation.status === "paused" ? (
+              <>
+                <Play className="h-5 w-5" aria-hidden /> Resume Investigation
+              </>
+            ) : (
+              <>
+                <Pause className="h-5 w-5" aria-hidden /> Pause Investigation
+              </>
+            )}
+          </button>
           <button
             onClick={handleNewShoeSelected}
             disabled={busy || investigation.status !== "active"}
@@ -253,7 +334,7 @@ export function LiveMenu() {
             disabled={busy || investigation.status === "closed"}
             className="tap-target flex items-center gap-3 rounded-xl border border-destructive/50 bg-destructive/10 px-3 text-sm font-medium text-destructive hover:bg-destructive/15 disabled:opacity-40"
           >
-            <XOctagon className="h-5 w-5" aria-hidden /> End Investigation
+            <XOctagon className="h-5 w-5" aria-hidden /> End & Review
           </button>
         </div>
       </BottomSheet>
@@ -386,9 +467,9 @@ export function LiveMenu() {
 
       <ConfirmDialog
         open={endConfirmOpen}
-        title="End this investigation?"
-        message={`${investigation.rounds.length} rounds recorded across ${investigation.occupiedSeats.length} occupied seat(s). You can still reopen it later from History.`}
-        confirmLabel="End Investigation"
+        title="End & Review this investigation?"
+        message={`${investigation.rounds.length} rounds recorded across ${investigation.occupiedSeats.length} occupied seat(s). Nothing is deleted — you'll land on the finished investigation's own review, and can still reopen it later from History.`}
+        confirmLabel="End & Review"
         destructive
         busy={ending}
         onConfirm={handleEndInvestigation}

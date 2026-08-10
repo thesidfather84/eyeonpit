@@ -13,10 +13,21 @@ import { formatNarrationConfirmation, type ConfirmationEntry } from "@/lib/voice
 import { normalizeTranscript } from "@/lib/voice/normalizeTranscript";
 import { resolveCardEntryTarget, type CardTarget } from "@/lib/utils/cardEntryResolution";
 import { canCompleteRound } from "@/lib/utils/roundValidation";
-import { addOperatorNote, createEmptySeatRecord } from "@/lib/db/repositories/investigations";
+import {
+  addOperatorNote,
+  completeInvestigation,
+  createEmptySeatRecord,
+  getInvestigation,
+} from "@/lib/db/repositories/investigations";
+import { getCardEventsForInvestigation } from "@/lib/db/repositories/cardEvents";
+import { eventsInShoe } from "@/lib/counting-engine/ledger";
 import { diagnostics } from "@/lib/diagnostics/logger";
-import { buildCountAnnouncement, buildStatusAnnouncement } from "@/lib/voice/spokenSummary";
-import { speak } from "@/lib/voice/speechOutput";
+import {
+  buildCountAnnouncement,
+  buildNewShoeAnnouncement,
+  buildStatusAnnouncement,
+} from "@/lib/voice/spokenSummary";
+import { onSpeechEnd, onSpeechStart, speak } from "@/lib/voice/speechOutput";
 import { useSettingsStore } from "@/store/useSettingsStore";
 import type { CardEventTargetType } from "@/lib/counting-engine/types";
 import type { Investigation, Rank, Round } from "@/types/investigation";
@@ -44,12 +55,47 @@ type StatusState =
   | { kind: "note-mode"; text: string }
   | { kind: "error"; message: string };
 
+/**
+ * A lifecycle command awaiting its explicit spoken confirmation — "new
+ * shoe"/"end investigation" set this instead of acting immediately;
+ * "confirm new shoe"/"confirm end investigation" only ever do anything
+ * when it matches. ANY other recognized final result (including a
+ * completely different command) silently drops whatever was pending — see
+ * handleFinalResult — so a stray later utterance can never be
+ * misinterpreted as confirming something the operator never actually
+ * said yes to.
+ */
+type PendingConfirmation = { kind: "new-shoe" } | { kind: "end-investigation" };
+
 /** Exact-phrase triggers for voice note dictation — deliberately as strict/exact as every other command word in this file, no fuzzy matching. */
 const NOTE_START_PHRASES = new Set(["start note", "note"]);
 const NOTE_END_PHRASE = "end note";
 const NOTE_CANCEL_PHRASE = "cancel note";
 /** Handles a single utterance that front-loads the trigger and the first words of the note together ("start note the player at seat three...") — matched on the raw transcript (not the normalized one) so the captured remainder keeps the operator's original wording/casing for a more readable saved note. */
 const NOTE_START_WITH_CONTENT_RE = /^\s*start\s+note[.,!?]?\s+(.+)$/i;
+
+/**
+ * Investigation-lifecycle voice commands — Pause/Resume/New Shoe/End
+ * Investigation. Deliberately exact multi-word phrases (matching every
+ * other workflow word in this file — no fuzzy matching), checked directly
+ * in handleFinalResult BEFORE narration/legacy dispatch, exactly like the
+ * note-mode phrases above: none of these are card-entry vocabulary, and
+ * none of them should ever be reinterpreted by parseNarration/
+ * parseVoiceCommand (which don't know about them and would just treat the
+ * words as noise). New Shoe and End Investigation both require a SEPARATE,
+ * explicit confirmation phrase before anything actually happens — see
+ * `pendingConfirmation` state below — matching the exact same
+ * "never finalize on one recognition result" rule §17 of the operator-loop
+ * milestone requires for End Investigation, applied consistently to New
+ * Shoe too since it's equally consequential (resets the running count).
+ */
+const PAUSE_PHRASE = "pause investigation";
+const RESUME_PHRASE = "resume investigation";
+const NEW_SHOE_PHRASE = "new shoe";
+const CONFIRM_NEW_SHOE_PHRASE = "confirm new shoe";
+const END_INVESTIGATION_PHRASE = "end investigation";
+const CONFIRM_END_INVESTIGATION_PHRASE = "confirm end investigation";
+const FULL_STATUS_PHRASE = "full status";
 
 const DISPLAY_RESET_MS = 2200;
 const DUPLICATE_WINDOW_MS = 1500;
@@ -298,8 +344,15 @@ function preflightNarration(
  * Voice Log," not by the panel appearing on its own. None of this changes
  * what actually gets dispatched — only `alternatives[0]` (parsed strictly)
  * is ever checked against a command, exactly as before.
+ *
+ * `floorMode` (operator-loop correction) is passed straight through to
+ * useRoundControls, so voice "done" — bare or narration-embedded — gets
+ * the same Floor-only auto-advance a tap on Done gets from RoundControlsRow.
+ * This component otherwise still has no idea which shell it's mounted in;
+ * `floorMode` is the one deliberate exception, not a precedent for
+ * threading more shell-awareness through here.
  */
-export function VoiceControl() {
+export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}) {
   const supported = useSpeechRecognitionSupport();
   const {
     investigation,
@@ -313,15 +366,22 @@ export function VoiceControl() {
     setActiveTarget,
     refresh,
     completeRound,
+    completeRoundAndAdvance,
+    pause,
+    resume,
+    startNewShoe,
   } = useInvestigationContext();
   const { enterCard, disabled: cardDisabled, targetLabel } = useCardEntry();
-  const { handleDone, handleNext, handleUndo, doneDisabled, nextDisabled, undoDisabled } = useRoundControls();
+  const { handleDone, handleNext, handleUndo, doneDisabled, nextDisabled, undoDisabled } = useRoundControls(floorMode);
   const voiceAudioFeedback = useSettingsStore((s) => s.voiceAudioFeedback);
+  const floorSpokenCountContent = useSettingsStore((s) => s.floorSpokenCountContent);
 
   const [status, setStatus] = useState<StatusState>({ kind: "idle" });
   const [log, setLog] = useState<VoiceDiagnosticEntry[]>([]);
   const [noteMode, setNoteMode] = useState(false);
   const [noteText, setNoteText] = useState("");
+  /** See PendingConfirmation's own doc comment. */
+  const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
   // Persistent, not part of the transient `status` pill — set once the
   // hook gives up after several consecutive "network" failures (see
   // useVoiceRecognition's MAX_CONSECUTIVE_NETWORK_ERRORS). EyeOnPit is
@@ -481,14 +541,19 @@ export function VoiceControl() {
           return text;
         }
         case "status": {
-          const text = buildStatusAnnouncement(
-            investigation,
-            cardEvents,
-            currentRound.shoeNumber,
-            currentRound.roundNumber,
-            targetLabel
-          );
-          if (voiceAudioFeedback) speak(text);
+          // Read-only, always available, never mutates — same guarantee as
+          // "count". The visual confirmation always shows a real count
+          // (falls back to the concise Hi-Lo-only wording if the operator's
+          // floorSpokenCountContent setting is "off"), but audio only plays
+          // when BOTH voiceAudioFeedback (the master switch) and the
+          // content setting allow it — "off" means "no count chatter,"
+          // not "Status stops working."
+          const spoken =
+            floorSpokenCountContent === "off"
+              ? null
+              : buildStatusAnnouncement(investigation, cardEvents, currentRound.shoeNumber, floorSpokenCountContent);
+          const text = spoken ?? buildStatusAnnouncement(investigation, cardEvents, currentRound.shoeNumber, "hiloRc");
+          if (voiceAudioFeedback && spoken) speak(spoken);
           return text;
         }
         default:
@@ -514,6 +579,7 @@ export function VoiceControl() {
       handleUndo,
       undoDisabled,
       voiceAudioFeedback,
+      floorSpokenCountContent,
     ]
   );
 
@@ -567,9 +633,15 @@ export function VoiceControl() {
           continue;
         }
         // workflow — preflight already proved each of these feasible; this
-        // just runs the same handlers the single-command path uses.
-        if (step.action === "done") await completeRound();
-        else if (step.action === "next") handleNext();
+        // just runs the same handlers the single-command path uses. "done"
+        // mirrors handleDone's own floorMode choice (see useRoundControls'
+        // doc comment) so a narration that ends in "...done" auto-advances
+        // in Floor exactly like a bare "done" does — narration is not a
+        // second, differently-behaved completion path.
+        if (step.action === "done") {
+          if (floorMode) await completeRoundAndAdvance();
+          else await completeRound();
+        } else if (step.action === "next") handleNext();
         else handleUndo();
         entries.push({ kind: "workflow", action: step.action });
       }
@@ -590,6 +662,8 @@ export function VoiceControl() {
       occupySeat,
       setActiveTarget,
       completeRound,
+      completeRoundAndAdvance,
+      floorMode,
       handleNext,
       handleUndo,
     ]
@@ -688,6 +762,168 @@ export function VoiceControl() {
         return;
       }
 
+      // Investigation-lifecycle commands — Pause/Resume/New Shoe/End
+      // Investigation — checked here, before narration/legacy dispatch,
+      // exactly like note-mode phrases above: none of this vocabulary
+      // belongs to card entry, and none of it should ever reach
+      // parseNarration/parseVoiceCommand (which don't know these words and
+      // would just count them as noise).
+      if (pendingConfirmation) {
+        if (pendingConfirmation.kind === "new-shoe" && normalized === CONFIRM_NEW_SHOE_PHRASE) {
+          setPendingConfirmation(null);
+          void (async () => {
+            await startNewShoe();
+            // Fresh, direct re-read — not the closure's own investigation/
+            // cardEvents, which still reflect the PRE-new-shoe state at
+            // this point (same staleness this file's narration commit path
+            // already solves the same way elsewhere): the shoe number just
+            // advanced and the ledger now has a fresh (possibly non-zero,
+            // e.g. KO) seeded count that only a live re-read can see.
+            const fresh = await getInvestigation(investigation.localId);
+            const freshEvents = await getCardEventsForInvestigation(investigation.localId);
+            if (!fresh) return;
+            const freshRound = fresh.rounds[fresh.rounds.length - 1];
+            const text = buildNewShoeAnnouncement(fresh, freshEvents, freshRound.shoeNumber);
+            diagnostics.info("voice", "new shoe confirmed", { investigationId: investigation.localId, shoeNumber: freshRound.shoeNumber });
+            appendLog("ACCEPTED", text);
+            setStatus({ kind: "accepted", label: text });
+            if (voiceAudioFeedback) speak(text);
+            scheduleReset();
+          })();
+          return;
+        }
+        if (pendingConfirmation.kind === "end-investigation" && normalized === CONFIRM_END_INVESTIGATION_PHRASE) {
+          setPendingConfirmation(null);
+          void (async () => {
+            await completeInvestigation(investigation.localId);
+            diagnostics.info("voice", "end investigation confirmed", { investigationId: investigation.localId });
+            appendLog("ACCEPTED", "Investigation ended");
+            const text = "Investigation ended.";
+            setStatus({ kind: "accepted", label: text });
+            if (voiceAudioFeedback) speak(text);
+            // Same destination and same forced-full-navigation rule as
+            // LiveMenu's End & Review button (see LiveMenu.tsx's
+            // handleEndInvestigation) — lands on the just-closed
+            // investigation's own review (Reports opened via `?review=1`),
+            // never bare home, and a full navigation is required so every
+            // consumer (this component included) remounts against the
+            // now-closed investigation rather than trusting an in-place
+            // refresh().
+            window.location.assign(`/investigations/${investigation.localId}/live?review=1`);
+          })();
+          return;
+        }
+        // Anything else heard while a confirmation was pending — including
+        // a different recognized command — silently drops it rather than
+        // ever risking a later, unrelated utterance being misread as
+        // confirming something the operator never actually said yes to.
+        // Falls through to ordinary processing below for THIS utterance.
+        setPendingConfirmation(null);
+      }
+
+      if (normalized === PAUSE_PHRASE) {
+        if (investigation.status !== "active") {
+          appendLog("REJECTED", `"${normalized}" — already paused or not active`);
+          setStatus({ kind: "disabled", transcript: normalized, reason: "Already paused, or the investigation isn't active" });
+          scheduleReset();
+          return;
+        }
+        void pause();
+        appendLog("ACCEPTED", "Investigation paused");
+        setStatus({ kind: "accepted", label: "Paused" });
+        if (voiceAudioFeedback) speak("Investigation paused.");
+        scheduleReset();
+        return;
+      }
+      if (normalized === RESUME_PHRASE) {
+        if (investigation.status !== "paused") {
+          appendLog("REJECTED", `"${normalized}" — not currently paused`);
+          setStatus({ kind: "disabled", transcript: normalized, reason: "Not currently paused" });
+          scheduleReset();
+          return;
+        }
+        void resume();
+        appendLog("ACCEPTED", "Investigation resumed");
+        setStatus({ kind: "accepted", label: "Resumed" });
+        if (voiceAudioFeedback) speak("Investigation resumed.");
+        scheduleReset();
+        return;
+      }
+      if (normalized === NEW_SHOE_PHRASE) {
+        const shoeHasCards = eventsInShoe(cardEvents, currentRound.shoeNumber).length > 0;
+        if (!shoeHasCards) {
+          // Nothing recorded in this shoe yet — no evidence to lose, so no
+          // confirmation is needed (matches the manual New Shoe button's
+          // own confirmation dialog, which likewise only warns when the
+          // shoe actually has history to reset).
+          void (async () => {
+            await startNewShoe();
+            const fresh = await getInvestigation(investigation.localId);
+            const freshEvents = await getCardEventsForInvestigation(investigation.localId);
+            if (!fresh) return;
+            const freshRound = fresh.rounds[fresh.rounds.length - 1];
+            const text = buildNewShoeAnnouncement(fresh, freshEvents, freshRound.shoeNumber);
+            appendLog("ACCEPTED", text);
+            setStatus({ kind: "accepted", label: text });
+            if (voiceAudioFeedback) speak(text);
+            scheduleReset();
+          })();
+          return;
+        }
+        // A round that's open but genuinely empty (dealer and every seat
+        // have zero cards) has nothing evidentiary to abandon — this is
+        // exactly the round Floor's own Done-and-advance (operator-loop
+        // correction) leaves behind immediately after finishing a hand, so
+        // "Done" then "New Shoe" back to back must not get rejected just
+        // because that fresh round's own `completed` flag hasn't been set.
+        // `completed` alone is no longer sufficient here; an EMPTY open
+        // round is treated the same as a completed one below.
+        const roundHasCards =
+          currentRound.dealerHand.cards.length > 0 ||
+          Object.values(currentRound.seats).some((seat) => seat && seat.playerCards.length > 0);
+        if (!currentRound.completed && roundHasCards) {
+          // Voice deliberately does not attempt the manual UI's
+          // complete-first-vs-void choice (LiveMenu's incomplete-round
+          // prompt) — resolving which the operator meant by voice alone
+          // would be guessing at something evidentiary. Explain briefly
+          // and defer to the manual New Shoe control instead.
+          const reason = "The current round isn't complete — finish the hand first, or use the New Shoe button";
+          appendLog("REJECTED", `"${normalized}" — ${reason}`);
+          setStatus({ kind: "disabled", transcript: normalized, reason });
+          if (voiceAudioFeedback) speak("New shoe unavailable. The current round isn't complete.");
+          scheduleReset();
+          return;
+        }
+        setPendingConfirmation({ kind: "new-shoe" });
+        const text = 'New shoe? Say "confirm new shoe" to proceed.';
+        appendLog("ACCEPTED", text);
+        setStatus({ kind: "accepted", label: text });
+        if (voiceAudioFeedback) speak(text);
+        scheduleReset();
+        return;
+      }
+      if (normalized === END_INVESTIGATION_PHRASE) {
+        setPendingConfirmation({ kind: "end-investigation" });
+        const text = 'End investigation? Say "confirm end investigation" to proceed.';
+        appendLog("ACCEPTED", text);
+        setStatus({ kind: "accepted", label: text });
+        if (voiceAudioFeedback) speak(text);
+        scheduleReset();
+        return;
+      }
+      if (normalized === FULL_STATUS_PHRASE) {
+        // Read-only, same guarantee as "status"/"count" — always the "all"
+        // content level regardless of the operator's configured
+        // floorSpokenCountContent setting, since asking for it explicitly
+        // by name is itself the request for everything.
+        const text = buildStatusAnnouncement(investigation, cardEvents, currentRound.shoeNumber, "all");
+        appendLog("ACCEPTED", text);
+        setStatus({ kind: "accepted", label: text });
+        if (voiceAudioFeedback) speak(text);
+        scheduleReset();
+        return;
+      }
+
       // Natural hand narration — tried FIRST, above (never replacing) the
       // single-command parser below. "no-opinion" means this utterance
       // contained none of narration's own vocabulary at all (e.g. "count",
@@ -765,7 +1001,23 @@ export function VoiceControl() {
       setStatus({ kind: "accepted", label });
       scheduleReset();
     },
-    [dispatch, commitNarration, voiceAudioFeedback, scheduleReset, appendLog, noteMode, noteText, investigation.localId, refresh]
+    [
+      dispatch,
+      commitNarration,
+      voiceAudioFeedback,
+      scheduleReset,
+      appendLog,
+      noteMode,
+      noteText,
+      investigation,
+      currentRound,
+      cardEvents,
+      pendingConfirmation,
+      startNewShoe,
+      pause,
+      resume,
+      refresh,
+    ]
   );
 
   const handleInterimResult = useCallback(
@@ -809,7 +1061,7 @@ export function VoiceControl() {
     [appendLog]
   );
 
-  const { listening, start, stop } = useVoiceRecognition({
+  const { listening, start, stop, suppressForSpeech, resumeAfterSpeech } = useVoiceRecognition({
     onFinalResult: handleFinalResult,
     onInterimResult: handleInterimResult,
     onError: handleError,
@@ -821,6 +1073,24 @@ export function VoiceControl() {
   useEffect(() => {
     listeningRef.current = listening;
   }, [listening]);
+
+  // TTS self-hearing protection: every spoken confirmation anywhere in the
+  // app (Count, Status, Done's completion summary, Undo, narration
+  // confirmations, the lifecycle commands below) goes through the single
+  // `speak()` in lib/voice/speechOutput.ts, which fires these two
+  // module-level events around every utterance — subscribing once here
+  // suppresses THIS component's own recognition session for the duration,
+  // so "Hi-Lo minus three" spoken back through the headset can never be
+  // re-transcribed as if the operator had said it. `listening` itself
+  // never flips false for this — see suppressForSpeech's own doc comment.
+  useEffect(() => {
+    const unsubscribeStart = onSpeechStart(suppressForSpeech);
+    const unsubscribeEnd = onSpeechEnd(resumeAfterSpeech);
+    return () => {
+      unsubscribeStart();
+      unsubscribeEnd();
+    };
+  }, [suppressForSpeech, resumeAfterSpeech]);
 
   function handleToggle() {
     if (listening) {

@@ -142,9 +142,15 @@ export function ReportScreen() {
       </section>
 
       <section>
-        <Button variant="destructive" fullWidth onClick={() => setCompleting(true)}>
-          Complete Investigation
-        </Button>
+        {investigation.status === "closed" ? (
+          <p className="rounded-lg border border-border bg-surface p-3 text-center text-xs font-medium text-muted-foreground">
+            Investigation closed — every round and card above is preserved.
+          </p>
+        ) : (
+          <Button variant="destructive" fullWidth onClick={() => setCompleting(true)}>
+            Complete Investigation
+          </Button>
+        )}
       </section>
 
       <ConfirmDialog

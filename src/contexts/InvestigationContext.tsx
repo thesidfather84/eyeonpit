@@ -109,7 +109,8 @@ interface InvestigationContextValue {
    * about to happen instead of an ambiguous plain "Undo".
    */
   undoLabel: string;
-  undo: () => void;
+  /** Resolves once the reversal's write AND the following refresh() have both landed — awaited by useRoundControls' handleUndo so its own post-undo spoken summary reads guaranteed-fresh state, never a stale pre-undo count. */
+  undo: () => Promise<void>;
   redo: () => void;
   busy: boolean;
   mutate: (
@@ -460,7 +461,7 @@ export function InvestigationProvider({
    * last-action stack, unchanged. See the HistoryEntry doc comment above
    * for why the target-scoped path is safe out of LIFO order.
    */
-  const undo = useCallback(() => {
+  const undo = useCallback(async () => {
     if (!investigation || !currentRound) return;
 
     const ledgerTarget = ledgerTargetFor(activeTarget);
@@ -490,9 +491,12 @@ export function InvestigationProvider({
         ...f,
       ]);
       setBusy(true);
-      undoTargetCard(investigation.localId, currentRound.id, targetEvent.id, targetEvent.targetType, targetEvent.targetId)
-        .then(refresh)
-        .finally(() => setBusy(false));
+      try {
+        await undoTargetCard(investigation.localId, currentRound.id, targetEvent.id, targetEvent.targetType, targetEvent.targetId);
+        await refresh();
+      } finally {
+        setBusy(false);
+      }
       return;
     }
 
@@ -501,33 +505,33 @@ export function InvestigationProvider({
     setBusy(true);
     setHistory((h) => h.slice(0, -1));
 
-    if (entry.kind === "target-card") {
-      setFuture((f) => [entry, ...f]);
-      undoTargetCard(investigation.localId, currentRound.id, entry.cardEventId, entry.targetType, entry.targetId)
-        .then(refresh)
-        .finally(() => setBusy(false));
-    } else if (entry.kind === "round") {
-      setFuture((f) => [{ kind: "round", round: currentRound }, ...f]);
-      mutateRound(investigation.localId, currentRound.id, () => entry.round, {
-        type: "correction",
-        message: "Undo: reverted last change",
-      })
-        .then(refresh)
-        .finally(() => setBusy(false));
-    } else if (entry.kind === "seat-config") {
-      setFuture((f) => [snapshotSeatConfig(investigation), ...f]);
-      updateInvestigation(investigation.localId, {
-        occupiedSeats: entry.occupiedSeats,
-        playerGroups: entry.playerGroups,
-        seatPlayerGroups: entry.seatPlayerGroups,
-      })
-        .then(refresh)
-        .finally(() => setBusy(false));
-    } else {
-      setFuture((f) => [{ kind: "rounds-snapshot", rounds: investigation.rounds }, ...f]);
-      updateInvestigation(investigation.localId, { rounds: entry.rounds })
-        .then(refresh)
-        .finally(() => setBusy(false));
+    try {
+      if (entry.kind === "target-card") {
+        setFuture((f) => [entry, ...f]);
+        await undoTargetCard(investigation.localId, currentRound.id, entry.cardEventId, entry.targetType, entry.targetId);
+        await refresh();
+      } else if (entry.kind === "round") {
+        setFuture((f) => [{ kind: "round", round: currentRound }, ...f]);
+        await mutateRound(investigation.localId, currentRound.id, () => entry.round, {
+          type: "correction",
+          message: "Undo: reverted last change",
+        });
+        await refresh();
+      } else if (entry.kind === "seat-config") {
+        setFuture((f) => [snapshotSeatConfig(investigation), ...f]);
+        await updateInvestigation(investigation.localId, {
+          occupiedSeats: entry.occupiedSeats,
+          playerGroups: entry.playerGroups,
+          seatPlayerGroups: entry.seatPlayerGroups,
+        });
+        await refresh();
+      } else {
+        setFuture((f) => [{ kind: "rounds-snapshot", rounds: investigation.rounds }, ...f]);
+        await updateInvestigation(investigation.localId, { rounds: entry.rounds });
+        await refresh();
+      }
+    } finally {
+      setBusy(false);
     }
   }, [investigation, currentRound, cardEvents, activeTarget, history, refresh]);
 

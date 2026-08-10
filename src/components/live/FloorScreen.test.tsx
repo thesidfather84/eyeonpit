@@ -84,6 +84,7 @@ function RoundProbe() {
     <div>
       <div data-testid="dealer-card-count">{round.dealerHand.cards.length}</div>
       <div data-testid="round-completed">{String(round.completed)}</div>
+      <div data-testid="round-count">{investigation.rounds.length}</div>
     </div>
   );
 }
@@ -142,6 +143,93 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
       undoButton.click();
     });
     await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("0"));
+  });
+
+  it("operator-loop correction: tapping Done once in Floor completes the round AND starts exactly one next round — no second Next required, no duplicate round created", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+        <RoundProbe />
+      </InvestigationProvider>
+    );
+
+    const kingButton = await screen.findByRole("button", { name: "10" });
+    await act(async () => {
+      kingButton.click(); // Hi-Lo -1 — one dealer card is enough for canCompleteRound
+    });
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+    const roundsBefore = Number(screen.getByTestId("round-count").textContent);
+    const doneButton = screen.getByRole("button", { name: "Done — complete this round" });
+    await act(async () => {
+      doneButton.click();
+    });
+
+    // Exactly one round completed, exactly one next round created — proven
+    // as a single settled state (completeRoundAndAdvance is one atomic
+    // operation), not two separate taps landing on two separate states.
+    await waitFor(() => expect(Number(screen.getByTestId("round-count").textContent)).toBe(roundsBefore + 1));
+    expect(screen.getByTestId("round-completed").textContent).toBe("false");
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0"); // the NEW round, genuinely empty
+    await waitFor(() => expect(screen.getByLabelText("HI-LO running count").textContent).toBe("-1")); // the completed hand's own count, unaffected by advancing
+
+    // Ready for entry immediately — no "Round complete, say or tap Next"
+    // block, no disabled keypad.
+    expect(screen.queryByText(/Round complete/)).toBeNull();
+    const aceButton = screen.getByRole("button", { name: "A" }) as HTMLButtonElement;
+    expect(aceButton.disabled).toBe(false);
+
+    // A stray extra Next, if somehow tapped right after, must not create a
+    // SECOND round on top of the one Done already started — nextRound()'s
+    // own `!currentRound.completed` guard makes this structurally
+    // impossible (see useRoundControls.ts), verified here end to end.
+    const roundsAfterDone = Number(screen.getByTestId("round-count").textContent);
+    const nextButton = screen.getByRole("button", { name: "Next" });
+    await act(async () => {
+      nextButton.click();
+    });
+    expect(Number(screen.getByTestId("round-count").textContent)).toBe(roundsAfterDone); // unchanged — no duplicate advance
+  });
+
+  it("operator-loop correction: Surveillance keeps the deliberate two-step Done then Next — unaffected by Floor's auto-advance", async () => {
+    const investigationId = await freshInvestigationId();
+    const { LiveScreen } = await import("./LiveScreen");
+    const { LockProvider } = await import("@/contexts/LockContext");
+    const { EntryLockProvider } = await import("@/contexts/EntryLockContext");
+    render(
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <LiveScreen />
+            <RoundProbe />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
+    );
+
+    const kingButton = await screen.findByRole("button", { name: "10" });
+    await act(async () => {
+      kingButton.click();
+    });
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+    const roundsBefore = Number(screen.getByTestId("round-count").textContent);
+    const doneButton = screen.getByRole("button", { name: "Done — complete this round" });
+    await act(async () => {
+      doneButton.click();
+    });
+
+    // Unchanged Surveillance behavior: Done alone locks the round, but does
+    // NOT start the next one — Next is still a required, deliberate step.
+    await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+    expect(Number(screen.getByTestId("round-count").textContent)).toBe(roundsBefore);
+
+    const nextButton = screen.getByRole("button", { name: "Next" });
+    await act(async () => {
+      nextButton.click();
+    });
+    await waitFor(() => expect(Number(screen.getByTestId("round-count").textContent)).toBe(roundsBefore + 1));
   });
 
   it("shows the active seat's identity, exactly like ActiveSeatHeader does on Surveillance, once a seat is selected", async () => {
@@ -430,5 +518,68 @@ describe("FloorScreen — stays the stripped-down field instrument even with an 
     expect(screen.queryByRole("button", { name: "Insurance" })).toBeNull();
     expect(screen.queryByTestId("player-detail-bar")).toBeNull();
     expect(screen.queryByText("Decks")).toBeNull();
+  });
+});
+
+describe("FloorScreen — the operator-loop menu (Pause/Resume, New Shoe, End Investigation, Help — previously Surveillance-only)", () => {
+  it("Floor's own Menu button opens the SAME LiveMenu Surveillance uses, with Pause and New Shoe reachable — not a stripped-down or missing menu", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const menuButton = await screen.findByRole("button", { name: "Menu" });
+    await act(async () => {
+      menuButton.click();
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Menu" });
+    within(dialog).getByRole("button", { name: /Pause Investigation/ });
+    within(dialog).getByRole("button", { name: /New Shoe|New Deck/ });
+    within(dialog).getByRole("button", { name: /End & Review/ });
+    within(dialog).getByRole("link", { name: /Surveillance/ });
+  });
+
+  it("Pause Investigation from Floor's menu actually pauses the real investigation — same context action Surveillance's header icon uses", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const menuButton = await screen.findByRole("button", { name: "Menu" });
+    await act(async () => {
+      menuButton.click();
+    });
+    const dialog = await screen.findByRole("dialog", { name: "Menu" });
+    const pauseButton = within(dialog).getByRole("button", { name: /Pause Investigation/ });
+    await act(async () => {
+      pauseButton.click();
+    });
+
+    const { getInvestigation } = await import("@/lib/db/repositories/investigations");
+    await waitFor(async () => {
+      const inv = await getInvestigation(investigationId);
+      expect(inv!.status).toBe("paused");
+    });
+  });
+
+  it("a closed investigation replaces the Surveillance link/menu with a '+ New' affordance", async () => {
+    const investigationId = await freshInvestigationId();
+    const { completeInvestigation } = await import("@/lib/db/repositories/investigations");
+    await completeInvestigation(investigationId);
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    await screen.findByRole("button", { name: "+ New" });
+    expect(screen.queryByRole("button", { name: "Menu" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Surveillance/ })).toBeNull();
   });
 });

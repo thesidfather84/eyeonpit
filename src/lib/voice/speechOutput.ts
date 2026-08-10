@@ -20,7 +20,38 @@
  * detects support, speaks if available, and reports back via the return
  * value if it could not, so the caller can fail safely (show the same text
  * visually, never block on audio) rather than assume universal support.
+ *
+ * SELF-HEARING: on a phone with no headset (speaker output + built-in mic),
+ * or even with a headset's own mic sometimes picking up its own earpiece
+ * bleed, TTS output is otherwise indistinguishable from the operator's own
+ * speech to `useVoiceRecognition` — "Hi-Lo minus three" spoken back could
+ * be re-transcribed as if the operator had said it. This module doesn't
+ * own the recognition session (VoiceControl does, via useVoiceRecognition),
+ * so it exposes a tiny pub/sub instead of reaching into that hook directly:
+ * `onSpeechStart`/`onSpeechEnd` fire around every utterance this module
+ * ever speaks, and VoiceControl subscribes once to suppress/resume its own
+ * recognition session accordingly (see VoiceControl.tsx). Every caller of
+ * `speak()` — Count, Status, Done's completion summary, Undo, narration
+ * confirmations, the new lifecycle commands — is protected by this same
+ * one subscription; nothing needs to remember to suppress the mic itself.
  */
+
+type SpeechLifecycleListener = () => void;
+
+const startListeners = new Set<SpeechLifecycleListener>();
+const endListeners = new Set<SpeechLifecycleListener>();
+
+/** Subscribes to "an utterance just started playing." Returns an unsubscribe function. */
+export function onSpeechStart(listener: SpeechLifecycleListener): () => void {
+  startListeners.add(listener);
+  return () => startListeners.delete(listener);
+}
+
+/** Subscribes to "the utterance finished (or failed) — safe to resume listening." Returns an unsubscribe function. */
+export function onSpeechEnd(listener: SpeechLifecycleListener): () => void {
+  endListeners.add(listener);
+  return () => endListeners.delete(listener);
+}
 
 interface SpeechSynthesisWindow {
   speechSynthesis?: SpeechSynthesis;
@@ -41,6 +72,11 @@ export function isSpeechOutputSupported(): boolean {
  * synthesis failure is exactly as safe to ignore as the feature being
  * absent entirely, since this is a convenience readback, never the primary
  * record of anything.
+ *
+ * `onstart`/`onend`/`onerror` always fire the module-level listeners
+ * (see the file doc comment) — `onerror` included, so a synthesis failure
+ * can never leave a subscriber permanently believing speech is still in
+ * progress and the mic permanently suppressed.
  */
 export function speak(text: string): boolean {
   if (!isSpeechOutputSupported()) return false;
@@ -48,6 +84,9 @@ export function speak(text: string): boolean {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "en-US";
+    utterance.onstart = () => startListeners.forEach((listener) => listener());
+    utterance.onend = () => endListeners.forEach((listener) => listener());
+    utterance.onerror = () => endListeners.forEach((listener) => listener());
     window.speechSynthesis.speak(utterance);
     return true;
   } catch {

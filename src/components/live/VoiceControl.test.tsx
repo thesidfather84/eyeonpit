@@ -101,6 +101,8 @@ function ActiveTargetProbe() {
     <div>
       <div data-testid="active-target">{String(activeTarget)}</div>
       <div data-testid="occupied-seats">{investigation.occupiedSeats.join(",")}</div>
+      <div data-testid="investigation-status">{investigation.status}</div>
+      <div data-testid="shoe-number">{round.shoeNumber}</div>
       <div data-testid="round-count">{investigation.rounds.length}</div>
       <div data-testid="round-completed">{String(round.completed)}</div>
       <div data-testid="dealer-card-count">{round.dealerHand.cards.length}</div>
@@ -154,6 +156,9 @@ async function openDiagnostics() {
 
 class MockSpeechSynthesisUtterance {
   lang = "";
+  onstart: (() => void) | null = null;
+  onend: (() => void) | null = null;
+  onerror: (() => void) | null = null;
   constructor(public text: string) {}
 }
 
@@ -825,6 +830,29 @@ describe("VoiceControl — workflow", () => {
     await waitFor(() => screen.getByText("✓ Done"));
   });
 
+  it('voice "done" speaks the count summary once the round has actually completed (same handleDone the tap path uses)', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    const before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king")); // Hi-Lo -1
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    mockSpeechSynthesis.speak.mockClear(); // discard whatever the "king" entry itself may have queued
+    await act(async () => sayFinal("done"));
+
+    await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+    await waitFor(() => expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1));
+    const spoken = mockSpeechSynthesis.speak.mock.calls[0][0] as MockSpeechSynthesisUtterance;
+    expect(spoken.text).toBe("Hi-Lo -1.");
+  });
+
   it('7. "next" invokes the existing Next behavior', async () => {
     const investigationId = await freshInvestigationId();
     render(
@@ -902,7 +930,7 @@ describe('VoiceControl — "count"/"status" (read-only spoken feedback)', () => 
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("2");
   });
 
-  it('"status" speaks the active target, round number, and running count', async () => {
+  it('"status" speaks just the count (default content: Hi-Lo RC only) — no target/round preamble anymore', async () => {
     const investigationId = await freshInvestigationId();
     const { occupySeat } = await import("@/lib/db/repositories/investigations");
     await occupySeat(investigationId, 2);
@@ -921,8 +949,53 @@ describe('VoiceControl — "count"/"status" (read-only spoken feedback)', () => 
     await awaitRestartFrom(before);
     await act(async () => sayFinal("status"));
 
-    await waitFor(() => screen.getByText("✓ SEAT 2 active. Round 1. Hi-Lo 0."));
+    await waitFor(() => screen.getByText("✓ Hi-Lo 0."));
     expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1);
+  });
+
+  it('"status" respects the floorSpokenCountContent setting ("hiloRcTc" adds the true count sentence)', async () => {
+    const { useSettingsStore } = await import("@/store/useSettingsStore");
+    useSettingsStore.getState().setFloorSpokenCountContent("hiloRcTc");
+
+    try {
+      const investigationId = await freshInvestigationId();
+      const { occupySeat } = await import("@/lib/db/repositories/investigations");
+      await occupySeat(investigationId, 2);
+
+      render(
+        <InvestigationProvider investigationId={investigationId}>
+          <VoiceControl />
+          <ActiveTargetProbe />
+        </InvestigationProvider>
+      );
+      await startListening();
+      await act(async () => sayFinal("status"));
+
+      await waitFor(() => screen.getByText(/✓ Hi-Lo 0\.\s*True count/));
+    } finally {
+      useSettingsStore.getState().setFloorSpokenCountContent("hiloRc");
+    }
+  });
+
+  it('"status" with floorSpokenCountContent "off" -> visual pill still shows a real count, but nothing is spoken', async () => {
+    const { useSettingsStore } = await import("@/store/useSettingsStore");
+    useSettingsStore.getState().setFloorSpokenCountContent("off");
+
+    try {
+      const investigationId = await freshInvestigationId();
+      render(
+        <InvestigationProvider investigationId={investigationId}>
+          <VoiceControl />
+        </InvestigationProvider>
+      );
+      await startListening();
+      await act(async () => sayFinal("status"));
+
+      await waitFor(() => screen.getByText("✓ Hi-Lo 0."));
+      expect(mockSpeechSynthesis.speak).not.toHaveBeenCalled();
+    } finally {
+      useSettingsStore.getState().setFloorSpokenCountContent("hiloRc");
+    }
   });
 
   it("does not speak when the operator has turned spoken voice feedback off in Settings, but the status pill still shows the same text", async () => {
@@ -943,6 +1016,293 @@ describe('VoiceControl — "count"/"status" (read-only spoken feedback)', () => 
       expect(mockSpeechSynthesis.speak).not.toHaveBeenCalled();
     } finally {
       useSettingsStore.getState().setVoiceAudioFeedback(true);
+    }
+  });
+});
+
+describe("VoiceControl — TTS self-hearing protection (mic must not re-hear its own spoken count)", () => {
+  it("while the count summary is being spoken, no new recognition session starts; one begins again only once the utterance ends", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("status"));
+    await waitFor(() => expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1));
+
+    const utterance = mockSpeechSynthesis.speak.mock.calls[0][0] as MockSpeechSynthesisUtterance;
+    const instancesBeforeSpeaking = MockSpeechRecognition.instances.length;
+
+    // The utterance actually starting playing suppresses the mic — the
+    // subscription this test proves is wired (the mechanism itself is
+    // covered exhaustively in useVoiceRecognition.test.ts).
+    await act(async () => {
+      utterance.onstart?.();
+    });
+    // Give any (incorrectly) still-scheduled restart a chance to fire.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(MockSpeechRecognition.instances.length).toBe(instancesBeforeSpeaking);
+
+    // The utterance finishing resumes listening — a fresh session appears.
+    await act(async () => {
+      utterance.onend?.();
+    });
+    await waitFor(() => expect(MockSpeechRecognition.instances.length).toBeGreaterThan(instancesBeforeSpeaking));
+  });
+});
+
+describe("VoiceControl — investigation-lifecycle voice commands (Pause/Resume/New Shoe/End Investigation/Full Status)", () => {
+  it('"pause investigation" pauses; "resume investigation" resumes — both speak a short confirmation', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    const before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("pause investigation"));
+
+    await waitFor(() => expect(screen.getByTestId("investigation-status").textContent).toBe("paused"));
+    await waitFor(() => screen.getByText("✓ Paused"));
+    expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1);
+
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("resume investigation"));
+
+    await waitFor(() => expect(screen.getByTestId("investigation-status").textContent).toBe("active"));
+    await waitFor(() => screen.getByText("✓ Resumed"));
+    expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(2);
+  });
+
+  it('"pause investigation" on an ALREADY-paused investigation is rejected as already-paused, never re-announced', async () => {
+    const investigationId = await freshInvestigationId();
+    const { pauseInvestigation } = await import("@/lib/db/repositories/investigations");
+    await pauseInvestigation(investigationId); // already paused before voice ever hears anything
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await waitFor(() => expect(screen.getByTestId("investigation-status").textContent).toBe("paused"));
+    await act(async () => sayFinal("pause investigation"));
+
+    await waitFor(() => screen.getByText(/Already paused/));
+    expect(mockSpeechSynthesis.speak).not.toHaveBeenCalled();
+  });
+
+  it('while paused, card entry stays blocked — pause never becomes a silent second entry-lock system', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    const before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("pause investigation"));
+    await waitFor(() => expect(screen.getByTestId("investigation-status").textContent).toBe("paused"));
+
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("king"));
+
+    await waitFor(() => screen.getByText(/isn.t available right now|not available/));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+
+  it('"new shoe" with an empty shoe (nothing recorded yet) starts immediately, no confirmation needed, and announces the fresh count', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("new shoe"));
+
+    await waitFor(() => expect(screen.getByTestId("shoe-number").textContent).toBe("2"));
+    await waitFor(() => screen.getByText("✓ Shoe 2 started. Hi-Lo 0."));
+    expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1);
+  });
+
+  it('"new shoe" with cards recorded in a COMPLETED round requires "confirm new shoe" before anything happens — never finalizes on one recognition result', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king")); // Hi-Lo -1, dealer
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("done"));
+    await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("new shoe"));
+
+    // Still shoe 1 — nothing happened yet, only a pending confirmation.
+    await waitFor(() => screen.getByText(/confirm new shoe/));
+    expect(screen.getByTestId("shoe-number").textContent).toBe("1");
+
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("confirm new shoe"));
+
+    await waitFor(() => expect(screen.getByTestId("shoe-number").textContent).toBe("2"));
+    await waitFor(() => screen.getByText(/Shoe 2 started/));
+  });
+
+  it('a DIFFERENT command heard after "new shoe" silently drops the pending confirmation — "confirm new shoe" said later does nothing', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king"));
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("done"));
+    await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("new shoe"));
+    await waitFor(() => screen.getByText(/confirm new shoe/));
+
+    // A different, unrelated command interrupts the pending confirmation.
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("status"));
+    await waitFor(() => screen.getByText(/Hi-Lo/));
+
+    // "confirm new shoe" now, with nothing pending, must do nothing.
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("confirm new shoe"));
+    await waitFor(() => screen.getByText(/Not recognized/));
+    expect(screen.getByTestId("shoe-number").textContent).toBe("1");
+  });
+
+  it('"new shoe" while the current round is still open (not completed) but has cards -> rejected with a brief explanation, defers to the manual control', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    const before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king")); // dealer card, round still open
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("new shoe"));
+
+    await waitFor(() => screen.getByText(/round isn.t complete/));
+    expect(screen.getByTestId("shoe-number").textContent).toBe("1");
+  });
+
+  it('"end investigation" requires "confirm end investigation" — the bare phrase alone never closes anything', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("end investigation"));
+
+    await waitFor(() => screen.getByText(/confirm end investigation/));
+    expect(screen.getByTestId("investigation-status").textContent).toBe("active");
+  });
+
+  it('"confirm end investigation" actually closes the investigation once pending, and speaks a confirmation', async () => {
+    const investigationId = await freshInvestigationId();
+    const { getInvestigation } = await import("@/lib/db/repositories/investigations");
+    const reloadSpy = vi.fn();
+    const assignSpy = vi.fn();
+    const originalLocation = window.location;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, pathname: "/", reload: reloadSpy, assign: assignSpy },
+    });
+
+    try {
+      render(
+        <InvestigationProvider investigationId={investigationId}>
+          <VoiceControl />
+          <ActiveTargetProbe />
+        </InvestigationProvider>
+      );
+      await startListening();
+      const before = MockSpeechRecognition.instances.length;
+      await act(async () => sayFinal("end investigation"));
+      await waitFor(() => screen.getByText(/confirm end investigation/));
+      expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1); // the pending-confirmation prompt itself is spoken too
+      mockSpeechSynthesis.speak.mockClear();
+
+      await awaitRestartFrom(before);
+      await act(async () => sayFinal("confirm end investigation"));
+
+      await waitFor(() => screen.getByText("✓ Investigation ended."));
+      expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1);
+      const closed = await getInvestigation(investigationId);
+      expect(closed!.status).toBe("closed");
+      // End & Review lands on the just-closed investigation's own review
+      // (Reports opened via ?review=1), not bare home — see LiveMenu.tsx's
+      // and VoiceControl.tsx's handleEndInvestigation/confirm-end-investigation.
+      expect(reloadSpy).not.toHaveBeenCalled();
+      expect(assignSpy).toHaveBeenCalledTimes(1);
+      expect(assignSpy).toHaveBeenCalledWith(`/investigations/${investigationId}/live?review=1`);
+    } finally {
+      Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
+    }
+  });
+
+  it('"full status" speaks every enabled system\'s running count (same content "all" already gives Count), regardless of the configured floorSpokenCountContent setting', async () => {
+    const { useSettingsStore } = await import("@/store/useSettingsStore");
+    useSettingsStore.getState().setFloorSpokenCountContent("off"); // even fully "off"...
+
+    try {
+      const investigationId = await freshInvestigationId();
+      render(
+        <InvestigationProvider investigationId={investigationId}>
+          <VoiceControl />
+          <ActiveTargetProbe />
+        </InvestigationProvider>
+      );
+      await startListening();
+      await act(async () => sayFinal("full status"));
+
+      // ...still speaks, since "full status" is an explicit, one-off
+      // request. KO's own -20 here isn't a bug — a 6-deck shoe seeds KO's
+      // Initial Running Count at -4 per extra deck (see countTags.ts);
+      // this is the exact same value every other count surface shows.
+      await waitFor(() => screen.getByText(/Hi-Lo 0\..*K O -20\..*Zen 0\..*Omega II 0\./));
+      expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1);
+    } finally {
+      useSettingsStore.getState().setFloorSpokenCountContent("hiloRc");
     }
   });
 });

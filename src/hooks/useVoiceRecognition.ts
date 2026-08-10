@@ -56,6 +56,20 @@ export interface UseVoiceRecognitionResult {
   listening: boolean;
   start: () => void;
   stop: () => void;
+  /**
+   * Stops the current native session and — unlike a fatal error or a
+   * deliberate `stop()` — prevents the normal auto-restart from firing
+   * while suppressed, WITHOUT flipping `listening` to false or touching
+   * "voice mode" intent at all. For TTS self-hearing protection: the
+   * operator still sees/expects continuous listening throughout a brief
+   * spoken readback, so the public `listening` flag stays true the whole
+   * time — this is an internal mute, not a user-visible stop. See
+   * VoiceControl.tsx's subscription to lib/voice/speechOutput.ts's
+   * onSpeechStart/onSpeechEnd, which is what actually calls this.
+   */
+  suppressForSpeech: () => void;
+  /** Clears the suppression and, if voice mode is still on, begins a fresh session immediately (the auto-restart that suppression skipped). A no-op if voice mode was turned off (via `stop()`) while suppressed. */
+  resumeAfterSpeech: () => void;
 }
 
 /**
@@ -131,6 +145,8 @@ export function useVoiceRecognition({
   const lastErrorRef = useRef<string | null>(null);
   /** Consecutive "network" failures across restarts — see MAX_CONSECUTIVE_NETWORK_ERRORS. Reset to 0 by any non-"network" outcome, and explicitly on every deliberate start(). */
   const consecutiveNetworkErrorsRef = useRef(0);
+  /** See suppressForSpeech/resumeAfterSpeech below — read inside onend exactly like voiceModeRef, for the same reason (onend fires well after any render). */
+  const suppressedRef = useRef(false);
   // Latest callbacks in a ref so `start`/`stop` stay referentially stable
   // across renders regardless of inline arrow functions passed by the
   // caller — avoids recreating (and re-subscribing) the recognition
@@ -248,6 +264,15 @@ export function useVoiceRecognition({
       }
       const networkExhausted = consecutiveNetworkErrorsRef.current >= MAX_CONSECUTIVE_NETWORK_ERRORS;
 
+      if (suppressedRef.current) {
+        // Deliberately suppressed for TTS playback (see
+        // suppressForSpeech/resumeAfterSpeech below) — this session was
+        // stopped on purpose, not because of an error or the operator
+        // turning voice mode off. Neither restart nor turn voice mode off;
+        // resumeAfterSpeech() begins a fresh session once TTS finishes.
+        return;
+      }
+
       const canRestart = wasOn && !(error && FATAL_ERRORS.has(error)) && !networkExhausted;
       if (canRestart) {
         clearRestartTimer();
@@ -303,6 +328,23 @@ export function useVoiceRecognition({
     setListening(false);
   }, [clearTimer, clearRestartTimer]);
 
+  const suppressForSpeech = useCallback(() => {
+    if (!voiceModeRef.current || suppressedRef.current) return; // nothing listening to suppress, or already suppressed
+    suppressedRef.current = true;
+    clearRestartTimer();
+    clearTimer();
+    recognitionRef.current?.stop(); // triggers onend, which sees suppressedRef and skips both restart and turning voice mode off
+  }, [clearTimer, clearRestartTimer]);
+
+  const resumeAfterSpeech = useCallback(() => {
+    if (!suppressedRef.current) return;
+    suppressedRef.current = false;
+    // The onend triggered by suppressForSpeech's stop() already fired and
+    // deliberately skipped restarting — begin the fresh session here that
+    // it would otherwise have scheduled.
+    if (voiceModeRef.current) beginSession();
+  }, [beginSession]);
+
   // Unmount safety: a listening session must never keep running (or keep
   // the microphone open, or schedule a restart) after VoiceControl itself
   // is gone — e.g. the privacy lock engaging, which unmounts the whole
@@ -316,5 +358,5 @@ export function useVoiceRecognition({
     };
   }, [clearTimer, clearRestartTimer]);
 
-  return { listening, start, stop };
+  return { listening, start, stop, suppressForSpeech, resumeAfterSpeech };
 }

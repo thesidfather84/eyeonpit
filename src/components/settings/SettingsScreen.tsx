@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSettingsStore, type WorkflowAssistanceLevel } from "@/store/useSettingsStore";
+import { useSettingsStore, type FloorSpokenCountSetting, type WorkflowAssistanceLevel } from "@/store/useSettingsStore";
 import type { TerminologyLevel } from "@/lib/terminology";
 import {
   completeInvestigation,
@@ -34,6 +34,13 @@ const ASSISTANCE_OPTIONS: { value: WorkflowAssistanceLevel; label: string; hint:
   { value: "guided", label: "Guided", hint: "Add explanations for new operators" },
 ];
 
+const FLOOR_SPOKEN_COUNT_OPTIONS: { value: FloorSpokenCountSetting; label: string; hint: string }[] = [
+  { value: "hiloRc", label: "Hi-Lo RC", hint: 'Running count only — e.g. "Hi-Lo minus three"' },
+  { value: "hiloRcTc", label: "Hi-Lo RC + TC", hint: "Adds the true count sentence" },
+  { value: "all", label: "All enabled counts", hint: "Every counting system's running count, plus true count/decks per the usual rules" },
+  { value: "off", label: "Off", hint: 'No count in "Status" or the Done-completion announcement (Spoken voice feedback above still governs everything else)' },
+];
+
 interface SettingsScreenProps {
   /**
    * Only present when Settings is opened from inside a live investigation
@@ -61,6 +68,8 @@ export function SettingsScreen({ activeInvestigation }: SettingsScreenProps = {}
     setShowGroupLabels,
     voiceAudioFeedback,
     setVoiceAudioFeedback,
+    floorSpokenCountContent,
+    setFloorSpokenCountContent,
   } = useSettingsStore();
   const {
     updateAvailable,
@@ -276,6 +285,35 @@ export function SettingsScreen({ activeInvestigation }: SettingsScreenProps = {}
             <span
               className={`block text-xs ${
                 workflowAssistance === opt.value ? "text-accent-foreground/80" : "text-muted-foreground"
+              }`}
+            >
+              {opt.hint}
+            </span>
+          </button>
+        ))}
+      </section>
+
+      <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
+        <h2 className="text-sm font-semibold text-foreground">Floor Spoken Count</h2>
+        <p className="text-xs text-muted-foreground">
+          What &quot;Status&quot; and the Done-completion announcement speak, once Spoken voice feedback (above) has
+          allowed speech at all.
+        </p>
+        {FLOOR_SPOKEN_COUNT_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            onClick={() => setFloorSpokenCountContent(opt.value)}
+            aria-pressed={floorSpokenCountContent === opt.value}
+            className={`w-full rounded-xl border px-4 py-2.5 text-left ${
+              floorSpokenCountContent === opt.value
+                ? "border-accent bg-accent text-accent-foreground"
+                : "border-border bg-surface-raised text-foreground"
+            }`}
+          >
+            <span className="block text-sm font-medium">{opt.label}</span>
+            <span
+              className={`block text-xs ${
+                floorSpokenCountContent === opt.value ? "text-accent-foreground/80" : "text-muted-foreground"
               }`}
             >
               {opt.hint}

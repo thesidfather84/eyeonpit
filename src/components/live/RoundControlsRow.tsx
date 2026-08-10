@@ -15,19 +15,30 @@ import { AddNoteSheet } from "./AddNoteSheet";
  * screen height — opening it is the exception, not the steady state, so it
  * never competes with the keypad below for space.
  *
- * Done and Next are deliberately separate (not fused into one "complete
- * and advance" tap): Done locks the round (completeRound — the existing
- * "Complete Round" primitive). Next moves forward using whichever of the
- * two existing advance primitives applies — advanceToNext (the next
- * required card-entry position, e.g. dealer -> seat1 -> seat2 in guided
- * mode) while the round is still open, or nextRound once Done has already
- * locked it. There is exactly one way to complete a round and exactly one
- * way to advance — never two competing "finish this round" buttons.
+ * `floorMode` (operator-loop correction) is the one behavioral difference
+ * between the two shells this row is mounted in:
+ * - Surveillance (default): Done and Next stay deliberately separate —
+ *   Done locks the round (`completeRound`), Next then explicitly starts
+ *   the following one (`nextRound`) or advances the active target
+ *   mid-round (`advanceToNext`). Kept exactly as before for deliberate,
+ *   reviewable, one-step-at-a-time control.
+ * - Floor (`floorMode`): a Floor operator narrates a hand and says "Done"
+ *   — there is no natural moment for a second "Next" in that rhythm, and
+ *   requiring one was an approved-workflow violation, not a deliberate
+ *   safety pause. Done itself now completes AND advances in one step (see
+ *   useRoundControls' own doc comment on `completeRoundAndAdvance`). Next
+ *   is NOT removed — it keeps its pre-Done meaning (advance the active
+ *   target mid-hand, e.g. skip ahead without narrating a target by name),
+ *   and remains available as manual recovery/navigation. It simply stops
+ *   being a REQUIRED post-Done step, because Done no longer leaves
+ *   anything for it to do there — `nextRound()` itself still refuses to
+ *   run on an already-fresh round (see its own `!currentRound.completed`
+ *   guard), so there is no way for a stray Next to double-advance.
  */
-export function RoundControlsRow() {
+export function RoundControlsRow({ floorMode = false }: { floorMode?: boolean } = {}) {
   const { investigation, currentRound, canRedo, redo, clearActiveEntry, busy } = useInvestigationContext();
   const { handleDone, handleNext, handleUndo, doneDisabled, nextDisabled, undoDisabled, undoLabel } =
-    useRoundControls();
+    useRoundControls(floorMode);
   const [noteOpen, setNoteOpen] = useState(false);
   const [overflowOpen, setOverflowOpen] = useState(false);
 

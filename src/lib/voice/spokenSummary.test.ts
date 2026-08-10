@@ -84,16 +84,43 @@ describe("buildCountAnnouncement — read-only, reuses the exact same CountSnaps
   });
 });
 
-describe("buildStatusAnnouncement — concise target/round/count, read-only", () => {
-  it("speaks the active target, round number, and primary running count", async () => {
+describe("buildStatusAnnouncement — count-only, content-configurable, read-only", () => {
+  it('"hiloRc" -> Hi-Lo running count alone, no target/round preamble', async () => {
     const inv = await freshInvestigation();
     const round = inv.rounds[0];
     await occupySeat(inv.localId, 3);
     await dealerAdd(inv.localId, round.id, "10");
 
     const events = await getCardEventsForInvestigation(inv.localId);
-    const text = buildStatusAnnouncement(inv, events, round.shoeNumber, round.roundNumber, "SEAT 3");
+    const text = buildStatusAnnouncement(inv, events, round.shoeNumber, "hiloRc");
 
-    expect(text).toBe("SEAT 3 active. Round 1. Hi-Lo -1.");
+    expect(text).toBe("Hi-Lo -1.");
+  });
+
+  it('"hiloRcTc" -> adds the Hi-Lo true count sentence', async () => {
+    const inv = await freshInvestigation();
+    const round = inv.rounds[0];
+    await dealerAdd(inv.localId, round.id, "2");
+
+    const events = await getCardEventsForInvestigation(inv.localId);
+    const text = buildStatusAnnouncement(inv, events, round.shoeNumber, "hiloRcTc");
+
+    expect(text).toContain("Hi-Lo +1.");
+    expect(text).toContain("True count");
+  });
+
+  it('"all" -> reuses buildCountAnnouncement verbatim, the same text "Count" already speaks', async () => {
+    const inv = await freshInvestigation();
+    const round = inv.rounds[0];
+    await dealerAdd(inv.localId, round.id, "2");
+
+    const events = await getCardEventsForInvestigation(inv.localId);
+    const statusText = buildStatusAnnouncement(inv, events, round.shoeNumber, "all");
+    const countText = buildCountAnnouncement(inv, events, round.shoeNumber);
+
+    expect(statusText).toBe(countText);
+    expect(statusText).toContain("K O");
+    expect(statusText).toContain("Zen");
+    expect(statusText).toContain("Omega II");
   });
 });

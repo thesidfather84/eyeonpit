@@ -51,23 +51,68 @@ export function buildCountAnnouncement(investigation: Investigation, cardEvents:
 }
 
 /**
- * "Status" — concise current target/round/count state, deliberately
- * shorter than "Count": just the active target, the round number, and the
- * primary system's running count. `targetLabel` is passed in exactly as
- * useCardEntry/CardEntryPad/VoiceControl already compute it ("DEALER",
- * "SEAT 3") — no separate target-naming logic.
+ * The Floor audio-feedback content setting (see useSettingsStore) —
+ * governs how much of the count snapshot "Status" and Floor's post-Done
+ * completion summary speak. "off" is handled entirely by the CALLER
+ * (VoiceControl's "status" dispatch, useRoundControls' handleDone): it
+ * means "do not speak this," not "speak an empty sentence," so it is
+ * never passed into buildStatusAnnouncement below — see those call sites.
+ */
+export type FloorSpokenCountContent = "hiloRc" | "hiloRcTc" | "all";
+
+/**
+ * "Status" (and Floor's post-Done completion announcement — identical
+ * content, different trigger; see useRoundControls' handleDone) — the
+ * current authoritative count snapshot, exactly as much of it as
+ * `content` asks for:
+ *   - "hiloRc": Hi-Lo's running count alone ("Hi-Lo -3.") — Hi-Lo
+ *     specifically (not just "whichever system is primary"), since Hi-Lo
+ *     is always one of the four systems calculateCountSnapshot computes
+ *     regardless of the investigation's chosen primary system.
+ *   - "hiloRcTc": adds Hi-Lo's true count, when it has one.
+ *   - "all": every enabled system's running count (reuses
+ *     buildCountAnnouncement verbatim — the exact same text the "Count"
+ *     voice command already speaks — never a second, differently-worded
+ *     "everything" builder).
+ * No target/round preamble anymore (the old "SEAT 3 active. Round 2."
+ * wording) — count-first: Status's whole job is the count.
  */
 export function buildStatusAnnouncement(
   investigation: Investigation,
   cardEvents: CardEvent[],
   shoeNumber: number,
-  roundNumber: number,
-  targetLabel: string
+  content: FloorSpokenCountContent
 ): string {
+  if (content === "all") return buildCountAnnouncement(investigation, cardEvents, shoeNumber);
+
+  const shoeEvents = eventsInShoe(cardEvents, shoeNumber);
+  const snapshot = calculateCountSnapshot(shoeEvents, investigation.shoeTotalDecks);
+  const hiLo = snapshot["Hi-Lo"];
+  const sentences = [`Hi-Lo ${formatSigned(hiLo.running)}.`];
+
+  if (content === "hiloRcTc") {
+    const trueCount = formatTrueCount(roundTrueCountForDisplay(hiLo.trueCount));
+    if (trueCount !== "N/A") {
+      sentences.push(`True count ${trueCount}.`);
+    }
+  }
+
+  return sentences.join(" ");
+}
+
+/**
+ * "Shoe N started. {primary system} {RC}." — spoken after a successful
+ * New Shoe (voice "new shoe"/"confirm new shoe", or the manual New Shoe
+ * button). Always reads the freshly-seeded running count straight off
+ * `calculateCountSnapshot` — the same engine call every other count
+ * surface uses — so an unbalanced system's own non-zero Initial Running
+ * Count (KO's -4 per extra deck) comes through automatically. Never a
+ * hardcoded "zero": that would be wrong for KO on anything but a single
+ * deck.
+ */
+export function buildNewShoeAnnouncement(investigation: Investigation, cardEvents: CardEvent[], shoeNumber: number): string {
   const shoeEvents = eventsInShoe(cardEvents, shoeNumber);
   const snapshot = calculateCountSnapshot(shoeEvents, investigation.shoeTotalDecks);
   const primary = investigation.countingSystem;
-  const primaryValue = snapshot[primary];
-
-  return `${targetLabel} active. Round ${roundNumber}. ${speakableSystemName(primary)} ${formatSigned(primaryValue.running)}.`;
+  return `Shoe ${shoeNumber} started. ${speakableSystemName(primary)} ${formatSigned(snapshot[primary].running)}.`;
 }

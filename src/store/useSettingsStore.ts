@@ -5,11 +5,25 @@ import { diagnostics } from "@/lib/diagnostics/logger";
 
 export type WorkflowAssistanceLevel = "off" | "basic" | "guided";
 
+/**
+ * How much count detail Floor's spoken feedback includes for "Status" and
+ * the post-Done completion announcement (see lib/voice/spokenSummary.ts's
+ * FloorSpokenCountContent, which this is a superset of — "off" is handled
+ * entirely by the callers of that module, never passed into it). Distinct
+ * from `voiceAudioFeedback`: that master switch governs whether ANY
+ * spoken output happens at all (narration confirmations included); this
+ * setting only shapes what the count-specific announcements say once
+ * speech is already happening, so an operator can keep narration
+ * confirmations on while silencing just the count chatter, or vice versa.
+ */
+export type FloorSpokenCountSetting = "hiloRc" | "hiloRcTc" | "all" | "off";
+
 /** On-disk envelope version — mostly documentation today, since `merge` below already unconditionally normalizes every field on every load regardless of what (if any) version is stored. */
 const SETTINGS_VERSION = 1;
 
 const TERMINOLOGY_LEVELS: TerminologyLevel[] = ["standard", "casino", "casinoProfessional"];
 const WORKFLOW_LEVELS: WorkflowAssistanceLevel[] = ["off", "basic", "guided"];
+const FLOOR_SPOKEN_COUNT_SETTINGS: FloorSpokenCountSetting[] = ["hiloRc", "hiloRcTc", "all", "off"];
 
 /** localStorage can throw (quota, private browsing, disabled storage) — every call here is best-effort, same policy as lib/utils/lastGameConfig.ts. Losing a setting is never worth crashing the app over. */
 function safeLocalStorage(): StateStorage {
@@ -56,6 +70,9 @@ function normalizePersistedSettings(raw: unknown): Partial<SettingsState> {
       : "basic",
     showGroupLabels: typeof r.showGroupLabels === "boolean" ? r.showGroupLabels : false,
     voiceAudioFeedback: typeof r.voiceAudioFeedback === "boolean" ? r.voiceAudioFeedback : true,
+    floorSpokenCountContent: FLOOR_SPOKEN_COUNT_SETTINGS.includes(r.floorSpokenCountContent as FloorSpokenCountSetting)
+      ? (r.floorSpokenCountContent as FloorSpokenCountSetting)
+      : "hiloRc",
   };
 
   const looksMalformed =
@@ -88,6 +105,8 @@ interface SettingsState {
   showGroupLabels: boolean;
   /** Governs whether voice commands that produce a spoken response ("Count", "Status" — see lib/voice/speechOutput.ts) actually speak, versus only showing the same text visually. On by default: a headset-oriented, hands-free command is of little use silenced. Never affects recognition/listening itself, only this one class of read-only spoken output. */
   voiceAudioFeedback: boolean;
+  /** How much count detail "Status" and the post-Done completion announcement speak, once voiceAudioFeedback has already allowed speech at all. Defaults to "hiloRc" — Hi-Lo's running count only, the concise default this app's spoken feedback has always led with. See the FloorSpokenCountSetting doc comment above. */
+  floorSpokenCountContent: FloorSpokenCountSetting;
   completeOnboarding: () => void;
   setShowGuidedTips: (value: boolean) => void;
   dismissHint: (id: string) => void;
@@ -95,6 +114,7 @@ interface SettingsState {
   setWorkflowAssistance: (level: WorkflowAssistanceLevel) => void;
   setShowGroupLabels: (value: boolean) => void;
   setVoiceAudioFeedback: (value: boolean) => void;
+  setFloorSpokenCountContent: (value: FloorSpokenCountSetting) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -107,6 +127,7 @@ export const useSettingsStore = create<SettingsState>()(
       workflowAssistance: "basic",
       showGroupLabels: false,
       voiceAudioFeedback: true,
+      floorSpokenCountContent: "hiloRc",
       completeOnboarding: () => set({ hasCompletedOnboarding: true }),
       setShowGuidedTips: (value) => set({ showGuidedTips: value }),
       dismissHint: (id) =>
@@ -119,6 +140,7 @@ export const useSettingsStore = create<SettingsState>()(
       setWorkflowAssistance: (level) => set({ workflowAssistance: level }),
       setShowGroupLabels: (value) => set({ showGroupLabels: value }),
       setVoiceAudioFeedback: (value) => set({ voiceAudioFeedback: value }),
+      setFloorSpokenCountContent: (value) => set({ floorSpokenCountContent: value }),
     }),
     {
       name: "eyeonpit:settings",

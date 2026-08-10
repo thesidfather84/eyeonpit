@@ -156,19 +156,31 @@ export const FACE_CARD_DISPLAY: Record<string, "J" | "Q" | "K"> = {
 };
 
 /**
- * "next seat" is a deliberate alias for the exact same "next" command bare
- * "next" already produces — not a new behavior. `dispatch`'s "next" case
- * calls the same `handleNext` the touch Next button uses: during an active,
- * not-yet-completed round it advances the active target to the next
- * occupied seat (wrapping to dealer at the end of the table's entry
- * direction — see `advanceToNext`/`orderedSeatNumbersFor`); once the round
- * is marked complete, that same "next" starts the next round instead,
- * exactly as tapping Next does. No new seat-order logic is introduced here.
+ * "next seat" and "new hand" are deliberate aliases for the exact same
+ * "next" command bare "next" already produces — not new behavior.
+ * `dispatch`'s "next" case calls the same `handleNext` the touch Next
+ * button uses: during an active, not-yet-completed round it advances the
+ * active target to the next occupied seat (wrapping to dealer at the end
+ * of the table's entry direction — see `advanceToNext`/
+ * `orderedSeatNumbersFor`); once the round is marked complete, that same
+ * "next" starts the next round instead, exactly as tapping Next does. No
+ * new seat-order logic is introduced here.
+ *
+ * "new hand" specifically closes a gap found while building the operator-
+ * loop milestone's end-to-end test: parseNarration.ts already treats "new
+ * hand" as a "next"-equivalent single op, but only WITHIN a longer
+ * narration — a lone "new hand" utterance is exactly one op
+ * (isTrivialLegacyEquivalent), so narration itself defers to this legacy
+ * parser for it, same as bare "next" always has. Without this entry, that
+ * deferral had nowhere to land and the phrase was rejected outright, even
+ * though it's the natural way an operator would ask to move on after
+ * Done — see docs/EYEONPIT_OPERATOR_MANUAL.md.
  */
 const WORKFLOW_WORDS: Record<string, "done" | "next" | "undo" | "count" | "status"> = {
   done: "done",
   next: "next",
   "next seat": "next",
+  "new hand": "next",
   undo: "undo",
   // Read-only, headset-oriented spoken feedback (see spokenSummary.ts) —
   // exact-phrase-only like every other workflow word, never extracted from

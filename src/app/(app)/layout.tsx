@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { UpdateAvailableBanner } from "@/components/system/UpdateAvailableBanner";
+import { isValidSessionToken, SESSION_COOKIE_NAME } from "@/lib/auth/session";
 
 /** The operational console has no reason to appear in search results — it's a live tool, not content. The public marketing/docs site (src/app/(site)) is what should be indexed. */
 export const metadata: Metadata = {
@@ -25,8 +28,22 @@ export const metadata: Metadata = {
  * giving the landscape-specific layout the width it was designed for —
  * `short:max-w-none` lifts it exactly there (short height, real device
  * constraint), not for any wide-but-tall window.
+ *
+ * EyeOnPit 1.4.1: also the defense-in-depth authorization check for the
+ * entire operational app — proxy.ts (src/proxy.ts) is the PRIMARY gate
+ * (it runs before this layout even renders, catching a direct URL visit),
+ * but per Next.js's own authentication guidance a route-group boundary
+ * like this one should never be the app's ONLY line of defense either.
+ * Both checks read the exact same signed cookie via the exact same
+ * `isValidSessionToken` — there is no second, differently-behaved
+ * authorization path to drift out of sync with proxy.ts.
  */
-export default function AppShellLayout({ children }: { children: React.ReactNode }) {
+export default async function AppShellLayout({ children }: { children: React.ReactNode }) {
+  const cookieStore = await cookies();
+  if (!isValidSessionToken(cookieStore.get(SESSION_COOKIE_NAME)?.value)) {
+    redirect("/access");
+  }
+
   return (
     <div className="flex h-dvh justify-center overflow-hidden bg-background">
       <div className="safe-area-pt safe-area-pb flex h-full w-full max-w-md flex-col overflow-hidden bg-background short:max-w-none">

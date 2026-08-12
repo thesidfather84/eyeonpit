@@ -51,7 +51,7 @@ export function Hero() {
             Request a Demo
           </a>
           <Link
-            href="/app"
+            href="/access"
             className="tap-target flex items-center justify-center rounded-xl bg-accent px-7 text-sm font-semibold uppercase tracking-[0.1em] text-accent-foreground shadow-lg shadow-accent/25 transition-colors hover:bg-accent-hover"
           >
             Launch EyeOnPit

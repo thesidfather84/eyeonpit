@@ -51,7 +51,7 @@ export function SiteHeader() {
             Request a Demo
           </a>
           <Link
-            href="/app"
+            href="/access"
             className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold uppercase tracking-[0.1em] text-accent-foreground shadow-lg shadow-accent/20 transition-colors hover:bg-accent-hover"
           >
             Launch EyeOnPit
@@ -91,7 +91,7 @@ export function SiteHeader() {
               Request a Demo
             </a>
             <Link
-              href="/app"
+              href="/access"
               onClick={() => setMobileOpen(false)}
               className="tap-target flex items-center justify-center rounded-lg bg-accent text-sm font-semibold uppercase tracking-[0.1em] text-accent-foreground"
             >

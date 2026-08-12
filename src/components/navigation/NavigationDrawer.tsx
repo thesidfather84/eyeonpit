@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { Eye, Home, ListPlus, History, HelpCircle, Settings, PlayCircle } from "lucide-react";
+import { Eye, Home, ListPlus, History, HelpCircle, Settings, PlayCircle, Lock } from "lucide-react";
 import { useActiveInvestigation } from "@/hooks/useActiveInvestigation";
 import { useTerminology } from "@/hooks/useTerminology";
+import { logoutAction } from "@/lib/auth/actions";
 
 interface NavigationDrawerProps {
   open: boolean;
@@ -70,6 +71,19 @@ export function NavigationDrawer({ open, onClose }: NavigationDrawerProps) {
             </Link>
           )}
         </nav>
+
+        {/* Discreet, deliberately at the bottom and visually separated —
+            see the 1.4.1 access-control patch. Ends the authorized
+            session and returns to /access; every protected route is
+            inaccessible again until the passcode is re-entered. */}
+        <form action={logoutAction} className="mt-auto border-t border-border pt-2">
+          <button
+            type="submit"
+            className="tap-target flex w-full items-center gap-3 rounded-lg px-3 text-sm font-medium text-muted-foreground hover:bg-surface-raised hover:text-foreground"
+          >
+            <Lock className="h-5 w-5" aria-hidden /> Lock EyeOnPit
+          </button>
+        </form>
       </div>
     </div>,
     document.body

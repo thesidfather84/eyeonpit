@@ -18,7 +18,9 @@ export default function GettingStartedPage() {
 
       <h2>1. Opening EyeOnPit</h2>
       <p>
-        Launch EyeOnPit from <Link href="/app">eyeonpit.com/app</Link> (or your installed home-screen icon). If an
+        Select <strong>Launch EyeOnPit</strong> from the homepage (or your installed home-screen icon). The
+        operational application requires an access code — enter it once at <Link href="/access">eyeonpit.com/access</Link>{" "}
+        and you won&apos;t be asked again until your session expires or you log out. Once authorized, if an
         investigation is already active or paused on the device, EyeOnPit opens straight into it — there is no
         separate &ldquo;resume&rdquo; step to find.
       </p>

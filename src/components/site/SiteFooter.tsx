@@ -48,7 +48,7 @@ export function SiteFooter() {
                 </li>
               ))}
               <li>
-                <Link href="/app" className="text-sm text-muted-foreground hover:text-foreground">
+                <Link href="/access" className="text-sm text-muted-foreground hover:text-foreground">
                   Launch EyeOnPit
                 </Link>
               </li>

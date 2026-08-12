@@ -1,9 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { decomposeNumericStream, parseNarration, type NarrationOp } from "./parseNarration";
+import { parseVoiceCommand } from "./parseVoiceCommand";
 
 function cardOps(result: ReturnType<typeof parseNarration>): NarrationOp[] {
   if (result.kind !== "ops") throw new Error(`expected ops, got ${result.kind}`);
   return result.ops.filter((op) => op.kind === "card");
+}
+
+/**
+ * Models exactly what VoiceControl actually does: try narration first, and
+ * only when it has NO opinion (a trivial shape legacy already owns and can
+ * correctly reparse on its own — e.g. "seat one five", identical to
+ * "dealer king") fall through to parseVoiceCommand. Used for "every natural
+ * phrasing resolves to the same target" assertions where SOME phrasings are
+ * genuinely new narration capability (an extended connector/second-prefix
+ * form) and others are the ordinary trivial shape that correctly defers —
+ * the end-to-end guarantee is what matters, not which layer resolved it.
+ */
+function resolvedCard(transcript: string): { rank: string; seat: number } {
+  const narration = parseNarration(transcript);
+  if (narration.kind === "ops") {
+    const cards = narration.ops.filter((op) => op.kind === "card");
+    if (cards.length !== 1) throw new Error(`expected exactly 1 card op, got ${cards.length}`);
+    const [card] = cards;
+    if (card.kind !== "card" || card.target?.kind !== "seat") throw new Error("expected a seat-scoped card");
+    return { rank: card.rank, seat: card.target.seat };
+  }
+  if (narration.kind !== "no-opinion") throw new Error(`expected no-opinion, got ${narration.kind}`);
+  const legacy = parseVoiceCommand(transcript).command;
+  if (legacy?.kind !== "card" || legacy.target?.kind !== "seat") throw new Error(`expected a legacy seat card, got ${JSON.stringify(legacy)}`);
+  return { rank: legacy.rank, seat: legacy.target.seat };
 }
 
 describe("decomposeNumericStream — compact digit-run decomposition", () => {
@@ -231,6 +257,28 @@ describe("parseNarration — real captured transcripts (§10), explicitly define
   });
 });
 
+describe('parseNarration — SAFETY: a card spoken BEFORE any target is established must never resolve against whatever happens to be currently active, once the same utterance goes on to name a real target ("Three active seat five" must never become DEALER: 3)', () => {
+  it.each([
+    "three active seat five",
+    "three active spot five",
+    "three active player five",
+    "five active seat two",
+  ])("%s -> reject, never a guessed target for the earlier card", (transcript) => {
+    expect(parseNarration(transcript).kind).toBe("reject");
+  });
+
+  it('a target established FIRST, with cards after it, is completely unaffected ("dealer king ace" still works)', () => {
+    expect(cardOps(parseNarration("dealer king ace"))).toEqual([
+      { kind: "card", target: { kind: "dealer" }, rank: "10", displayRank: "K" },
+      { kind: "card", target: { kind: "dealer" }, rank: "A" },
+    ]);
+  });
+
+  it('a bare card with no target ANYWHERE in the utterance still defers to legacy unchanged ("five" alone)', () => {
+    expect(parseNarration("five").kind).toBe("no-opinion");
+  });
+});
+
 describe("parseNarration — no-opinion defers to the legacy single-command parser", () => {
   it.each(["count", "status", "banana"])(
     "%s -> no-opinion (none of narration's vocabulary appears at all)",
@@ -330,6 +378,13 @@ describe("parseNarration — REAL DEVICE FIX: natural hand connectors inside an 
     ]);
   });
 
+  it('"C5 has an ace C5 has a three" -> Seat 5: A, 3 (repeated same-target mention mid-utterance does not end its scope, and the trailing safety check above does not misfire on a target established BEFORE every card)', () => {
+    expect(cardOps(parseNarration("C5 has an ace C5 has a three"))).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 5 }, rank: "A" },
+      { kind: "card", target: { kind: "seat", seat: 5 }, rank: "3" },
+    ]);
+  });
+
   it('"player 2 has 4 8" -> Seat 2: 4, 8', () => {
     expect(cardOps(parseNarration("player 2 has 4 8"))).toEqual([
       { kind: "card", target: { kind: "seat", seat: 2 }, rank: "4" },
@@ -402,5 +457,179 @@ describe("parseNarration — REAL DEVICE FIX: natural leading-seat shorthand (nu
       { kind: "card", target: { kind: "dealer" }, rank: "A" },
       { kind: "card", target: { kind: "dealer" }, rank: "A" },
     ]);
+  });
+});
+
+describe("EyeOnPit 1.3 — natural seat/player/spot phrasing, including a natural connector between the prefix and the number", () => {
+  it.each([
+    ["player one has a seven", 1, "7"],
+    ["spot one has a seven", 1, "7"],
+    ["seat one has a seven", 1, "7"],
+    ["the player in seat one has a seven", 1, "7"],
+    ["the player at seat one has a seven", 1, "7"],
+    ["player at spot one has a seven", 1, "7"],
+    ["player seat one has a seven", 1, "7"],
+  ] as const)('"%s" -> Seat %i: %s — every natural phrasing resolves to the identical target (some via narration directly, the plain forms via legacy deferral — see resolvedCard)', (transcript, seat, rank) => {
+    expect(resolvedCard(transcript)).toEqual({ seat, rank });
+  });
+
+  it('the base "seat one"/"spot one"/"player one" forms defer to legacy (no-opinion) exactly like before; only the CONNECTOR/second-prefix forms are genuinely new narration capability', () => {
+    expect(parseNarration("player one has a seven").kind).toBe("no-opinion");
+    expect(parseNarration("the player in seat one has a seven").kind).toBe("ops");
+  });
+
+  it('"the player in seat one" ALONE (no card) is a bare target-selection op, exactly like "seat one" — never deferred to legacy (which has no grammar for the extended form)', () => {
+    const result = parseNarration("the player in seat one");
+    expect(result.kind).toBe("ops");
+    if (result.kind !== "ops") return;
+    expect(result.ops).toEqual([{ kind: "selectTarget", target: { kind: "seat", seat: 1 } }]);
+  });
+});
+
+describe("EyeOnPit 1.3 — multi-target narration: multiple explicit players (and the dealer) in ONE utterance, spoken order preserved", () => {
+  it('"Player one has a seven, player three has a five." -> S1: 7, S3: 5 — every card lands on its OWN clause\'s target, never inherited across the comma boundary', () => {
+    const result = parseNarration("Player one has a seven, player three has a five.");
+    expect(result.kind).toBe("ops");
+    if (result.kind !== "ops") return;
+    expect(result.ops).toEqual([
+      { kind: "selectTarget", target: { kind: "seat", seat: 1 } },
+      { kind: "card", target: { kind: "seat", seat: 1 }, rank: "7" },
+      { kind: "selectTarget", target: { kind: "seat", seat: 3 } },
+      { kind: "card", target: { kind: "seat", seat: 3 }, rank: "5" },
+    ]);
+  });
+
+  it('"Spot one has a seven, spot three has a five, dealer has an ace." -> S1: 7, S3: 5, DEALER: A — three distinct targets, dealer mixed in, all in spoken order', () => {
+    const result = parseNarration("Spot one has a seven, spot three has a five, dealer has an ace.");
+    expect(result.kind).toBe("ops");
+    if (result.kind !== "ops") return;
+    expect(result.ops).toEqual([
+      { kind: "selectTarget", target: { kind: "seat", seat: 1 } },
+      { kind: "card", target: { kind: "seat", seat: 1 }, rank: "7" },
+      { kind: "selectTarget", target: { kind: "seat", seat: 3 } },
+      { kind: "card", target: { kind: "seat", seat: 3 }, rank: "5" },
+      { kind: "selectTarget", target: { kind: "dealer" } },
+      { kind: "card", target: { kind: "dealer" }, rank: "A" },
+    ]);
+  });
+});
+
+describe("EyeOnPit 1.3 — repeated same-target narration: two clauses naming the SAME player must merge, not reject", () => {
+  it('"Player three has a five, player three has a king." -> S3: 5 K', () => {
+    expect(cardOps(parseNarration("Player three has a five, player three has a king."))).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 3 }, rank: "5" },
+      { kind: "card", target: { kind: "seat", seat: 3 }, rank: "10", displayRank: "K" },
+    ]);
+  });
+
+  it('"Seat four has a five, seat four has a king." -> S4: 5 K', () => {
+    expect(cardOps(parseNarration("Seat four has a five, seat four has a king."))).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 4 }, rank: "5" },
+      { kind: "card", target: { kind: "seat", seat: 4 }, rank: "10", displayRank: "K" },
+    ]);
+  });
+
+  it('"S3 has a 5 S3 has a king" (the equivalent already-working C-token form) still works — proves the comma-tokenization fix, not the C-token path, is what closes this gap', () => {
+    expect(cardOps(parseNarration("C3 has a 5 C3 has a king"))).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 3 }, rank: "5" },
+      { kind: "card", target: { kind: "seat", seat: 3 }, rank: "10", displayRank: "K" },
+    ]);
+  });
+});
+
+describe("EyeOnPit 1.3 — SAFETY: uncertainty language is an immediate hard rejection, never merely traded off against the noise-token cap", () => {
+  it.each([
+    "maybe player one has a three",
+    "maybe player one has a three and a five",
+    "dealer should have busted",
+    "for ten minutes dealer has a ten",
+    "he probably has a five",
+    "possibly seat one has a king",
+    "perhaps dealer has an ace",
+    "i think player one has a five",
+  ])('"%s" -> reject, zero CardEvents', (transcript) => {
+    expect(parseNarration(transcript).kind).toBe("reject");
+  });
+
+  it("uncertainty language is rejected even when it would otherwise fit the ordinary 1-stray-word noise tolerance", () => {
+    // "maybe five" is structurally identical, at the token level, to the
+    // tolerated "Taylor king" misheard-name case (exactly one stray word
+    // alongside a real card word) — the explicit uncertainty check is what
+    // keeps this from silently entering a card.
+    expect(parseNarration("maybe five").kind).toBe("reject");
+  });
+});
+
+describe("EyeOnPit 1.3 — leading-seat-shorthand + exactly ONE card (a form legacy cannot reparse) is handled directly, never lost to a bad deferral", () => {
+  it('"three has a ten" -> Seat 3: 10 — previously lost (narration deferred to legacy as if it were the plain "seat three ten" shape, but legacy has no shorthand grammar at all and rejected it)', () => {
+    expect(cardOps(parseNarration("three has a ten"))).toEqual([{ kind: "card", target: { kind: "seat", seat: 3 }, rank: "10" }]);
+  });
+
+  it('"one has a king" -> Seat 1: K', () => {
+    expect(cardOps(parseNarration("one has a king"))).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 1 }, rank: "10", displayRank: "K" },
+    ]);
+  });
+});
+
+describe('EyeOnPit 1.3 — ASR normalization: "play" recognized in place of "player" immediately before a valid seat number', () => {
+  it('"play three has a five and a king" -> Seat 3: 5, K — two distinct cards force narration to handle it directly (not deferred to legacy), proving the "play"->"player" substitution is visible to narration\'s own grammar, not just legacy\'s', () => {
+    expect(cardOps(parseNarration("play three has a five and a king"))).toEqual([
+      { kind: "card", target: { kind: "seat", seat: 3 }, rank: "5" },
+      { kind: "card", target: { kind: "seat", seat: 3 }, rank: "10", displayRank: "K" },
+    ]);
+  });
+
+  it('"play three has 10" (a single card) resolves to the same 2-op shape "player three has 10" always has, so narration correctly defers — see parseVoiceCommand.test.ts for the legacy-layer assertion that actually enters the card', () => {
+    expect(parseNarration("play three has 10").kind).toBe("no-opinion");
+    expect(parseNarration("player three has 10").kind).toBe("no-opinion");
+  });
+
+  it('"play" NOT immediately followed by a seat number is left completely untouched — never guessed as "player"', () => {
+    // "play" here isn't adjacent to a seat number at all, so it stays
+    // ordinary unrecognized noise, same as before this normalization existed.
+    expect(parseNarration("let's play a hand dealer has a five").kind).toBe("reject");
+  });
+});
+
+describe('EyeOnPit 1.3 — natural target-activation wording: "active seat one" / "seat one active"', () => {
+  it('"active seat one" -> a bare target-selection op for Seat 1 (the stray "active" word is recognized vocabulary, never counted as noise)', () => {
+    const result = parseNarration("active seat one");
+    expect(result.kind).toBe("ops");
+    if (result.kind !== "ops") return;
+    expect(result.ops).toEqual([{ kind: "selectTarget", target: { kind: "seat", seat: 1 } }]);
+  });
+
+  it('"seat one active" -> the same bare target-selection op for Seat 1', () => {
+    const result = parseNarration("seat one active");
+    expect(result.kind).toBe("ops");
+    if (result.kind !== "ops") return;
+    expect(result.ops).toEqual([{ kind: "selectTarget", target: { kind: "seat", seat: 1 } }]);
+  });
+});
+
+describe('EyeOnPit 1.3 — "next hand" is a natural alias for "done" (NOT "next") — see parseVoiceCommand.ts\'s WORKFLOW_WORDS doc comment for the product rationale', () => {
+  it('"dealer king ace next hand" -> a "done" workflow op after the dealer\'s cards, not "next"', () => {
+    const result = parseNarration("dealer king ace next hand");
+    expect(result.kind).toBe("ops");
+    if (result.kind !== "ops") return;
+    expect(result.ops).toEqual([
+      { kind: "selectTarget", target: { kind: "dealer" } },
+      { kind: "card", target: { kind: "dealer" }, rank: "10", displayRank: "K" },
+      { kind: "card", target: { kind: "dealer" }, rank: "A" },
+      { kind: "workflow", action: "done" },
+    ]);
+  });
+});
+
+describe("EyeOnPit 1.3 — unrelated conversation and ordinary observation still reject, unaffected by the extended grammar", () => {
+  it.each([
+    "seat three raised his bet after the five",
+    "player looks like he is counting",
+    "the player in the corner is annoyed",
+    "player bet the ace",
+    "I saw the player at the bar",
+  ])('"%s" -> reject, zero card ops', (transcript) => {
+    expect(parseNarration(transcript).kind).toBe("reject");
   });
 });

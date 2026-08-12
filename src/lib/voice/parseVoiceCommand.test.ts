@@ -383,3 +383,54 @@ describe('parseVoiceCommand — "C<n>" normalization (a recurring Web Speech art
     expect(parseVoiceCommand("C9 king").command).toEqual({ kind: "card", rank: "10", displayRank: "K" });
   });
 });
+
+describe('EyeOnPit 1.3 — ASR normalization: "play" recognized as "player" (narrow, deterministic, never broadened)', () => {
+  it('"play three has 10" -> Seat 3: 10 — the legacy-layer resolution for the single-card case (parseNarration.test.ts covers the same fix at the narration layer for multi-card utterances)', () => {
+    expect(parseVoiceCommand("play three has 10").command).toEqual({
+      kind: "card",
+      rank: "10",
+      target: { kind: "seat", seat: 3 },
+    });
+  });
+
+  it('"play r2 has 5" -> Seat 2: 5 — the "play R2" compound ASR artifact for "player two"', () => {
+    expect(parseVoiceCommand("play r2 has 5").command).toEqual({
+      kind: "card",
+      rank: "5",
+      target: { kind: "seat", seat: 2 },
+    });
+  });
+
+  it('a bare "play three" (no card) still resolves to plain seat selection, exactly like "player three" — the substitution applies before the exact-phrase fast path, not just the noisy fallback', () => {
+    expect(parseVoiceCommand("play three").command).toEqual({ kind: "select-seat", seat: 3 });
+  });
+
+  it('"play" NOT immediately followed by a seat number is left completely untouched, never guessed as "player"', () => {
+    expect(parseVoiceCommand("play").command).toBeNull();
+    // "play" followed by an out-of-range r-token (r9) is also left alone.
+    expect(parseVoiceCommand("play r9 has 5").command).toBeNull();
+  });
+
+  it('a bare "r2" NOT preceded by "play" is never treated as a target on its own — too ambiguous to guess', () => {
+    expect(parseVoiceCommand("r2").command).toBeNull();
+  });
+});
+
+describe("EyeOnPit 1.3 — SAFETY: uncertainty language rejects even a single-stray-word transcript the ordinary noise tolerance would otherwise salvage", () => {
+  it.each(["maybe five", "probably king", "possibly ace", "i think five"])(
+    '"%s" -> null (never entered as a card, even though it is structurally identical to the tolerated "Taylor king" misheard-name case)',
+    (transcript) => {
+      expect(parseVoiceCommand(transcript).command).toBeNull();
+    }
+  );
+});
+
+describe('EyeOnPit 1.3 — "next hand" is a natural alias for "done" (a DIFFERENT phrase and a DIFFERENT command from the existing "new hand" -> "next" alias)', () => {
+  it('"next hand" -> done', () => {
+    expect(parseVoiceCommand("next hand").command).toEqual({ kind: "done" });
+  });
+
+  it('"new hand" still maps to "next", proving the two phrases are not confused with each other', () => {
+    expect(parseVoiceCommand("new hand").command).toEqual({ kind: "next" });
+  });
+});

@@ -905,6 +905,146 @@ describe("VoiceControl — workflow", () => {
   });
 });
 
+describe("EyeOnPit 1.3 — dealer bust headset feedback (derived automatically from recorded dealer cards, never a spoken command)", () => {
+  it('announces "Dealer bust." exactly once, the moment the recorded dealer hand mathematically transitions into a bust — the operator never says "dealer busted"', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king")); // dealer 10
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("six")); // dealer 16, still not bust
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("2"));
+    expect(mockSpeechSynthesis.speak).not.toHaveBeenCalled();
+
+    await awaitRestartFrom(before);
+    mockSpeechSynthesis.speak.mockClear();
+    await act(async () => sayFinal("king")); // dealer 26 -> bust
+
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("3"));
+    await waitFor(() => expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1));
+    const spoken = mockSpeechSynthesis.speak.mock.calls[0][0] as MockSpeechSynthesisUtterance;
+    expect(spoken.text).toBe("Dealer bust.");
+  });
+
+  it("never re-announces on a later, unrelated re-render once the hand is already busted", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king"));
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("six"));
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    mockSpeechSynthesis.speak.mockClear();
+    await act(async () => sayFinal("king")); // bust
+    await waitFor(() => expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1));
+
+    // An unrelated action (selecting a seat) forces VoiceControl to
+    // re-render — the effect must not mistake this for a new bust.
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("seat two"));
+    await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("2"));
+    expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1); // still just the one "Dealer bust."
+  });
+
+  it("Undo removing the busting card leaves the state consistent — a later re-bust of the SAME round announces again, exactly once", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king"));
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("six"));
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    mockSpeechSynthesis.speak.mockClear();
+    await act(async () => sayFinal("king")); // dealer 26 -> bust
+    await waitFor(() => expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    mockSpeechSynthesis.speak.mockClear();
+    await act(async () => sayFinal("undo")); // removes the second king -> dealer 16, no longer bust
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("2"));
+    // Undo speaks its own "Undone. Hi-Lo ..." confirmation (pre-existing,
+    // unrelated behavior) — what matters here is that it is NOT a second
+    // "Dealer bust." announcement.
+    const undoSpoken = mockSpeechSynthesis.speak.mock.calls.map(
+      (call) => (call[0] as MockSpeechSynthesisUtterance).text
+    );
+    expect(undoSpoken).not.toContain("Dealer bust.");
+
+    await awaitRestartFrom(before);
+    mockSpeechSynthesis.speak.mockClear();
+    await act(async () => sayFinal("king")); // dealer 26 again -> a genuine NEW transition
+
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("3"));
+    await waitFor(() => expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1));
+    const spoken = mockSpeechSynthesis.speak.mock.calls[0][0] as MockSpeechSynthesisUtterance;
+    expect(spoken.text).toBe("Dealer bust.");
+  });
+
+  it("a NEW round resets bust tracking — the previous round's bust never carries over and blocks a fresh announcement", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king"));
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("six"));
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    mockSpeechSynthesis.speak.mockClear();
+    await act(async () => sayFinal("king")); // bust
+    await waitFor(() => expect(mockSpeechSynthesis.speak).toHaveBeenCalledTimes(1));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("done"));
+    await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("next"));
+    await waitFor(() => expect(screen.getByTestId("round-count").textContent).toBe("2"));
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("0"));
+
+    await awaitRestartFrom(before);
+    mockSpeechSynthesis.speak.mockClear();
+    await act(async () => sayFinal("king")); // fresh round, dealer 10 — nowhere near a bust
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+    expect(mockSpeechSynthesis.speak).not.toHaveBeenCalled();
+  });
+});
+
 describe('VoiceControl — "count"/"status" (read-only spoken feedback)', () => {
   it('"count" speaks the current Hi-Lo running count through speech synthesis and creates zero CardEvents', async () => {
     const investigationId = await freshInvestigationId();
@@ -1309,6 +1449,265 @@ describe("VoiceControl — investigation-lifecycle voice commands (Pause/Resume/
     } finally {
       useSettingsStore.getState().setFloorSpokenCountContent("hiloRc");
     }
+  });
+});
+
+describe('VoiceControl — "Start Count" / "End Count" (natural aliases for the exact same tested Resume/Pause machinery)', () => {
+  it('"end count" pauses; "start count" resumes — identical behavior and wording to "pause investigation"/"resume investigation"', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    const before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("end count"));
+
+    await waitFor(() => expect(screen.getByTestId("investigation-status").textContent).toBe("paused"));
+    await waitFor(() => screen.getByText("✓ Paused"));
+
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("start count"));
+
+    await waitFor(() => expect(screen.getByTestId("investigation-status").textContent).toBe("active"));
+    await waitFor(() => screen.getByText("✓ Resumed"));
+  });
+
+  it('"end count" never resets the running count, shoe, or history — only "new shoe" does', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king")); // dealer, Hi-Lo -1
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("end count"));
+    await waitFor(() => expect(screen.getByTestId("investigation-status").textContent).toBe("paused"));
+
+    // Nothing about the round/shoe/history changed — only entry is blocked.
+    expect(screen.getByTestId("shoe-number").textContent).toBe("1");
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("1");
+    expect(screen.getByTestId("round-count").textContent).toBe("1");
+
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("start count"));
+    await waitFor(() => expect(screen.getByTestId("investigation-status").textContent).toBe("active"));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("1");
+  });
+
+  it('"end count" while already paused is rejected as already-paused, exactly like "pause investigation"', async () => {
+    const investigationId = await freshInvestigationId();
+    const { pauseInvestigation } = await import("@/lib/db/repositories/investigations");
+    await pauseInvestigation(investigationId);
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await waitFor(() => expect(screen.getByTestId("investigation-status").textContent).toBe("paused"));
+    await act(async () => sayFinal("end count"));
+
+    await waitFor(() => screen.getByText(/Already paused/));
+  });
+});
+
+describe("VoiceControl — persistent active target lock (Seat/Spot/Dealer spoken alone stays active for subsequent bare card words)", () => {
+  it('"spot 1" said alone, then "king" and "three" as SEPARATE utterances, both go to Spot 1 until the target changes', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("spot 1"));
+    await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king"));
+    await waitFor(() => expect(screen.getByTestId("seat-1-card-count").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("three"));
+    await waitFor(() => expect(screen.getByTestId("seat-1-card-count").textContent).toBe("2"));
+
+    // Never leaked to the dealer.
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+
+  it('"dealer" said alone, then a bare card word as a SEPARATE utterance, goes to the dealer', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("seat one")); // move off dealer first
+    await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("dealer"));
+    await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("dealer"));
+
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("ace"));
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+    expect(screen.getByTestId("seat-1-card-count").textContent).toBe("0");
+  });
+});
+
+describe('VoiceControl — SAFETY REGRESSION: "Three active seat five" must never guess Dealer', () => {
+  it('"three active seat three" produces ZERO CardEvents anywhere — never DEALER: 3 — and is shown as unrecognized, not silently accepted', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("dealer"));
+
+    await startListening();
+    await act(async () => sayFinal("three active seat three"));
+
+    // The dangerous outcome this closes: the card must never land on
+    // whatever was active (dealer, by default) just because a target word
+    // appeared later in the same utterance.
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+    expect(screen.getByTestId("seat-3-card-count").textContent).toBe("0");
+    await waitFor(() => screen.getByText(/Not recognized/));
+  });
+
+  it('multi-card narration that establishes its target FIRST is completely unaffected: "C5 has an ace C5 has a three" still becomes S5: A 3', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("C5 has an ace C5 has a three"));
+
+    await waitFor(() => screen.getByText("✓ S5: A 3"));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+});
+
+describe("VoiceControl — natural table changes (sat down / player at / left)", () => {
+  it('"spot 3 sat down" occupies Spot 3 and makes it the active target — same as tapping the seat', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("spot 3 sat down"));
+
+    await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe("3"));
+    expect(screen.getByTestId("active-target").textContent).toBe("3");
+    await waitFor(() => screen.getByText("✓ Seat 3 occupied"));
+  });
+
+  it('"player at spot 2" occupies Spot 2 — an alternate natural phrasing for the same join event', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("player at spot 2"));
+
+    await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe("2"));
+    expect(screen.getByTestId("active-target").textContent).toBe("2");
+  });
+
+  it('"spot 1 left" vacates an occupied seat — occupancy clears, active target falls back to dealer', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("spot 1 sat down"));
+    await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("spot 1 left"));
+
+    await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe(""));
+    await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("dealer"));
+    await waitFor(() => screen.getByText("✓ Seat 1 left the table"));
+  });
+
+  it('"spot 1 left" for a seat that was never occupied is rejected rather than silently logged', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("spot 1 left"));
+
+    await waitFor(() => screen.getByText(/already empty/));
+    expect(screen.getByTestId("occupied-seats").textContent).toBe("");
+  });
+
+  it("leaving a seat never touches the recorded count — cards already entered for that seat stay counted", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <CountSummaryPanel />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("spot 1 sat down"));
+    await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king")); // Seat 1: Hi-Lo -1
+    await waitFor(() => expect(screen.getByLabelText("HI-LO running count").textContent).toBe("-1"));
+
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("spot 1 left"));
+    await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe(""));
+
+    // The count is untouched — only the current round's seat record and
+    // occupancy were cleared, never the CardEvent ledger.
+    expect(screen.getByLabelText("HI-LO running count").textContent).toBe("-1");
   });
 });
 
@@ -2297,6 +2696,339 @@ describe("VoiceControl — read-only query safety (section 9/10): natural flexib
 
     await waitFor(() => screen.getByText(/Not recognized/));
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+});
+
+describe("EyeOnPit 1.3 — multi-target narration end to end: multiple explicit players, and the dealer, in ONE utterance", () => {
+  it('"Player one has a seven, player three has a five." -> Seat 1 gets exactly one card, Seat 3 gets exactly one card, in spoken order, in a SINGLE utterance', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("Player one has a seven, player three has a five."));
+
+    // Wait for the FINAL confirmation first — commitNarration awaits each
+    // step in order, so this only appears once every card has landed,
+    // avoiding a race against the intermediate render after just the first.
+    await waitFor(() => screen.getByText("✓ S1: 7 · S3: 5"));
+    expect(screen.getByTestId("seat-1-card-count").textContent).toBe("1");
+    expect(screen.getByTestId("seat-3-card-count").textContent).toBe("1");
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+    expect(screen.getByTestId("active-target").textContent).toBe("3"); // ends on the last target spoken
+  });
+
+  it('"Spot one has a seven, spot three has a five, dealer has an ace." -> three distinct targets, dealer mixed in, all committed in spoken order', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("Spot one has a seven, spot three has a five, dealer has an ace."));
+
+    await waitFor(() => screen.getByText("✓ S1: 7 · S3: 5 · DEALER: A"));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("1");
+    expect(screen.getByTestId("seat-1-card-count").textContent).toBe("1");
+    expect(screen.getByTestId("seat-3-card-count").textContent).toBe("1");
+    expect(screen.getByTestId("active-target").textContent).toBe("dealer");
+  });
+});
+
+describe("EyeOnPit 1.3 — repeated same-target narration end to end: two clauses naming the SAME player merge into one hand, never rejected", () => {
+  it('"Player three has a five, player three has a king." -> Seat 3 gets BOTH cards', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("Player three has a five, player three has a king."));
+
+    await waitFor(() => expect(screen.getByTestId("seat-3-card-count").textContent).toBe("2"));
+    await waitFor(() => screen.getByText("✓ S3: 5 K"));
+  });
+
+  it('"Seat four has a five, seat four has a king." -> both cards land on Seat 4 (no per-seat probe testid at 4, verified via the confirmation label and total card count across seats 1-3 staying zero)', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("Seat four has a five, seat four has a king."));
+
+    await waitFor(() => screen.getByText("✓ S4: 5 K"));
+    expect(screen.getByTestId("seat-1-card-count").textContent).toBe("0");
+    expect(screen.getByTestId("seat-2-card-count").textContent).toBe("0");
+    expect(screen.getByTestId("seat-3-card-count").textContent).toBe("0");
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+});
+
+describe("EyeOnPit 1.3 — natural seat/player/spot phrasing end to end: no computer-style S1/C1 required", () => {
+  it.each([
+    "the player in seat one has a seven",
+    "the player at seat one has a seven",
+    "player at spot one has a seven",
+  ])('"%s" -> exactly one Seat 1 CardEvent', async (transcript) => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal(transcript));
+
+    await waitFor(() => expect(screen.getByTestId("seat-1-card-count").textContent).toBe("1"));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+
+  it('"the player in seat one" ALONE selects Seat 1 (occupies + activates), exactly like "seat one"', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("the player in seat one"));
+
+    await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe("1"));
+    expect(screen.getByTestId("active-target").textContent).toBe("1");
+  });
+});
+
+describe("EyeOnPit 1.3 — ASR normalization end to end: play->player", () => {
+  it('"play three has 10" -> exactly one Seat 3 CardEvent (rank 10)', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("play three has 10"));
+
+    await waitFor(() => expect(screen.getByTestId("seat-3-card-count").textContent).toBe("1"));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+
+  it('"play R2 has 5" (the captured "player two" artifact) -> exactly one Seat 2 CardEvent', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("play R2 has 5"));
+
+    await waitFor(() => expect(screen.getByTestId("seat-2-card-count").textContent).toBe("1"));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+});
+
+describe("EyeOnPit 1.3 — SAFETY end to end: uncertainty language and ambiguous ASR never create a CardEvent", () => {
+  it.each([
+    "Maybe player one has a three.",
+    "Dealer should have busted.",
+    "For ten minutes dealer has a ten.",
+    "He probably has a five.",
+  ])('"%s" -> zero CardEvents anywhere, shown as unrecognized', async (transcript) => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal(transcript));
+
+    await waitFor(() => screen.getByText(/Not recognized/));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+    expect(screen.getByTestId("seat-1-card-count").textContent).toBe("0");
+  });
+});
+
+describe('EyeOnPit 1.3 — "Next hand" (a natural alias for "Done", never confused with the existing "New Hand" -> "Next" alias)', () => {
+  it('"dealer king ace next hand" completes the round (Done\'s own behavior), exactly like ending the same narration with "done"', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("dealer king ace next hand"));
+
+    await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("2");
+  });
+
+  it('a bare "next hand" triggers Done\'s behavior specifically, not Next\'s — with ZERO dealer cards recorded, Done is gated (canCompleteRound requires dealer cards) and "next hand" is correctly BLOCKED rather than silently advancing the way bare "next" would', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("next hand"));
+
+    await waitFor(() => screen.getByText(/isn.t available right now|not available/));
+    expect(screen.getByTestId("round-completed").textContent).toBe("false");
+    expect(screen.getByTestId("round-count").textContent).toBe("1"); // never silently advanced to a new round either
+  });
+
+  it('once the dealer has cards, a bare "next hand" completes the round — the same gate bare "done" already has', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    const before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("king"));
+    await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    await act(async () => sayFinal("next hand"));
+
+    await waitFor(() => expect(screen.getByTestId("round-completed").textContent).toBe("true"));
+  });
+});
+
+describe("EyeOnPit 1.3 — natural count queries end to end", () => {
+  it.each(["What's the true count?", "What is the true count?"])('"%s" is answered, zero CardEvents', async (phrase) => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal(phrase));
+
+    await waitFor(() => screen.getByText(/True count|TC/));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+
+  it('"What\'s the running count?" is answered', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("What's the running count?"));
+
+    await waitFor(() => screen.getByText(/Hi-Lo/));
+  });
+
+  it.each(["What's the KO count?", "Status of KO."])('"%s" speaks the KO count specifically', async (phrase) => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal(phrase));
+
+    await waitFor(() => screen.getByText(/K O/));
+  });
+
+  it.each(["What's Omega?", "Status of Omega."])('"%s" speaks the Omega II count specifically', async (phrase) => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal(phrase));
+
+    await waitFor(() => screen.getByText(/Omega/));
+  });
+
+  it.each(["How many decks are left?", "How many decks remain?"])('"%s" is answered, zero CardEvents', async (phrase) => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal(phrase));
+
+    await waitFor(() => screen.getByText(/deck/i));
+    expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
+  });
+});
+
+describe('EyeOnPit 1.3 — natural target-activation wording end to end: "Active seat one." / "Seat one active."', () => {
+  it.each(["active seat one", "seat one active"])('"%s" activates Seat 1 (occupies + activates, exactly like "seat one")', async (transcript) => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal(transcript));
+
+    await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe("1"));
+    expect(screen.getByTestId("active-target").textContent).toBe("1");
+  });
+});
+
+describe("EyeOnPit 1.3 — natural table changes end to end: additional phrasing", () => {
+  it('"Player seat one left the table." vacates seat 1 exactly like "spot one left"', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await startListening();
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("spot 1 sat down"));
+    await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe("1"));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("Player seat one left the table."));
+
+    await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe(""));
+    await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("dealer"));
   });
 });
 

@@ -88,6 +88,154 @@ function buildSeatPhrases(): Record<string, VoiceSeat> {
 const SEAT_PHRASES: Record<string, VoiceSeat> = buildSeatPhrases();
 
 /**
+ * Natural connector words that can sit between a seat-prefix word and the
+ * seat number itself — "the player IN seat one", "the player AT seat one"
+ * — real captured surveillance phrasing, not computer-style "S1"/"C1"
+ * shorthand. See `matchSeatTargetPhrase` below for the full grammar this
+ * enables.
+ */
+const SEAT_PHRASE_CONNECTOR_WORDS = new Set(["in", "at"]);
+
+/**
+ * Recognizes a natural target phrase starting at `tokens[i]`, where
+ * `tokens[i]` is already known to be a SEAT_PREFIX_WORD ("seat"/"player"/
+ * "spot"). Operators describing a table narratively don't say "S1" — they
+ * say "the player in seat one," "the player at seat one," "player at spot
+ * one," or (per real captured phrasing) stack two prefix words together,
+ * "player seat one." All of these mean exactly ONE thing: seat 1. This is
+ * the single shared grammar for that — used by parseNarration.ts (so
+ * "the player in seat one has a seven" resolves the target correctly) and
+ * parseTableChangeCommand.ts (so "player seat one left the table" resolves
+ * it too) — never duplicated ad hoc in either caller.
+ *
+ * Forms recognized, in order (tokensConsumed counts tokens AFTER `i`):
+ *   1. `<prefix> <number>` — "seat one" (the original, base case)
+ *   2. `<prefix> <prefix2> <number>` — "player seat one" (two prefix words
+ *      stacked directly, no connector)
+ *   3. `<prefix> <connector> <number>` — "player at one"
+ *   4. `<prefix> <connector> <prefix2> <number>` — "the player in seat one"
+ *      (after "the" is swallowed as ordinary filler), "player at spot one"
+ *
+ * Anything else (a prefix word followed by something that is neither a
+ * valid seat number nor one of the above) returns null — never guessed,
+ * never hunted further; the caller treats that exactly like today's
+ * "player bet ace" rejection. `extended` is true for forms 2-4: these are
+ * NEW capability the legacy single-command grammar has no equivalent for
+ * (see parseNarration.ts's `sawNonLegacyTargetForm`), so a caller that
+ * might otherwise defer a trivial result back to legacy must not do so
+ * when `extended` is true.
+ */
+export function matchSeatTargetPhrase(
+  tokens: string[],
+  i: number
+): { seat: VoiceSeat; tokensConsumed: number; extended: boolean } | null {
+  const t1 = tokens[i + 1];
+  if (t1 == null) return null;
+
+  const directSeat = SEAT_NUMBER_BY_WORD[t1];
+  if (directSeat != null) return { seat: directSeat, tokensConsumed: 1, extended: false };
+
+  if (SEAT_PREFIX_WORDS.includes(t1)) {
+    const seat = tokens[i + 2] != null ? SEAT_NUMBER_BY_WORD[tokens[i + 2]] : null;
+    return seat != null ? { seat, tokensConsumed: 2, extended: true } : null;
+  }
+
+  if (SEAT_PHRASE_CONNECTOR_WORDS.has(t1)) {
+    const t2 = tokens[i + 2];
+    if (t2 == null) return null;
+    const seatAfterConnector = SEAT_NUMBER_BY_WORD[t2];
+    if (seatAfterConnector != null) return { seat: seatAfterConnector, tokensConsumed: 2, extended: true };
+    if (SEAT_PREFIX_WORDS.includes(t2)) {
+      const seat = tokens[i + 3] != null ? SEAT_NUMBER_BY_WORD[tokens[i + 3]] : null;
+      if (seat != null) return { seat, tokensConsumed: 3, extended: true };
+    }
+    return null;
+  }
+
+  return null;
+}
+
+/**
+ * Words that mark the speaker as UNCERTAIN rather than reporting an
+ * observed fact — "Maybe player one has a three," "He probably has a
+ * five." Per explicit product safety requirement, uncertainty language must
+ * never result in a committed CardEvent, and this must not depend on
+ * incidentally tripping the ordinary noise-token cap (a short transcript
+ * like "maybe five" has only ONE stray word alongside a real card word —
+ * structurally identical to the tolerated "Taylor king" misheard-name case
+ * — so without an explicit check it could slip through the existing
+ * MAX_NOISE_TOKENS=1 tolerance). Checked as an unconditional, immediate
+ * hard rejection — never counted as ordinary noise, never traded off
+ * against the noise cap — by both parseNarration.ts (at the very top,
+ * before any op is built) and this file's own noisy-token fallback below.
+ */
+const UNCERTAINTY_WORDS = new Set(["maybe", "possibly", "probably", "perhaps"]);
+
+export function containsUncertaintyLanguage(tokens: string[]): boolean {
+  for (let i = 0; i < tokens.length; i++) {
+    if (UNCERTAINTY_WORDS.has(tokens[i])) return true;
+    if (tokens[i] === "i" && tokens[i + 1] === "think") return true;
+  }
+  return false;
+}
+
+/**
+ * Narrow, deterministic normalization for two specific, real captured ASR
+ * artifacts — never broadened into general fuzzy matching, per explicit
+ * product direction ("Seat/player/spot ambiguity should fail closed when
+ * the target cannot be determined confidently"):
+ *
+ *   1. "play three has 10" — "play" recognized in place of "player"
+ *      immediately before a valid seat number. Only fires when the very
+ *      next token is unambiguously a seat number (1-7); "play" anywhere
+ *      else (ordinary conversation, "let's play a hand") is left
+ *      completely untouched.
+ *   2. "play R2" — captured in place of "player two": "play" immediately
+ *      followed by an "r<n>" token (an artifact of the same shape as the
+ *      already-recognized "c<n>" -> seat n substitution — see
+ *      seatFromCToken). Both tokens are replaced together with
+ *      "player <n>", never just the first, so a bare "r2" NOT preceded by
+ *      "play" is left alone (too ambiguous on its own to ever guess).
+ *
+ * Applied once, at the string level, immediately after normalizeTranscript
+ * and before any other parsing — both parseVoiceCommand and parseNarration
+ * call this so the substitution is visible to every downstream check
+ * (exact-phrase fast path, noisy fallback, and narration's own grammar)
+ * identically.
+ */
+const ASR_R_SEAT_TOKEN_RE = /^r([0-9]+)$/;
+
+export function normalizeAsrSeatArtifacts(normalized: string): string {
+  const tokens = normalized.split(" ").filter(Boolean);
+  const result: string[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    const next = tokens[i + 1];
+
+    if (token === "play" && next != null) {
+      if (SEAT_NUMBER_BY_WORD[next] != null) {
+        result.push("player");
+        continue;
+      }
+      const rMatch = ASR_R_SEAT_TOKEN_RE.exec(next);
+      if (rMatch) {
+        const n = Number(rMatch[1]);
+        if (n >= 1 && n <= 7) {
+          result.push("player", String(n));
+          i += 1;
+          continue;
+        }
+      }
+    }
+
+    result.push(token);
+  }
+
+  return result.join(" ");
+}
+
+/**
  * Recognizes the same "C<n>" artifact as a TARGET token inside the noisy
  * fallback (see extractFromNoisyTokens) — deliberately its own function,
  * checked only where a target is being looked for, never anywhere a bare
@@ -175,9 +323,18 @@ export const FACE_CARD_DISPLAY: Record<string, "J" | "Q" | "K"> = {
  * deferral had nowhere to land and the phrase was rejected outright, even
  * though it's the natural way an operator would ask to move on after
  * Done — see docs/EYEONPIT_OPERATOR_MANUAL.md.
+ *
+ * "next hand" is a DIFFERENT phrase from "new hand" above, mapped to the
+ * OPPOSITE existing command ("done", not "next") per explicit product
+ * direction: "Next hand" is how an operator narrates finishing the hand
+ * they're on, and that is exactly what "Done" already does — including
+ * Floor Mode's existing auto-advance-to-the-next-round behavior once the
+ * round completes (see useRoundControls' handleDone). No new command, no
+ * new advance logic — just another natural trigger phrase for "done".
  */
 const WORKFLOW_WORDS: Record<string, "done" | "next" | "undo" | "count" | "status"> = {
   done: "done",
+  "next hand": "done",
   next: "next",
   "next seat": "next",
   "new hand": "next",
@@ -309,6 +466,12 @@ function cardCommand(word: string, target?: VoiceTarget): VoiceCommandKind {
  */
 function extractFromNoisyTokens(normalized: string): VoiceCommandKind | null {
   const tokens = normalized.split(" ").filter(Boolean);
+  // See containsUncertaintyLanguage's own doc comment — an immediate, hard
+  // rejection, never merely counted against MAX_NOISE_TOKENS: a short
+  // transcript like "maybe five" has only ONE stray word alongside a real
+  // card word, which the ordinary noise cap would otherwise tolerate
+  // exactly like a misheard proper noun.
+  if (containsUncertaintyLanguage(tokens)) return null;
 
   let target: VoiceTarget | undefined;
   const distinctRanks = new Map<VoiceRank, string>(); // rank -> the word that produced it (for displayRank)
@@ -371,7 +534,7 @@ function extractFromNoisyTokens(normalized: string): VoiceCommandKind | null {
  * is the key.
  */
 export function parseVoiceCommand(rawTranscript: string): ParsedVoiceCommand {
-  const normalized = normalizeTranscript(rawTranscript);
+  const normalized = normalizeAsrSeatArtifacts(normalizeTranscript(rawTranscript));
 
   if (normalized === "dealer") {
     return { raw: rawTranscript, normalized, command: { kind: "select-dealer" } };

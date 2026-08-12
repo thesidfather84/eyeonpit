@@ -57,13 +57,28 @@ const SYSTEM_NAME_WORDS: Record<string, CountingSystem> = {
   "omega 2": "Omega II",
 };
 
-/** "", "what is the ", "what's the ", ... — prepended to every system-name word (and to "count"/aces/decks phrasing elsewhere) so one phrasing list covers "KO?", "What is the KO?", "What's the KO?" etc. without hand-listing every combination. */
-const QUESTION_PREFIXES = ["", "what is the ", "what's the ", "whats the ", "what is ", "what's ", "whats ", "where is the "];
+/** "", "what is the ", "what's the ", ... — prepended to every system-name word (and to "count"/aces/decks phrasing elsewhere) so one phrasing list covers "KO?", "What is the KO?", "What's the KO?" etc. without hand-listing every combination. "status of " covers the natural "Status of KO."/"Status of Omega." phrasing — the same "status of X" shape as this app's own STATUS_PHRASES vocabulary, just naming a specific system instead of asking for the default one. */
+const QUESTION_PREFIXES = [
+  "",
+  "what is the ",
+  "what's the ",
+  "whats the ",
+  "what is ",
+  "what's ",
+  "whats ",
+  "where is the ",
+  "status of ",
+];
+
+/** "", " count" — appended after the system-name word so "KO count"/"what's the KO count" are recognized alongside the bare "KO"/"what's the KO" forms already covered by QUESTION_PREFIXES alone. */
+const QUESTION_SUFFIXES = ["", " count"];
 
 const SYSTEM_PHRASES: Record<string, CountingSystem> = {};
 for (const prefix of QUESTION_PREFIXES) {
-  for (const [word, system] of Object.entries(SYSTEM_NAME_WORDS)) {
-    SYSTEM_PHRASES[`${prefix}${word}`] = system;
+  for (const suffix of QUESTION_SUFFIXES) {
+    for (const [word, system] of Object.entries(SYSTEM_NAME_WORDS)) {
+      SYSTEM_PHRASES[`${prefix}${word}${suffix}`] = system;
+    }
   }
 }
 
@@ -97,9 +112,11 @@ const DECKS_PHRASES = new Set([
   "decks",
   "decks remaining",
   "decks left",
+  "decks remain",
   "how many decks left",
   "how many decks are left",
   "how many decks remaining",
+  "how many decks remain",
 ]);
 
 const REPEAT_PHRASES = new Set(["repeat", "repeat that", "say that again"]);

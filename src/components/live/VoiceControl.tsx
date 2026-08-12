@@ -9,6 +9,7 @@ import { useSpeechRecognitionSupport } from "@/hooks/useSpeechRecognitionSupport
 import { useVoiceRecognition, type VoiceLifecycleEvent, type VoiceResult } from "@/hooks/useVoiceRecognition";
 import { parseVoiceCommand, type VoiceCommandKind, type VoiceSeat, type VoiceTarget } from "@/lib/voice/parseVoiceCommand";
 import { parseNarration, type NarrationOp } from "@/lib/voice/parseNarration";
+import { parseTableChangeCommand } from "@/lib/voice/parseTableChangeCommand";
 import { formatNarrationConfirmation, type ConfirmationEntry } from "@/lib/voice/narrationConfirmation";
 import { normalizeTranscript } from "@/lib/voice/normalizeTranscript";
 import { resolveCardEntryTarget, type CardTarget } from "@/lib/utils/cardEntryResolution";
@@ -21,6 +22,7 @@ import {
 } from "@/lib/db/repositories/investigations";
 import { getCardEventsForInvestigation } from "@/lib/db/repositories/cardEvents";
 import { eventsInShoe } from "@/lib/counting-engine/ledger";
+import { computeHandTotal } from "@/lib/utils/blackjackTotal";
 import { diagnostics } from "@/lib/diagnostics/logger";
 import {
   buildAcesAnnouncement,
@@ -80,22 +82,35 @@ const NOTE_CANCEL_PHRASE = "cancel note";
 const NOTE_START_WITH_CONTENT_RE = /^\s*start\s+note[.,!?]?\s+(.+)$/i;
 
 /**
- * Investigation-lifecycle voice commands — Pause/Resume/New Shoe/End
- * Investigation. Deliberately exact multi-word phrases (matching every
- * other workflow word in this file — no fuzzy matching), checked directly
- * in handleFinalResult BEFORE narration/legacy dispatch, exactly like the
- * note-mode phrases above: none of these are card-entry vocabulary, and
- * none of them should ever be reinterpreted by parseNarration/
- * parseVoiceCommand (which don't know about them and would just treat the
- * words as noise). New Shoe and End Investigation both require a SEPARATE,
- * explicit confirmation phrase before anything actually happens — see
- * `pendingConfirmation` state below — matching the exact same
+ * Investigation-lifecycle voice commands — Pause/Resume ("Start Count"/"End
+ * Count" are natural-wording aliases for the exact same two, see below) /
+ * New Shoe/End Investigation. Deliberately exact multi-word phrases
+ * (matching every other workflow word in this file — no fuzzy matching),
+ * checked directly in handleFinalResult BEFORE narration/legacy dispatch,
+ * exactly like the note-mode phrases above: none of these are card-entry
+ * vocabulary, and none of them should ever be reinterpreted by
+ * parseNarration/parseVoiceCommand (which don't know about them and would
+ * just treat the words as noise). New Shoe and End Investigation both
+ * require a SEPARATE, explicit confirmation phrase before anything actually
+ * happens — see `pendingConfirmation` state below — matching the exact same
  * "never finalize on one recognition result" rule §17 of the operator-loop
  * milestone requires for End Investigation, applied consistently to New
  * Shoe too since it's equally consequential (resets the running count).
  */
 const PAUSE_PHRASE = "pause investigation";
 const RESUME_PHRASE = "resume investigation";
+/**
+ * "Start Count" / "End Count" — natural operator wording for exactly the
+ * same pause/resume machinery above, nothing more. Per explicit product
+ * direction: Start Count begins/continues live card entry without
+ * resetting the running count, shoe, or history (= Resume Investigation);
+ * End Count stops accepting entries while preserving everything (= Pause
+ * Investigation). Only "New Shoe" ever resets the running count — these
+ * two phrases are deliberately just aliases dispatched through the same
+ * checks below, never a second lifecycle path.
+ */
+const START_COUNT_PHRASE = "start count";
+const END_COUNT_PHRASE = "end count";
 const NEW_SHOE_PHRASE = "new shoe";
 const CONFIRM_NEW_SHOE_PHRASE = "confirm new shoe";
 const END_INVESTIGATION_PHRASE = "end investigation";
@@ -368,6 +383,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
     addCard,
     occupySeat,
     occupySeatAndAddCard,
+    markSeatEmpty,
     setActiveTarget,
     refresh,
     completeRound,
@@ -826,7 +842,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         setPendingConfirmation(null);
       }
 
-      if (normalized === PAUSE_PHRASE) {
+      if (normalized === PAUSE_PHRASE || normalized === END_COUNT_PHRASE) {
         if (investigation.status !== "active") {
           appendLog("REJECTED", `"${normalized}" — already paused or not active`);
           setStatus({ kind: "disabled", transcript: normalized, reason: "Already paused, or the investigation isn't active" });
@@ -840,7 +856,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         scheduleReset();
         return;
       }
-      if (normalized === RESUME_PHRASE) {
+      if (normalized === RESUME_PHRASE || normalized === START_COUNT_PHRASE) {
         if (investigation.status !== "paused") {
           appendLog("REJECTED", `"${normalized}" — not currently paused`);
           setStatus({ kind: "disabled", transcript: normalized, reason: "Not currently paused" });
@@ -926,6 +942,60 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         setStatus({ kind: "accepted", label: text });
         if (voiceAudioFeedback) speak(text);
         scheduleReset();
+        return;
+      }
+
+      // NATURAL TABLE CHANGES — "spot 6 sat down" / "player at spot 6" /
+      // "spot 1 left" — checked here, before narration/legacy dispatch,
+      // exactly like the lifecycle phrases above: this vocabulary
+      // ("sat down"/"left") means nothing to parseNarration (which would
+      // just count it as noise against a real target, or worse, treat a
+      // trailing "left" as a stray word next to a correctly-recognized
+      // seat) and nothing to parseVoiceCommand either. See
+      // parseTableChangeCommand.ts for the exact grammars recognized.
+      const tableChange = parseTableChangeCommand(result.transcript);
+      if (tableChange) {
+        if (tableChange.kind === "seat-joins") {
+          void (async () => {
+            // Same tap-parity primitive "seat six"/"spot six" already use
+            // (occupySeat) — creates the seat if it wasn't occupied yet and
+            // makes it the active target, exactly like a player sitting
+            // down becomes who you're watching next; no-ops to a plain
+            // select if the seat was already occupied.
+            await occupySeat(tableChange.seat);
+            const text = `Seat ${tableChange.seat} occupied`;
+            diagnostics.info("voice", "table change — seat occupied", { seat: tableChange.seat });
+            appendLog("ACCEPTED", text);
+            setStatus({ kind: "accepted", label: text });
+            if (voiceAudioFeedback) speak(text);
+            scheduleReset();
+          })();
+          return;
+        }
+        // seat-leaves
+        if (!investigation.occupiedSeats.includes(tableChange.seat)) {
+          const reason = `Seat ${tableChange.seat} is already empty`;
+          appendLog("REJECTED", `"${normalized}" — ${reason}`);
+          setStatus({ kind: "disabled", transcript: normalized, reason });
+          scheduleReset();
+          return;
+        }
+        void (async () => {
+          // Same primitive SeatOptionsSheet's "Mark Empty" button uses —
+          // clears the seat's CURRENT round record and occupancy/player-
+          // group assignment. Never touches the CardEvent ledger: every
+          // card already recorded for this seat, in this round or any
+          // earlier one, stays exactly as counted (see markSeatEmpty's own
+          // doc comment in investigations.ts) — this is a table-occupancy
+          // change, not an undo.
+          await markSeatEmpty(tableChange.seat);
+          const text = `Seat ${tableChange.seat} left the table`;
+          diagnostics.info("voice", "table change — seat left", { seat: tableChange.seat });
+          appendLog("ACCEPTED", text);
+          setStatus({ kind: "accepted", label: text });
+          if (voiceAudioFeedback) speak(text);
+          scheduleReset();
+        })();
         return;
       }
 
@@ -1104,6 +1174,8 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       pause,
       resume,
       refresh,
+      occupySeat,
+      markSeatEmpty,
     ]
   );
 
@@ -1208,6 +1280,39 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       }
     });
   }, [appendLog]);
+
+  // Dealer bust headset feedback: bust is never a separate operator
+  // command — it's derived, exactly like DealerTile's own on-screen
+  // display, from whatever cards are already recorded on the dealer's hand
+  // (computeHandTotal, the same pure function, over currentRound.dealerHand
+  // .cards — never a second bust concept, and this effect never calls
+  // addCard/completeRound/mutate anything itself). `dealerBustRef` is
+  // seeded from the ACTUAL bust state at mount/round-change (not a
+  // hardcoded `false`) specifically so reloading mid-round into an
+  // already-busted hand does not itself read as a fresh transition and
+  // announce again — only a LIVE not-busted -> busted change, witnessed by
+  // this effect actually running with a changed value, ever speaks.
+  // Keyed by round id: a new round always starts this tracking over, and
+  // Undo removing the busting card flips `dealerBust` back to false (see
+  // useRoundControls' handleUndo, which reads through this same derived
+  // total), so a later re-bust of the SAME round announces again exactly
+  // once, never silently suppressed and never repeated on an unrelated
+  // render.
+  const dealerBust = computeHandTotal(currentRound.dealerHand.cards).bust;
+  const dealerBustRef = useRef<{ roundId: string; wasBust: boolean }>({
+    roundId: currentRound.id,
+    wasBust: dealerBust,
+  });
+  useEffect(() => {
+    const prev = dealerBustRef.current;
+    const wasBustBefore = prev.roundId === currentRound.id ? prev.wasBust : false;
+    if (dealerBust && !wasBustBefore) {
+      diagnostics.info("voice", "dealer bust detected", { roundId: currentRound.id });
+      appendLog("DEALER BUST", `Round ${currentRound.id}`);
+      if (voiceAudioFeedback) speak("Dealer bust.");
+    }
+    dealerBustRef.current = { roundId: currentRound.id, wasBust: dealerBust };
+  }, [dealerBust, currentRound.id, voiceAudioFeedback, appendLog]);
 
   function handleToggle() {
     if (listening) {

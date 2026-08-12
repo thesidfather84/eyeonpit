@@ -99,3 +99,26 @@ describe("parseReadOnlyQuery — unknown general chat stays rejected (section 10
     expect(parse(phrase)).toBeNull();
   });
 });
+
+describe("EyeOnPit 1.3 — additional natural count-query phrasing", () => {
+  it.each([
+    ["What's the true count?", { kind: "tc" }],
+    ["What is the true count?", { kind: "tc" }],
+    ["What's the running count?", { kind: "rc" }],
+    ["What's the KO count?", { kind: "system", system: "KO" }],
+    ["Status of KO.", { kind: "system", system: "KO" }],
+    ["What's Omega?", { kind: "system", system: "Omega II" }],
+    ["Status of Omega.", { kind: "system", system: "Omega II" }],
+    ["How many decks are left?", { kind: "decks" }],
+    ["How many decks remain?", { kind: "decks" }],
+    ["Decks remain?", { kind: "decks" }],
+    ["Status of Hi-Lo.", { kind: "system", system: "Hi-Lo" }],
+  ] as const)('"%s" is recognized', (phrase, expected) => {
+    expect(parse(phrase)).toEqual(expected);
+  });
+
+  it('"status of" a system name is a natural sibling of the existing "status" phrase, never confused with the bare status intent', () => {
+    expect(parse("Status of KO.")).not.toEqual({ kind: "status" });
+    expect(parse("Status")).toEqual({ kind: "status" });
+  });
+});

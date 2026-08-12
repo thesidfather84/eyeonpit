@@ -42,6 +42,9 @@ import {
   RANK_WORDS,
   SEAT_NUMBER_BY_WORD,
   SEAT_PREFIX_WORDS,
+  containsUncertaintyLanguage,
+  matchSeatTargetPhrase,
+  normalizeAsrSeatArtifacts,
   seatFromCToken,
   type VoiceRank,
   type VoiceTarget,
@@ -86,6 +89,19 @@ export type NarrationResult =
  * does not yet mutate anything.
  */
 const INERT_ACTION_WORDS = new Set(["hit", "stand", "double", "split", "surrender", "insurance"]);
+
+/**
+ * "Active seat one." / "Seat one active." — a natural way to say "make
+ * this the active target," recognized exactly like INERT_ACTION_WORDS:
+ * valid narration vocabulary that produces no op of its own (the
+ * `selectTarget` op the seat word itself produces already does the work)
+ * and never counts as noise. Deliberately its own tiny set rather than
+ * folded into NOISE_FILLER_WORDS (which is unconditional everywhere,
+ * including legacy's shared noisy-token fallback) — "active" only means
+ * anything in the context of a target word, so it stays scoped to
+ * narration's own vocabulary, exactly like "hit"/"stand" already are.
+ */
+const TARGET_ACTIVATION_WORDS = new Set(["active"]);
 
 /**
  * Natural hand-connector grammar ("dealer HAS a king AND an ace", "spot 3
@@ -227,9 +243,18 @@ function isTrivialLegacyEquivalent(ops: NarrationOp[], sawOnlyBareTarget: boolea
  * discarded, never a truncated prefix of it.
  */
 export function parseNarration(rawTranscript: string): NarrationResult {
-  const normalized = normalizeTranscript(rawTranscript);
+  const normalized = normalizeAsrSeatArtifacts(normalizeTranscript(rawTranscript));
   const tokens = dedupeAdjacentRepeats(normalized.split(" ").filter(Boolean));
   if (tokens.length === 0) return { kind: "no-opinion" };
+
+  // SAFETY: an immediate, unconditional hard rejection — see
+  // containsUncertaintyLanguage's own doc comment for why this must never
+  // be merely counted against the ordinary noise-token cap. Checked before
+  // any op is built, so "maybe player one has a three and a five" (which
+  // would otherwise pass narration's own noise threshold at exactly one
+  // stray word) can never slip through by virtue of narration returning
+  // its own `ops` directly instead of deferring to legacy.
+  if (containsUncertaintyLanguage(tokens)) return { kind: "reject" };
 
   const ops: NarrationOp[] = [];
   let currentTarget: VoiceTarget | undefined;
@@ -242,6 +267,19 @@ export function parseNarration(rawTranscript: string): NarrationResult {
   // so deferring to legacy would be unsafe (it has no "target only, no
   // card" success case in its noisy fallback).
   let sawInertWord = false;
+  // True once ANY target in this utterance was established through a form
+  // the legacy single-command parser has NO equivalent understanding of —
+  // the leading-seat-number shorthand ("three has a ten") or an extended
+  // seat phrase via matchSeatTargetPhrase ("the player in seat one",
+  // "player at spot one"). isTrivialLegacyEquivalent's whole premise is
+  // "legacy would independently reparse this exact string and reach the
+  // identical result" — that premise is FALSE for these forms (legacy has
+  // no shorthand grammar and no connector/second-prefix grammar at all), so
+  // deferring would silently hand a transcript legacy cannot actually
+  // parse back to legacy, which is exactly how "three has a ten" and "the
+  // player in seat one has a seven" were previously lost. See the two call
+  // sites below and the final gating check near the end of this function.
+  let sawNonLegacyTargetForm = false;
   // Tracks distinct ranks spoken before any target was ever established in
   // this utterance — the one place the OLD "two distinct cards, no target
   // -> ambiguous, reject" rule still applies exactly as it always has (see
@@ -285,6 +323,19 @@ export function parseNarration(rawTranscript: string): NarrationResult {
       continue;
     }
 
+    // "next hand" — a DIFFERENT two-token phrase from "new hand" above,
+    // aliasing the OPPOSITE existing command ("done") — see
+    // parseVoiceCommand.ts's WORKFLOW_WORDS doc comment for the product
+    // rationale (an operator narrating "next hand" is describing finishing
+    // the one they're on, which is exactly what Done already does).
+    if (token === "next" && tokens[i + 1] === "hand") {
+      recognizedAnything = true;
+      ops.push({ kind: "workflow", action: "done" });
+      currentTarget = undefined;
+      i += 1;
+      continue;
+    }
+
     if (token in SINGLE_WORD_WORKFLOW) {
       recognizedAnything = true;
       ops.push({ kind: "workflow", action: SINGLE_WORD_WORKFLOW[token] });
@@ -307,20 +358,23 @@ export function parseNarration(rawTranscript: string): NarrationResult {
         noiseTokens += 1;
         continue;
       }
-      const seat = SEAT_NUMBER_BY_WORD[tokens[i + 1]];
-      if (seat == null) {
-        // Same rule as parseVoiceCommand's extractFromNoisyTokens: a
-        // target-trigger word immediately followed by something that is
-        // NOT a valid seat number is strong evidence of ordinary sentence
-        // structure ("player bet ace", "seat three raised his bet"), not a
-        // mangled seat attempt — reject the WHOLE narration outright,
-        // never hunt further. Covers "seat 135" (§10) and "seat eight"
-        // identically: neither is ever reinterpreted as a bare card.
-        return { kind: "reject" };
-      }
+      // matchSeatTargetPhrase recognizes both the original direct form
+      // ("seat one") and the natural connector/second-prefix forms
+      // ("the player in seat one", "player at spot one", "player seat
+      // one") — see its own doc comment. A null result here means the
+      // same thing it always has: a target-trigger word immediately
+      // followed by something that resolves to none of those forms is
+      // strong evidence of ordinary sentence structure ("player bet ace",
+      // "seat three raised his bet"), not a mangled seat attempt — reject
+      // the WHOLE narration outright, never hunt further. Covers "seat
+      // 135" (§10) and "seat eight" identically: neither is ever
+      // reinterpreted as a bare card.
+      const match = matchSeatTargetPhrase(tokens, i);
+      if (!match) return { kind: "reject" };
       recognizedAnything = true;
-      setTarget({ kind: "seat", seat });
-      i += 1;
+      if (match.extended) sawNonLegacyTargetForm = true;
+      setTarget({ kind: "seat", seat: match.seat });
+      i += match.tokensConsumed;
       continue;
     }
 
@@ -346,6 +400,7 @@ export function parseNarration(rawTranscript: string): NarrationResult {
     // and reinterpret a plain continuation card as a NEW seat.
     if (!currentTarget && SEAT_NUMBER_BY_WORD[token] != null && HAND_CONNECTOR_WORDS.has(tokens[i + 1] ?? "")) {
       recognizedAnything = true;
+      sawNonLegacyTargetForm = true; // legacy has no shorthand grammar at all — see the flag's own doc comment
       setTarget({ kind: "seat", seat: SEAT_NUMBER_BY_WORD[token] });
       continue;
     }
@@ -358,6 +413,12 @@ export function parseNarration(rawTranscript: string): NarrationResult {
 
     if (INERT_ACTION_WORDS.has(token)) {
       recognizedAnything = true; // valid narration vocabulary — never counted as noise, even though it produces no op (see INERT_ACTION_WORDS doc comment)
+      sawInertWord = true;
+      continue;
+    }
+
+    if (TARGET_ACTIVATION_WORDS.has(token)) {
+      recognizedAnything = true; // "active seat one" / "seat one active" — see TARGET_ACTIVATION_WORDS's own doc comment
       sawInertWord = true;
       continue;
     }
@@ -392,6 +453,26 @@ export function parseNarration(rawTranscript: string): NarrationResult {
   if (noiseTokens > MAX_NOISE_TOKENS) return { kind: "reject" };
   if (unscopedDistinctRanks.size > 1) return { kind: "reject" };
 
+  // SAFETY (real captured field bug): "Three active seat five" must never
+  // become DEALER: 3. A card pushed before ANY target was established in
+  // this utterance (`op.target` absent) is, at commit time, resolved
+  // against whatever the app's CURRENTLY active target happens to be —
+  // frequently the dealer by default — which is exactly a guess, not a
+  // resolution of what the operator meant. That guess is only safe when
+  // the WHOLE utterance never mentions a target at all (a genuine bare
+  // card like "five", deferred to legacy above/below); the moment this
+  // same utterance goes on to establish a real target ("seat five") for a
+  // LATER card, it proves the operator was using seat/spot/player/dealer
+  // language, which makes silently guessing where the EARLIER card landed
+  // unacceptable — reject the whole narration instead of guessing. This is
+  // deliberately broader than "never guess Dealer specifically": any
+  // unscoped card can only safely resolve against live active-target state
+  // when nothing else in the same utterance establishes a target, full
+  // stop.
+  if (ops.some((op) => op.kind === "card" && !op.target) && ops.some((op) => op.kind === "selectTarget")) {
+    return { kind: "reject" };
+  }
+
   // A bare, unscoped card ("5") with ANY surrounding unrecognized word
   // ("Team 5") must never become a CardEvent — not via narration itself,
   // and critically not by deferring to legacy either. parseVoiceCommand's
@@ -413,8 +494,15 @@ export function parseNarration(rawTranscript: string): NarrationResult {
     return { kind: "reject" };
   }
 
-  const sawOnlyBareTarget = ops.length === 1 && ops[0].kind === "selectTarget" && !sawInertWord;
-  if (isTrivialLegacyEquivalent(ops, sawOnlyBareTarget)) return { kind: "no-opinion" };
+  const sawOnlyBareTarget =
+    ops.length === 1 && ops[0].kind === "selectTarget" && !sawInertWord && !sawNonLegacyTargetForm;
+  // Never defer to legacy when any target in this utterance was established
+  // through a form legacy has no grammar for at all (shorthand or an
+  // extended connector/second-prefix phrase) — see sawNonLegacyTargetForm's
+  // own doc comment. Deferring here would hand legacy a transcript it
+  // cannot actually reparse, which is exactly how "three has a ten" and
+  // "the player in seat one has a seven" were previously lost.
+  if (!sawNonLegacyTargetForm && isTrivialLegacyEquivalent(ops, sawOnlyBareTarget)) return { kind: "no-opinion" };
 
   return { kind: "ops", ops };
 }

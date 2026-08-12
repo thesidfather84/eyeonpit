@@ -9,7 +9,7 @@ const NAV_LINKS = [
   { href: "/docs", label: "Documentation" },
 ];
 
-const DEMO_MAILTO = "mailto:demo@eyeonpit.com?subject=EyeOnPit%20Demo%20Request";
+const DEMO_MAILTO = "mailto:contact@eyeonpit.com?subject=EyeOnPit%20Demo%20Request";
 
 /**
  * Shared by every public page (homepage + all /docs pages) — deliberately

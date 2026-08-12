@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Eye } from "lucide-react";
 
-const DEMO_MAILTO = "mailto:demo@eyeonpit.com?subject=EyeOnPit%20Demo%20Request";
+const DEMO_MAILTO = "mailto:contact@eyeonpit.com?subject=EyeOnPit%20Demo%20Request";
 
 export function Hero() {
   return (

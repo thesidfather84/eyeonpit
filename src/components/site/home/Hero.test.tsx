@@ -15,4 +15,10 @@ describe("Hero — homepage Launch button (1.4.1 access-control patch)", () => {
     const demoLink = screen.getByRole("link", { name: "Request a Demo" });
     expect(demoLink.getAttribute("href")).toMatch(/^mailto:/);
   });
+
+  it('"Request a Demo" uses the contact@eyeonpit.com address', () => {
+    render(<Hero />);
+    const demoLink = screen.getByRole("link", { name: "Request a Demo" });
+    expect(demoLink.getAttribute("href")).toBe("mailto:contact@eyeonpit.com?subject=EyeOnPit%20Demo%20Request");
+  });
 });

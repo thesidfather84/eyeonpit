@@ -70,7 +70,7 @@ export function RecoveryScreen({ error, reset }: RecoveryScreenProps) {
         )}
         <button
           type="button"
-          onClick={() => window.location.assign("/")}
+          onClick={() => window.location.assign("/app")}
           className="tap-target rounded-xl border border-border bg-surface-raised px-4 text-sm font-medium text-foreground"
         >
           Reload App

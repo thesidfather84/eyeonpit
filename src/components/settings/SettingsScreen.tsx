@@ -185,7 +185,7 @@ export function SettingsScreen({ activeInvestigation }: SettingsScreenProps = {}
     setResetting(true);
     try {
       await resetAllData();
-      router.push("/");
+      router.push("/app");
     } finally {
       setResetting(false);
       setResetConfirming(false);

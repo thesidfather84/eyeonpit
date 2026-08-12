@@ -19,7 +19,7 @@ export function NavigationDrawer({ open, onClose }: NavigationDrawerProps) {
   const t = useTerminology();
 
   const links = [
-    { href: "/", label: "Home", icon: Home },
+    { href: "/app", label: "Home", icon: Home },
     { href: "/investigations/new", label: `New ${t.session}`, icon: ListPlus },
     { href: "/investigations", label: t.history, icon: History },
     { href: "/help", label: "Help", icon: HelpCircle },

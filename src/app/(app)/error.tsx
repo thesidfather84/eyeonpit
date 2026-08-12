@@ -2,8 +2,8 @@
 
 import { RecoveryScreen } from "@/components/system/RecoveryScreen";
 
-/** Catches render errors anywhere under the root segment (the `/` console, its providers, and everything Live renders) that a deeper boundary didn't already handle. */
-export default function RootError({
+/** Catches render errors anywhere under the (app) route group (the /app console, its providers, and everything Live renders) that a deeper boundary didn't already handle. */
+export default function AppError({
   error,
   reset,
 }: {

@@ -89,7 +89,7 @@ export function FloorScreen() {
         {isClosed ? (
           <button
             onClick={() => {
-              window.location.href = "/";
+              window.location.href = "/app";
             }}
             className="tap-target shrink-0 rounded-md bg-accent px-2 text-[11px] font-medium text-accent-foreground"
           >

@@ -88,7 +88,7 @@ export function LiveHeader() {
         {isClosed ? (
           <button
             onClick={() => {
-              window.location.href = "/";
+              window.location.href = "/app";
             }}
             className="tap-target rounded-md bg-accent px-2 text-[11px] font-medium text-accent-foreground"
           >

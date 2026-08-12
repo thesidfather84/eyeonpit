@@ -15,9 +15,16 @@
 // Hashed static assets (JS/CSS/images under /_next/static/...) are safe to
 // keep cache-first: a real new build always emits new filenames, so there
 // is no staleness risk there, only a speed win.
+//
+// EyeOnPit 1.4: the operational app moved from "/" to "/app" (the public
+// marketing/docs site now lives at "/" and doesn't need offline support —
+// it's not what an operator uses mid-shift). The app shell precache and
+// offline navigation fallback below moved with it; CACHE_NAME bumped so
+// every existing installed worker cleans up its stale "/" shell entry
+// instead of serving the marketing homepage as an offline app fallback.
 
-const CACHE_NAME = "eyeonpit-shell-v3";
-const APP_SHELL_URLS = ["/", "/favicon.ico"];
+const CACHE_NAME = "eyeonpit-shell-v4";
+const APP_SHELL_URLS = ["/app", "/favicon.ico"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -65,7 +72,7 @@ async function networkFirst(request) {
   } catch {
     const cached = await caches.match(request);
     if (cached) return cached;
-    const shell = await caches.match("/");
+    const shell = await caches.match("/app");
     if (shell) return shell;
     throw new Error("Offline and no cached shell available.");
   }

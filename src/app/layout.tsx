@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { UpdateAvailableBanner } from "@/components/system/UpdateAvailableBanner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -14,9 +13,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "EyeOnPit",
+  title: {
+    default: "EyeOnPit — Casino Game Protection, Rebuilt Around the Investigator",
+    template: "%s — EyeOnPit",
+  },
   description:
-    "Professional casino surveillance and blackjack investigation software.",
+    "EyeOnPit is a casino game-protection investigation platform that turns surveillance observations into structured evidence, deterministic analysis, and professional reporting.",
 };
 
 export const viewport: Viewport = {
@@ -27,20 +29,15 @@ export const viewport: Viewport = {
 };
 
 /**
- * Deliberately minimal: chrome (top bar vs. investigation header/nav)
- * differs between the dashboard-style `(main)` route group and the
- * investigation-scoped `investigations/[id]` tree, so each provides its
- * own via a nested layout instead of this one imposing a single shape.
- *
- * The max-w-md frame keeps the app a fixed mobile-width column even on a
- * wide desktop browser (used for development/testing) — on an actual
- * portrait phone viewport it's simply full-width, since no phone is wider
- * than 448px in portrait. That assumption breaks in landscape: a phone
- * rotated on its side is easily 650-930px wide, well past 448px, so the
- * same cap would waste over half the real screen as dead margin instead of
- * giving the landscape-specific layout the width it was designed for —
- * `short:max-w-none` lifts it exactly there (short height, real device
- * constraint), not for any wide-but-tall window.
+ * The TRUE root — shared by the public marketing/docs site AND the
+ * operational app. Deliberately minimal (fonts, global CSS, base
+ * background/color) since the two halves need fundamentally different
+ * shells: the app is a fixed-height, non-scrolling mobile frame (see
+ * src/app/(app)/layout.tsx), while the site is an ordinary scrolling page
+ * (see src/app/(site)/layout.tsx). Neither `h-dvh` nor `overflow-hidden`
+ * lives here anymore — EyeOnPit 1.4 moved those into (app)/layout.tsx
+ * specifically, so the public site can scroll normally instead of being
+ * squeezed into the app's mobile-console frame.
  */
 export default function RootLayout({
   children,
@@ -48,16 +45,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-dvh antialiased`}
-    >
-      <body className="flex h-full justify-center overflow-hidden bg-background text-foreground">
-        <div className="safe-area-pt safe-area-pb flex h-full w-full max-w-md flex-col overflow-hidden bg-background short:max-w-none">
-          <UpdateAvailableBanner />
-          {children}
-        </div>
-      </body>
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className="bg-background text-foreground">{children}</body>
     </html>
   );
 }

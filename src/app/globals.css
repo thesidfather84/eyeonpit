@@ -100,6 +100,87 @@ body {
 }
 
 @layer utilities {
+  /*
+    Lightweight docs typography — deliberately hand-rolled instead of
+    pulling in @tailwindcss/typography for a handful of pages. Scoped to
+    .prose-docs so it never leaks into the operational app's own screens.
+  */
+  .prose-docs h1 {
+    font-size: 1.875rem;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: var(--foreground);
+  }
+  .prose-docs h2 {
+    margin-top: 2.5rem;
+    margin-bottom: 0.75rem;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--foreground);
+  }
+  .prose-docs h3 {
+    margin-top: 1.75rem;
+    margin-bottom: 0.5rem;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--foreground);
+  }
+  .prose-docs p {
+    margin-top: 0.9rem;
+    line-height: 1.7;
+    color: var(--muted-foreground);
+    font-size: 0.9375rem;
+  }
+  .prose-docs ul,
+  .prose-docs ol {
+    margin-top: 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-left: 1.25rem;
+    color: var(--muted-foreground);
+    font-size: 0.9375rem;
+    line-height: 1.6;
+  }
+  .prose-docs ul {
+    list-style: disc;
+  }
+  .prose-docs ol {
+    list-style: decimal;
+  }
+  .prose-docs li::marker {
+    color: var(--border);
+  }
+  .prose-docs strong {
+    color: var(--foreground);
+    font-weight: 600;
+  }
+  .prose-docs a {
+    color: var(--accent-secondary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .prose-docs code {
+    border-radius: 0.25rem;
+    background: var(--surface-raised);
+    padding: 0.15rem 0.4rem;
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 0.85em;
+    color: var(--accent-secondary);
+  }
+  .prose-docs blockquote {
+    margin-top: 1rem;
+    border-left: 2px solid var(--accent);
+    padding-left: 1rem;
+    font-style: italic;
+    color: var(--foreground);
+  }
+  .prose-docs hr {
+    margin-top: 2.5rem;
+    margin-bottom: 2.5rem;
+    border-color: var(--border);
+  }
+
   /* Minimum comfortable touch size for controls used one-handed, low light — iOS HIG's own 44pt floor, not a more generous default, since the compact live-screen layout needs every spare pixel it can recover. */
   .tap-target {
     min-height: 44px;

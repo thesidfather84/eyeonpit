@@ -456,7 +456,7 @@ export function SettingsScreen({ activeInvestigation }: SettingsScreenProps = {}
       <ConfirmDialog
         open={resetConfirming}
         title="Reset all local data?"
-        message="This permanently deletes every investigation stored on this device, including closed ones, plus all local settings. This cannot be undone."
+        message="This permanently deletes every investigation stored on this device, including closed ones, plus all local settings, saved report/property data, and any Blackjack Lab research data (methods, scenarios, results, research library entries). This cannot be undone."
         confirmLabel="Delete Everything"
         destructive
         busy={resetting}

@@ -301,6 +301,13 @@ there:
   investigation is closed.
 - **Export** — download everything (every round, every card, every event)
   as a JSON file.
+- **Preview / Export Report** — a print-ready, shareable version of the
+  report, with a **Print / Save as PDF** button and an **Export
+  (Word/RTF)** button, opened as its own full-screen page. Every section
+  is clearly marked as either an observed fact, a narrative you wrote, or
+  derived analysis — if a section has nothing to show yet, it says so
+  rather than leaving a confusing blank. This is available any time from
+  the Reports view, not only right after closing an investigation.
 - **History** — every past investigation, to come back to this one (or
   any other) again later.
 

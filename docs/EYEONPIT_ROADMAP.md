@@ -12,6 +12,74 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### 1.5 Reporting + 1.6 Gold Standard Architecture Foundation (2026-08-19)
+
+**Problem:** 1.5 (advanced reporting) and 1.6 (blackjack research/simulation
+tooling) were both scoped as future work, but with a real risk of being
+built as two unrelated efforts that would later have to be reconciled or
+partly rewritten — the explicit instruction for this work was to build both
+tracks' foundations together, sharing data models and versioning so 1.6
+analytics can flow into 1.5 reports later without a structural rewrite.
+
+**What shipped** (full detail in `docs/EYEONPIT_1_5_REPORTING.md` and
+`docs/EYEONPIT_1_6_ARCHITECTURE.md` — this is a summary):
+
+- **Shared versioning/ID foundation** (`lib/versioning/`) — collision-
+  resistant canonical IDs, human-readable property-coded IDs
+  (`PROPERTY-YYYYMMDD-XXXXXX`), and the `VersionedRecord`/`VersionRef`
+  pattern used by every new entity below.
+- **1.5: Investigation ID + property metadata + Player Identity Privacy
+  Rule** — no player names/loyalty numbers/government IDs are ever
+  persisted; see `docs/EYEONPIT_1_5_REPORTING.md` §3.
+- **1.5: Report schema, builder, preview, export, AI-narrative-assist** —
+  a versioned `Report` derived entirely from existing investigation/
+  CardEvent data, a preview screen at `/investigations/[id]/report-preview`
+  labeling every section OBSERVED FACT / NARRATIVE / DERIVED ANALYSIS,
+  browser-print PDF export, dependency-free RTF ("Word") export, and a
+  deterministic (non-LLM) narrative-draft provider that only ever
+  summarizes fields already present on the report.
+- **1.6: Blackjack Game Definition, Count Method Registry, and existing-
+  method adapters** — Hi-Lo/KO/Zen/Omega II wrapped read-only from the
+  real counting engine's own tag tables (never re-typed), with a
+  regression suite proving byte-identical output.
+- **1.6: exact shoe-composition model, Simulation Scenario/Result models,
+  and a deterministic seeded simulation engine** — same seed + scenario +
+  simulator version reproduces the same result, proven by a determinism
+  test; documented scope limits (single seat, one split level, no
+  insurance, standard-chart strategy only).
+- **1.6: private `/lab` research area** — its own independent passcode
+  gate (`EYEONPIT_LAB_PASSCODE`, never shared with the main app's
+  session), real-data screens for the Method Library, Simulation
+  Scenarios, Results, and Research Library, and honest placeholders
+  (not fake flows) where creation UI doesn't exist yet.
+- **1.6: method import/export format** (`eyeonpit-method.json`) — JSON-
+  only parsing, no code execution possible, imported methods always
+  re-validated and never trusted as VERIFIED.
+- **1.6: Counter Detection Confidence Engine — architecture and
+  documentation only**, no implementation. See
+  `docs/EYEONPIT_1_6_ARCHITECTURE.md` §8 for the full signal list,
+  ~50-hand competitive target, and required validation metrics before any
+  future claim ships.
+
+**Explicitly not touched:** the voice resolver/parser, the CardEvent
+ledger, existing counting mathematics, and the existing `Investigation`
+Dexie schema/records — every new table is additive, and `Report`/
+`PropertyMetadata` reference an investigation only by its `localId`
+string, specifically so this work carries zero risk to investigation
+persistence integrity.
+
+**Tests:** extensive new coverage across every new model, adapter,
+validator, and repository (see the combined-track final report for exact
+counts). Full suite green, `tsc --noEmit` clean, `eslint` clean across
+every new file. Regression suite proves the four built-in count-method
+adapters remain byte-identical to the live counting engine.
+
+**Status:** complete, pending review. Not committed/pushed — see the
+combined-track final report for the full 23-point findings/status list.
+Voice Field Test #2 (below) was deliberately **not** performed or skipped
+by this work; it remains the next voice-specific priority, unaffected by
+any of the above.
+
 ### Floor Mode Operator Usability Cleanup (2026-08-18)
 
 **Problem:** Floor Mode's compact play-field summary (`FloorPlayField.tsx`)
@@ -181,29 +249,31 @@ use it.
 
 ## Sequence (current, authoritative order)
 
-This is the actual next-priority order — do not treat 1.5 reporting work as
-the immediate next major priority; it is deferred (see the note below the
-list), not next.
+This is the actual next-priority order. The 1.5/1.6 foundation below is now
+**built** (pending review), but that does not change voice's priority —
+**do not skip PC Voice Field Test #2** for any reason; it remains the next
+voice-specific gate, deliberately untouched by the foundation work.
 
 1. ~~Floor Mode operator usability cleanup~~ — complete, see above.
-2. **PC Voice Field Test #2** — a fresh diagnostic export, compared against
+2. ~~1.5 Reporting + 1.6 Gold Standard architecture foundation~~ — complete,
+   pending review, see above. Built without touching voice.
+3. **PC Voice Field Test #2** — a fresh diagnostic export, compared against
    Field Test #1's fixes, before any further voice changes. *(up next)*
-3. Fix/validate remaining Voice failures surfaced by Field Test #2.
-4. Repeat Voice testing until the reliability gate is met.
-5. Blackjack Gold Standard architecture.
-6. Game Definition.
-7. Count Method Registry.
-8. Simulation Engine / private Simulation Lab.
-9. Counter Detection Confidence Engine.
-10. Later multi-game expansion.
+4. Fix/validate remaining Voice failures surfaced by Field Test #2.
+5. Repeat Voice testing until the reliability gate is met.
+6. 1.5/1.6 build-out on top of the now-existing foundation: property
+   metadata management UI, AI-narrative review/edit UI, `/lab` creation
+   flows (add method, add scenario), and connecting validated analytics
+   into Report once they exist.
+7. Counter Detection Confidence Engine implementation (architecture
+   already documented — see `docs/EYEONPIT_1_6_ARCHITECTURE.md` §8 —
+   implementation not yet started).
+8. Later multi-game expansion.
 
 Also still pending, not yet scheduled into the sequence above:
 
 - **Real iPhone field testing** of the voice diagnostics/N-best/PC-field-fix
   work, using Export JSON to capture and review field sessions.
-- **1.5 reporting work** — paused for the duration of the voice reliability
-  effort; resumes only after the voice reliability gate (steps 2–4 above)
-  is met. Not the next major priority.
 
 See `docs/EYEONPIT_PRODUCT_SPEC.md`'s Implementation Status Matrix for the
 full list of **PLANNED**/**FUTURE** capabilities (voice wager mutation,

@@ -2,21 +2,32 @@ import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { proxy } from "./proxy";
 import { createSessionToken, SESSION_COOKIE_NAME } from "@/lib/auth/session";
+import { createLabSessionToken, LAB_SESSION_COOKIE_NAME } from "@/lib/labAuth/session";
 
 const ORIGINAL_PASSCODE = process.env.EYEONPIT_APP_PASSCODE;
+const ORIGINAL_LAB_PASSCODE = process.env.EYEONPIT_LAB_PASSCODE;
 
 beforeEach(() => {
   process.env.EYEONPIT_APP_PASSCODE = "482913";
+  process.env.EYEONPIT_LAB_PASSCODE = "751026";
 });
 
 afterEach(() => {
   if (ORIGINAL_PASSCODE == null) delete process.env.EYEONPIT_APP_PASSCODE;
   else process.env.EYEONPIT_APP_PASSCODE = ORIGINAL_PASSCODE;
+  if (ORIGINAL_LAB_PASSCODE == null) delete process.env.EYEONPIT_LAB_PASSCODE;
+  else process.env.EYEONPIT_LAB_PASSCODE = ORIGINAL_LAB_PASSCODE;
 });
 
 function requestFor(path: string, cookieValue?: string): NextRequest {
   const headers: Record<string, string> = {};
   if (cookieValue != null) headers.cookie = `${SESSION_COOKIE_NAME}=${cookieValue}`;
+  return new NextRequest(new URL(path, "https://eyeonpit.com"), { headers });
+}
+
+function labRequestFor(path: string, labCookieValue?: string): NextRequest {
+  const headers: Record<string, string> = {};
+  if (labCookieValue != null) headers.cookie = `${LAB_SESSION_COOKIE_NAME}=${labCookieValue}`;
   return new NextRequest(new URL(path, "https://eyeonpit.com"), { headers });
 }
 
@@ -91,5 +102,55 @@ describe("proxy — logout consistency: once a session is gone, every protected 
       expect(response.status).toBe(307);
       expect(new URL(response.headers.get("location")!).pathname).toBe("/access");
     }
+  });
+});
+
+describe("proxy — PRIORITY B9: /lab uses its OWN independent session, never the main app's", () => {
+  it("/lab/access always passes through, with or without any session", () => {
+    expect(proxy(labRequestFor("/lab/access")).headers.get("location")).toBeNull();
+    expect(proxy(labRequestFor("/lab/access/")).headers.get("location")).toBeNull();
+  });
+
+  it("/lab and its sub-paths redirect to /lab/access with no lab session", () => {
+    for (const path of ["/lab", "/lab/methods", "/lab/scenarios/new"]) {
+      const response = proxy(labRequestFor(path));
+      expect(response.status).toBe(307);
+      expect(new URL(response.headers.get("location")!).pathname).toBe("/lab/access");
+    }
+  });
+
+  it("a valid MAIN APP session does NOT authorize /lab — the two gates are independent", () => {
+    const mainAppToken = createSessionToken();
+    const response = proxy(requestFor("/lab", mainAppToken));
+    expect(response.status).toBe(307);
+    expect(new URL(response.headers.get("location")!).pathname).toBe("/lab/access");
+  });
+
+  it("a valid LAB session does NOT authorize the main app — the two gates are independent in the other direction too", () => {
+    const labToken = createLabSessionToken();
+    const withLabCookieOnly = new NextRequest(new URL("/app", "https://eyeonpit.com"), {
+      headers: { cookie: `${LAB_SESSION_COOKIE_NAME}=${labToken}` },
+    });
+    const response = proxy(withLabCookieOnly);
+    expect(response.status).toBe(307);
+    expect(new URL(response.headers.get("location")!).pathname).toBe("/access");
+  });
+
+  it("a valid lab session cookie reaches every /lab sub-path", () => {
+    const token = createLabSessionToken();
+    for (const path of ["/lab", "/lab/methods", "/lab/results", "/lab/research"]) {
+      const response = proxy(labRequestFor(path, token));
+      expect(response.headers.get("location")).toBeNull();
+    }
+  });
+
+  it("an expired/forged lab token is rejected exactly like no session", () => {
+    process.env.EYEONPIT_LAB_PASSCODE = "000000";
+    const staleToken = createLabSessionToken();
+    process.env.EYEONPIT_LAB_PASSCODE = "751026";
+
+    const response = proxy(labRequestFor("/lab", staleToken));
+    expect(response.status).toBe(307);
+    expect(new URL(response.headers.get("location")!).pathname).toBe("/lab/access");
   });
 });

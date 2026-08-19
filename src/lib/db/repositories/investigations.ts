@@ -948,7 +948,27 @@ export async function resetPracticeInvestigationLiveState(localId: string): Prom
   });
 }
 
-/** Destructive — clears every locally stored investigation. Gated behind a strong confirmation in Settings. */
+/**
+ * Destructive — clears every locally stored investigation, plus every
+ * EyeOnPit 1.5/1.6 local table (property metadata, reports, count methods,
+ * game definitions, simulation scenarios/results, research library
+ * entries). Gated behind a strong confirmation in Settings.
+ *
+ * Deliberately does NOT touch `cardEvents` — that table's clearing
+ * behavior (or lack of it) on a full reset is pre-existing, unrelated to
+ * the 1.5/1.6 architecture, and out of scope for this change; altering it
+ * would be altering CardEvent behavior, which is explicitly off-limits
+ * here. Every table below is additive 1.5/1.6 research/reporting data with
+ * no relationship to the counting ledger.
+ */
 export async function resetAllData(): Promise<void> {
-  await getDb().investigations.clear();
+  const database = getDb();
+  await database.investigations.clear();
+  await database.properties.clear();
+  await database.reports.clear();
+  await database.countMethods.clear();
+  await database.gameDefinitions.clear();
+  await database.simulationScenarios.clear();
+  await database.simulationResults.clear();
+  await database.researchEntries.clear();
 }

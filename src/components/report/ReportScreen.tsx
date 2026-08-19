@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { FileText } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import {
   addOperatorNote,
@@ -57,6 +59,18 @@ export function ReportScreen() {
 
   return (
     <div className="flex flex-col gap-4 p-3">
+      {/* EyeOnPit 1.5 — the professional, exportable Report Preview (PDF via
+          print, RTF/Word via download) is a separate screen/route (see
+          components/report/ReportPreview.tsx) rather than inline here, so
+          it can use its own full-document scroll/print layout instead of
+          this overlay's compact editing view. */}
+      <Link
+        href={`/investigations/${investigation.localId}/report-preview`}
+        className="tap-target flex items-center justify-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-3 text-sm font-semibold text-accent"
+      >
+        <FileText className="h-4 w-4" aria-hidden /> Preview / Export Report
+      </Link>
+
       <section>
         <h2 className="mb-1 text-sm font-semibold text-foreground">Executive Summary</h2>
         <textarea

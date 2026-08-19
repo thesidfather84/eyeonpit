@@ -87,4 +87,36 @@ describe("buildReportRtf", () => {
     expect(rtf).toContain(String(report.versionInfo.reportSchemaVersion));
     expect(rtf).toContain(report.versionInfo.countingEngineVersion);
   });
+
+  it("omits Counter Analysis/Methodology sections entirely when no 1.7 player analytics were attached", async () => {
+    const inv = await freshInvestigation();
+    const report = buildReportFromInvestigation({ investigation: inv, cardEvents: [] });
+    const rtf = buildReportRtf(report);
+    expect(rtf).not.toContain("Counter Analysis");
+    expect(rtf).not.toContain("Methodology");
+  });
+
+  it("includes the EXPERIMENTAL notice and Methodology limitations when 1.7 player analytics ARE attached, and stays well-formed RTF", async () => {
+    const inv = await freshInvestigation();
+    const base = buildReportFromInvestigation({ investigation: inv, cardEvents: [] });
+    const report = {
+      ...base,
+      analysis: {
+        counterAnalysisBySeat: [
+          { seatNumber: 1, playerGroupId: null, classification: "HIGH" as const, confidenceScore: 0.8, reasonCodes: [], strongestContributingSignals: [], contradictorySignals: [], engineVersion: 1 },
+        ],
+        methodology: {
+          playerObservationSchemaVersion: 1,
+          confidenceEngineVersion: 1,
+          validationStatus: "EXPERIMENTAL_NOT_VALIDATED" as const,
+          limitations: ["Test limitation statement."],
+        },
+      },
+    };
+    const rtf = buildReportRtf(report);
+    expect(rtf).toContain("Counter Analysis");
+    expect(rtf).toContain("EXPERIMENTAL");
+    expect(rtf).toContain("Test limitation statement.");
+    expect(bracesBalanced(rtf)).toBe(true);
+  });
 });

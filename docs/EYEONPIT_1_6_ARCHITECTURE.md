@@ -95,6 +95,15 @@ as a flat tag table (a device-based composition method, an advanced
 side-count-driven system) stays `RESEARCH_ONLY` with `tags: null` until a
 real, reviewed implementation exists.
 
+**UPDATE (EyeOnPit 1.8):** `CountMethodDefinition` gained two OPTIONAL
+fields — `supportedGameFamilies?: GameFamily[]` and `methodKind?:
+MethodKind` — purely additive, every existing method/adapter still
+type-checks and validates unchanged. See
+`docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §7 for the generic Game
+Definition/Method framework and `lib/gold-standard/game/
+gameMethodCompatibility.ts` for the resulting compatibility validator
+(standalone, not yet force-integrated into scenario creation).
+
 ## 4. Exact shoe composition (Priority B5)
 
 `src/lib/gold-standard/exactComposition.ts` — `computeExactComposition`
@@ -174,10 +183,20 @@ not fabricate unsupported metrics").
 
 ## 8. Counter Detection Confidence Engine — architecture only (Priority B13)
 
-**Nothing in this section is implemented.** No detection code, no scoring
-function, no classification threshold exists anywhere in the codebase
-today. This section exists so the *shape* of that future work is decided
-in advance, and so `/lab`'s Counter Detection placeholder screen
+**UPDATE (EyeOnPit 1.7): this architecture is now implemented.** See
+`docs/EYEONPIT_1_7_COUNTER_DETECTION.md` for the full, real, tested
+Confidence Engine, `PlayerObservation` model, bet/count/playing-deviation/
+insurance/entry-exit analytics, and the 50-hand synthetic validation
+benchmark — all EXPERIMENTAL / NOT VALIDATED against real-world data,
+exactly as this section anticipated. The rest of this section is kept as
+the original architecture-only record of what was planned before that
+implementation existed.
+
+**As of the 1.6 patch, nothing in this section was implemented.** No
+detection code, no scoring function, no classification threshold existed
+anywhere in the codebase at that time. This section existed so the
+*shape* of that future work was decided in advance, and so `/lab`'s
+Counter Detection placeholder screen
 (`src/app/lab/(protected)/counter-detection/page.tsx`) can honestly say
 what's coming instead of linking to nothing.
 
@@ -297,10 +316,12 @@ so that gate can later grow real accounts/subscriptions/roles without
 relocating any of this code. No payment processing exists or was added.
 
 Sections shipped as real, data-backed screens today: Blackjack Lab (home),
-Method Library, Simulation Scenarios, Results, Research Library. Sections
-shipped as honest, clearly-labeled placeholders (explaining what's
-deferred and why, never faking a working flow): Add Method, Admin/Method
-Validation, Counter Detection.
+Method Library, Simulation Scenarios, Results, Research Library, and — as
+of EyeOnPit 1.7 — Counter Detection, Player Behavior Analysis, and
+Validation Benchmarks (see `docs/EYEONPIT_1_7_COUNTER_DETECTION.md` §11).
+Sections still shipped as honest, clearly-labeled placeholders (explaining
+what's deferred and why, never faking a working flow): Add Method,
+Admin/Method Validation.
 
 ## 12. Internationalization & terminology readiness (Priorities S3, S4)
 
@@ -308,18 +329,16 @@ Nothing in this architecture hard-codes an English-only assumption into
 its *data model* — canonical IDs (`hi-lo`, `wong-halves`, `vegas-strip-6d-s17`)
 are language-independent slugs, never translated strings used as keys.
 User-facing strings in `/lab`'s screens are today plain English JSX text,
-not yet centralized through a translation layer — that centralization is
-still future work (Priority S3 explicitly does not require translating the
-whole app in this patch). Property-specific terminology preferences
-(Priority S4 — "Spot" vs. "Seat" and future localized equivalents) are a
-`PropertyMetadata`/UI concern documented in
-`docs/EYEONPIT_1_5_REPORTING.md`, not something this 1.6 architecture
-needs to solve independently.
+not yet centralized through a translation layer. **UPDATE (EyeOnPit 1.8):**
+a real i18n foundation and property terminology preference now exist — see
+`docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §2–3. `/lab`'s screens are not
+yet wired through that catalog (still plain English JSX), which remains
+listed as follow-on work there.
 
 ## 13. Deferred / not yet built
 
-- Counter Detection Confidence Engine implementation (§8 is architecture
-  only, by explicit instruction).
+- ~~Counter Detection Confidence Engine implementation~~ — now implemented,
+  see `docs/EYEONPIT_1_7_COUNTER_DETECTION.md`.
 - Any UI for creating a new count method, game definition, or simulation
   scenario through `/lab` (the underlying create/validate functions are
   built and tested; the forms are not).

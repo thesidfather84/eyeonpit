@@ -86,7 +86,9 @@ started, not scaffolded beyond the single free-text field above.
 
 ## 4. Report data model (Priority A4)
 
-`src/lib/reporting/reportSchema.ts` — `REPORT_SCHEMA_VERSION = 1`.
+`src/lib/reporting/reportSchema.ts` — `REPORT_SCHEMA_VERSION = 2` (bumped
+from 1 in EyeOnPit 1.7 when `ReportAnalysisSection` gained its player-
+analytics fields — see §9).
 `Report extends VersionedRecord` and is composed of typed sub-sections:
 
 | Section | Contents |
@@ -175,28 +177,37 @@ formats, so a report printed or exported today remains traceable to
 exactly the schema/engine versions that produced it even after those
 versions change later.
 
-## 9. How 1.6 connects (shared architecture, Priority S1)
+## 9. How 1.6/1.7 connect (shared architecture, Priority S1)
 
-`ReportAnalysisSection` currently has one real field —
+`ReportAnalysisSection`'s original real field —
 `betCountCorrelationBySeat`, computed by the existing (pre-1.6)
-`computeApLikelihoodBySeat` — and is `undefined`, not an empty object, when
-no seat has enough sample data to compute a correlation. This is the
-pattern every future 1.6 analytics field must follow:
+`computeApLikelihoodBySeat` — is `undefined`, not an empty object, when no
+seat has enough sample data to compute a correlation. This is the pattern
+every analytics field added since has followed:
 
-- **Counter Detection, Play Deviation Analysis, Count Method Correlation,
-  Simulation-methodology cross-reference** — each becomes a new *optional*
-  field on `ReportAnalysisSection`, populated only when real, validated 1.6
-  output exists for that investigation.
-- The Report Preview and both export paths already know how to render "not
-  available" for any analysis field that's `undefined` — a new analytics
-  section only needs a new `Section` block in `ReportPreview.tsx` and the
-  matching RTF paragraph in `exportRtf.ts`, following the existing pattern
-  for `betCountCorrelationBySeat`.
-- `ReportAnalysisSection` deliberately does **not** yet reserve a
-  `counterDetection` field ahead of the Counter Detection Confidence
-  Engine actually existing (see `docs/EYEONPIT_1_6_ARCHITECTURE.md` §8) —
-  adding an unused placeholder field ahead of real data would itself be a
-  small form of the fabrication this architecture exists to prevent.
+- **UPDATE (EyeOnPit 1.7):** `ReportAnalysisSection` now also carries
+  `counterAnalysisBySeat`, `bettingAnalysisBySeat`,
+  `playingDeviationAnalysisBySeat`, `insuranceAnalysisBySeat`,
+  `observationConfidenceBySeat`, and `methodology` — see
+  `docs/EYEONPIT_1_7_COUNTER_DETECTION.md` §10. `REPORT_SCHEMA_VERSION`
+  was bumped to 2 for this addition. Every one of these fields is
+  populated **only** via the explicit `attachPlayerAnalytics` helper
+  (`lib/player-analytics/reportIntegration.ts`) — never automatically by
+  `buildReportFromInvestigation` — and is always accompanied by
+  `methodology.validationStatus: "EXPERIMENTAL_NOT_VALIDATED"`, enforced
+  structurally, not just by convention. The earlier caution below (not
+  reserving a placeholder field ahead of a real engine) was honored right
+  up until the engine actually existed and was tested — at which point
+  adding the real, populated field became the correct move, not a
+  violation of the original rule.
+- `simulationMethodologyRef` remains omitted entirely until a real
+  `SimulationResult` is explicitly linked to an investigation's
+  methodology — not populated by any patch through 1.7.
+- The Report Preview and both export paths render "not available" for
+  `betCountCorrelationBySeat` when empty, but OMIT the newer 1.7 sections
+  entirely when absent (rather than showing "not available" for a
+  capability most reports will never invoke) — see
+  `docs/EYEONPIT_1_7_COUNTER_DETECTION.md` §10 for the reasoning.
 
 ## 10. Deferred / not yet built
 

@@ -12,6 +12,83 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### 1.7 Counter Detection + Player Analytics, 1.8 Global/Multi-Property/Multi-Game Foundation (2026-08-19)
+
+**Problem:** the 1.6 architecture explicitly deferred Counter Detection to
+"architecture and documentation only" pending a real implementation and
+validation plan; separately, EyeOnPit's data model had no path toward
+multiple languages, per-property terminology, non-blackjack games, or
+multi-property accounts without a future rewrite.
+
+**What shipped** (full detail in `docs/EYEONPIT_1_7_COUNTER_DETECTION.md`
+and `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` — this is a summary):
+
+- **1.7: PlayerObservation model + real extraction** — derives one record
+  per observed hand entirely from existing Investigation/CardEvent data,
+  no new counting mathematics, no unnecessary player PII.
+- **1.7: bet/count, playing-deviation, insurance, and entry/exit
+  analytics** — real, versioned, testable statistics (Pearson correlation,
+  OLS regression, plain rates); none of them output a "counter" label by
+  themselves. Basic-strategy-deviation checking is real (reuses the
+  verified 1.6 chart); index-deviation checking is architecture only —
+  ships with zero bundled index numbers.
+- **1.7: Counter Detection Confidence Engine** — a versioned, five-state
+  classifier (`INSUFFICIENT_DATA`/`LOW`/`MODERATE`/`HIGH`/`VERY_HIGH`,
+  never a boolean) that never classifies from hand count alone — a
+  minimum-hands floor only ever caps a classification down, never produces
+  one. **EXPERIMENTAL — NOT VALIDATED against real-world data.**
+  Real measured results against this session's own deterministic synthetic
+  benchmark: **zero false positives at every hand checkpoint (10-100),
+  including every adversarial non-counter pattern tested** (progressive/
+  martingale/high-roller/random-insurance/brief-entry), sensitivity 96.7%
+  by 30 hands, and the harness's own (not hardcoded) verdict is
+  "50-hands-defensible" against that synthetic data.
+- **1.7: Report integration** — six new optional `ReportAnalysisSection`
+  fields (report schema bumped to v2), populated only via an explicit,
+  opt-in attachment step — never automatically — and always carrying an
+  EXPERIMENTAL/NOT VALIDATED methodology disclosure.
+- **1.7: `/lab` UI** — Counter Detection, Player Behavior Analysis, and
+  Validation Benchmarks are now real, data-backed pages (no more
+  placeholder) — every number is freshly computed on load/click, never
+  pre-baked.
+- **1.8: internationalization foundation** — a real string-catalog +
+  Intl-based locale-aware formatting architecture for 8 target languages;
+  seeded, not a completed translation.
+- **1.8: property terminology + expanded Property Profile** — "Spot"/
+  "Seat"/custom-localized player-position preference, plus optional
+  timezone/language/currency/table-naming/default-rules/reporting-defaults
+  fields on `PropertyMetadata`. Not yet wired into live Floor/Surveillance
+  UI components (deliberately, to avoid unrelated UI changes this session).
+- **1.8: global voice architecture — documentation only**, zero voice code
+  touched, exactly as instructed.
+- **1.8: generic Game Definition / Method framework / compatibility** — a
+  non-breaking `GameFamily` umbrella over the existing (unchanged)
+  blackjack `GameDefinition`; two new OPTIONAL fields on
+  `CountMethodDefinition`; a standalone, tested game/method compatibility
+  validator (not yet force-integrated into scenario creation).
+- **1.8: multi-property membership + entitlement foundation** — Role/
+  Organization/Membership types and a PUBLIC/PRO/ENTERPRISE feature-tier
+  model. Types and pure functions only — `/lab`'s server-side gate is
+  completely untouched, and no billing/enforcement exists anywhere.
+
+**Explicitly not touched:** the voice resolver/parser, the CardEvent
+ledger, existing counting mathematics, existing simulation-engine
+mathematics, and `/lab`'s server-side authorization gate — confirmed via
+`git diff` showing zero changes to any of `src/lib/voice/`,
+`src/lib/counting-engine/`, `src/lib/gold-standard/simulation/engine.ts`,
+`src/lib/labAuth/`, or `src/proxy.ts`.
+
+**Tests:** extensive new coverage across every new model, analytic, the
+Confidence Engine, the synthetic benchmark harness, false-positive safety,
+report integration, i18n, property profile, generic game/method framework,
+and membership/entitlements (see the combined-track final report for exact
+counts). Full suite green, `tsc --noEmit` clean, `eslint` clean.
+
+**Status:** complete, pending review. Not committed/pushed — see the
+combined-track final report for the full 27-point findings/status list.
+PC Voice Field Test #2 was being performed separately by the user during
+this work and remains entirely unaffected by it.
+
 ### 1.5 Reporting + 1.6 Gold Standard Architecture Foundation (2026-08-19)
 
 **Problem:** 1.5 (advanced reporting) and 1.6 (blackjack research/simulation
@@ -249,26 +326,46 @@ use it.
 
 ## Sequence (current, authoritative order)
 
-This is the actual next-priority order. The 1.5/1.6 foundation below is now
-**built** (pending review), but that does not change voice's priority —
-**do not skip PC Voice Field Test #2** for any reason; it remains the next
-voice-specific gate, deliberately untouched by the foundation work.
+This is the actual next-priority order. The 1.5/1.6/1.7/1.8 foundation
+below is now **built** (pending review), but that does not change voice's
+priority — **do not skip PC Voice Field Test #2** for any reason; it
+remains the next voice-specific gate, deliberately untouched by all of
+this foundation work.
 
 1. ~~Floor Mode operator usability cleanup~~ — complete, see above.
 2. ~~1.5 Reporting + 1.6 Gold Standard architecture foundation~~ — complete,
    pending review, see above. Built without touching voice.
-3. **PC Voice Field Test #2** — a fresh diagnostic export, compared against
-   Field Test #1's fixes, before any further voice changes. *(up next)*
-4. Fix/validate remaining Voice failures surfaced by Field Test #2.
-5. Repeat Voice testing until the reliability gate is met.
-6. 1.5/1.6 build-out on top of the now-existing foundation: property
-   metadata management UI, AI-narrative review/edit UI, `/lab` creation
-   flows (add method, add scenario), and connecting validated analytics
-   into Report once they exist.
-7. Counter Detection Confidence Engine implementation (architecture
-   already documented — see `docs/EYEONPIT_1_6_ARCHITECTURE.md` §8 —
-   implementation not yet started).
-8. Later multi-game expansion.
+3. ~~1.7 Counter Detection + Player Analytics, 1.8 Global/Multi-Property/
+   Multi-Game foundation~~ — complete, pending review, see above. Built
+   without touching voice.
+4. **PC Voice Field Test #2** — a fresh diagnostic export, compared against
+   Field Test #1's fixes, before any further voice changes. Being
+   performed separately by the user. *(up next)*
+5. Fix/validate remaining Voice failures surfaced by Field Test #2.
+6. Repeat Voice testing until the reliability gate is met.
+7. Build-out on top of the now-existing foundation: property metadata
+   management UI, AI-narrative review/edit UI, `/lab` creation flows (add
+   method, add scenario).
+8. **i18n/terminology integration, in this explicit order — never skip
+   ahead** (see `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §3.1): (a) Floor
+   Mode visible labels, (b) `/lab` UI, (c) Reporting, (d) Documentation/site
+   UI, (e) Voice localization LAST, as its own separate project with its
+   own safety re-verification — never bundled into the earlier stages.
+9. **Real-world Counter Detection validation** (see
+   `docs/EYEONPIT_1_7_COUNTER_DETECTION.md` §9) — labeled datasets across
+   known counters/non-counters/multiple count methods/conservative/covered
+   profiles; the Confidence Engine's `EXPERIMENTAL_NOT_VALIDATED` status
+   does not change until this exists and is reviewed.
+10. **`validateMethodGameCompatibility` MUST be wired into
+    `createSimulationScenario`/`validateSimulationScenario` before or
+    alongside any second `GameFamily` implementation** — not after (see
+    `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §7's explicit
+    production-readiness gate). A second real `GameFamily` (Spanish 21,
+    Baccarat, etc.) itself — architecture ready, no second game
+    implemented yet.
+11. Real accounts/subscriptions/roles for `/lab`, once actually
+    prioritized — foundation only today
+    (`docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §8-9).
 
 Also still pending, not yet scheduled into the sequence above:
 

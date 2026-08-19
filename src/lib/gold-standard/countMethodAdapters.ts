@@ -46,6 +46,8 @@ function adapterFor(
     trueCountMethod: isBalancedSystem(system) ? "level-division" : "unbalanced-running-only",
     sideCounts: [],
     isBuiltInAdapter: true,
+    supportedGameFamilies: ["blackjack"],
+    methodKind: "running-count",
     sourceReferences: extra.sourceReferences ?? [],
     authorSource: extra.authorSource,
     aceHandling: extra.aceHandling ?? "primary-tag",

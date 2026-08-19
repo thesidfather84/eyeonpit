@@ -10,17 +10,20 @@ import {
   ListChecks,
   PlusCircle,
   ShieldAlert,
+  Users,
   Wrench,
 } from "lucide-react";
 import { listCountMethods, listSimulationScenarios, listAllSimulationResults, listResearchEntries } from "@/lib/db/repositories/goldStandard";
 
 /**
- * PRIORITY B9 — the /lab home shell. Real counts only (Priority B9's own
- * "no fake data" requirement) — every number here comes from an actual
- * Dexie query, never a hardcoded placeholder. Counter Detection is listed
- * but has no live section yet (Priority B13 is architecture/documentation
- * only in this patch — see docs/EYEONPIT_1_6_ARCHITECTURE.md) and is shown
- * disabled with that explained, never a dead link pretending to work.
+ * PRIORITY B9/1.7-10 — the /lab home shell. Real counts only (Priority
+ * B9's own "no fake data" requirement) — every number here comes from an
+ * actual Dexie query, never a hardcoded placeholder. Counter Detection,
+ * Player Behavior Analysis, and Validation Benchmarks are real, tested
+ * pages (see docs/EYEONPIT_1_7_COUNTER_DETECTION.md) — but every one of
+ * them surfaces the same EXPERIMENTAL / NOT VALIDATED status prominently,
+ * since the Confidence Engine behind them hasn't been proven against
+ * real-world data yet.
  */
 
 interface SectionCard {
@@ -64,9 +67,19 @@ export default function LabHomePage() {
       href: "/lab/counter-detection",
       label: "Counter Detection",
       icon: ShieldAlert,
-      description: "Architecture and validation plan — no live engine yet.",
-      disabled: true,
-      disabledReason: "Architecture/documentation only in this patch — see docs/EYEONPIT_1_6_ARCHITECTURE.md.",
+      description: "EXPERIMENTAL Confidence Engine — real, tested, not yet real-world validated. See docs/EYEONPIT_1_7_COUNTER_DETECTION.md.",
+    },
+    {
+      href: "/lab/player-behavior",
+      label: "Player Behavior Analysis",
+      icon: Users,
+      description: "Run the real Confidence Engine against a past investigation's actual recorded data.",
+    },
+    {
+      href: "/lab/validation-benchmarks",
+      label: "Validation Benchmarks",
+      icon: LineChart,
+      description: "Measured sensitivity/specificity/false-positive rate against deterministic synthetic archetypes.",
     },
     { href: "/lab/admin", label: "Admin / Method Validation", icon: Wrench, description: "Review verification status and source citations." },
   ];

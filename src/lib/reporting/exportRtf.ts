@@ -105,6 +105,62 @@ export function buildReportRtf(report: Report): string {
     parts.push(rtfParagraph("Not available for this investigation — no validated analysis data exists."));
   }
 
+  if (report.analysis?.counterAnalysisBySeat && report.analysis.counterAnalysisBySeat.length > 0) {
+    parts.push(rtfSubheading("DERIVED ANALYSIS — Counter Analysis"));
+    parts.push(rtfParagraph("EXPERIMENTAL — NOT VALIDATED. An investigative indicator only, never an accusation or conclusion. See Methodology below."));
+    for (const seat of report.analysis.counterAnalysisBySeat) {
+      parts.push(rtfLabelValue(`Seat ${seat.seatNumber}`, `${seat.classification.replace(/_/g, " ")} (confidence ${seat.confidenceScore.toFixed(2)})`));
+    }
+  }
+
+  if (report.analysis?.bettingAnalysisBySeat && report.analysis.bettingAnalysisBySeat.length > 0) {
+    parts.push(rtfSubheading("DERIVED ANALYSIS — Betting Analysis"));
+    for (const seat of report.analysis.bettingAnalysisBySeat) {
+      const correlation = seat.correlationWithTrueCount != null ? `, correlation ${seat.correlationWithTrueCount.toFixed(2)}` : "";
+      const spread = seat.betSpread ? `, spread ${seat.betSpread.minWager}-${seat.betSpread.maxWager}` : "";
+      parts.push(rtfLabelValue(`Seat ${seat.seatNumber}`, `${seat.sampleSize} usable hands${correlation}${spread}`));
+    }
+  }
+
+  if (report.analysis?.playingDeviationAnalysisBySeat && report.analysis.playingDeviationAnalysisBySeat.length > 0) {
+    parts.push(rtfSubheading("DERIVED ANALYSIS — Playing-Deviation Analysis"));
+    for (const seat of report.analysis.playingDeviationAnalysisBySeat) {
+      parts.push(
+        rtfLabelValue(
+          `Seat ${seat.seatNumber}`,
+          `${seat.totalDeviations}/${seat.totalOpportunities} deviations from basic strategy${seat.indexTableProvided ? "" : " (no index table supplied)"}`
+        )
+      );
+    }
+  }
+
+  if (report.analysis?.insuranceAnalysisBySeat && report.analysis.insuranceAnalysisBySeat.length > 0) {
+    parts.push(rtfSubheading("DERIVED ANALYSIS — Insurance Analysis"));
+    for (const seat of report.analysis.insuranceAnalysisBySeat) {
+      parts.push(rtfLabelValue(`Seat ${seat.seatNumber}`, `offered ${seat.timesOffered}, taken ${seat.timesTaken} (threshold TC >= ${seat.trueCountThresholdUsed})`));
+    }
+  }
+
+  if (report.analysis?.observationConfidenceBySeat && report.analysis.observationConfidenceBySeat.length > 0) {
+    parts.push(rtfSubheading("DERIVED ANALYSIS — Observation Confidence"));
+    for (const seat of report.analysis.observationConfidenceBySeat) {
+      parts.push(rtfLabelValue(`Seat ${seat.seatNumber}`, `${seat.handsObserved} hands observed, ${seat.handsWithUsableEvidence} usable (minimum ${seat.minimumHandsForClassification})`));
+    }
+  }
+
+  if (report.analysis?.methodology) {
+    parts.push(rtfSubheading("Methodology"));
+    parts.push(
+      rtfLabelValue(
+        "Status",
+        `${report.analysis.methodology.validationStatus.replace(/_/g, " ")} — Player Observation schema v${report.analysis.methodology.playerObservationSchemaVersion}, Confidence Engine v${report.analysis.methodology.confidenceEngineVersion}`
+      )
+    );
+    for (const limitation of report.analysis.methodology.limitations) {
+      parts.push(rtfParagraph(`• ${limitation}`));
+    }
+  }
+
   parts.push(rtfSubheading("Disposition"));
   parts.push(rtfLabelValue("Outcome", report.disposition.outcome ?? "(not yet set)"));
   if (report.disposition.managementNotes) parts.push(rtfParagraph(report.disposition.managementNotes));

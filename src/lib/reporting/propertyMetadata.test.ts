@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPropertyMetadata, validatePropertyMetadataInput } from "./propertyMetadata";
+import { buildPropertyMetadata, resolveTerminology, validatePropertyMetadataInput } from "./propertyMetadata";
 
 describe("validatePropertyMetadataInput", () => {
   it("accepts a valid minimal input", () => {
@@ -37,5 +37,50 @@ describe("buildPropertyMetadata", () => {
   it("trims optional fields to undefined rather than storing empty strings", () => {
     const record = buildPropertyMetadata({ code: "HOLLYMS", name: "Hollywood MS", city: "  " });
     expect(record.city).toBeUndefined();
+  });
+
+  it("copies through every optional 1.8 Property Profile field when supplied", () => {
+    const record = buildPropertyMetadata({
+      code: "HOLLYMS",
+      name: "Hollywood MS",
+      timezone: "America/Chicago",
+      defaultLanguage: "es",
+      terminology: { playerPositionLabel: "Spot" },
+      defaultGameRulesRef: { id: "game-1", version: 1 },
+      tableNamingConvention: "BJ-##",
+      currency: "USD",
+      reportingDefaults: { defaultInvestigatorName: "J. Smith", defaultShift: "Swing" },
+      logoRef: "logo-1",
+    });
+    expect(record.timezone).toBe("America/Chicago");
+    expect(record.defaultLanguage).toBe("es");
+    expect(record.terminology).toEqual({ playerPositionLabel: "Spot" });
+    expect(record.defaultGameRulesRef).toEqual({ id: "game-1", version: 1 });
+    expect(record.tableNamingConvention).toBe("BJ-##");
+    expect(record.currency).toBe("USD");
+    expect(record.reportingDefaults).toEqual({ defaultInvestigatorName: "J. Smith", defaultShift: "Swing" });
+    expect(record.logoRef).toBe("logo-1");
+  });
+
+  it("leaves every 1.8 Property Profile field undefined when not supplied — none are required", () => {
+    const record = buildPropertyMetadata({ code: "HOLLYMS", name: "Hollywood MS" });
+    expect(record.timezone).toBeUndefined();
+    expect(record.terminology).toBeUndefined();
+    expect(record.defaultGameRulesRef).toBeUndefined();
+  });
+});
+
+describe("resolveTerminology", () => {
+  it("returns 'Seat' (Surveillance's default) when no property or preference is given", () => {
+    expect(resolveTerminology(undefined)).toBe("Seat");
+    expect(resolveTerminology({ terminology: undefined })).toBe("Seat");
+  });
+
+  it("returns the property's configured 'Spot' preference", () => {
+    expect(resolveTerminology({ terminology: { playerPositionLabel: "Spot" } })).toBe("Spot");
+  });
+
+  it("returns a property's custom localized term", () => {
+    expect(resolveTerminology({ terminology: { playerPositionLabel: { custom: "Puesto" } } })).toBe("Puesto");
   });
 });

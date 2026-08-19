@@ -116,6 +116,95 @@ export function ReportPreview({ report }: { report: Report }) {
         )}
       </Section>
 
+      {report.analysis?.counterAnalysisBySeat && report.analysis.counterAnalysisBySeat.length > 0 && (
+        <Section kind="analysis" title="Counter Analysis">
+          <ExperimentalNotice />
+          <ul className="flex flex-col gap-1 text-sm">
+            {report.analysis.counterAnalysisBySeat.map((seat) => (
+              <li key={seat.seatNumber}>
+                Seat {seat.seatNumber}: <span className="font-semibold">{seat.classification.replace("_", " ")}</span> (confidence{" "}
+                {seat.confidenceScore.toFixed(2)})
+                {seat.strongestContributingSignals.length > 0 && (
+                  <span className="text-muted-foreground"> — {seat.strongestContributingSignals.map((s) => s.description).join("; ")}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {report.analysis?.bettingAnalysisBySeat && report.analysis.bettingAnalysisBySeat.length > 0 && (
+        <Section kind="analysis" title="Betting Analysis">
+          <ul className="flex flex-col gap-1 text-sm">
+            {report.analysis.bettingAnalysisBySeat.map((seat) => (
+              <li key={seat.seatNumber}>
+                Seat {seat.seatNumber}: {seat.sampleSize} usable hands
+                {seat.correlationWithTrueCount != null && `, wager/true-count correlation ${seat.correlationWithTrueCount.toFixed(2)}`}
+                {seat.betSpread && `, spread ${seat.betSpread.minWager}-${seat.betSpread.maxWager}${seat.betSpread.ratio ? ` (${seat.betSpread.ratio.toFixed(1)}x)` : ""}`}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {report.analysis?.playingDeviationAnalysisBySeat && report.analysis.playingDeviationAnalysisBySeat.length > 0 && (
+        <Section kind="analysis" title="Playing-Deviation Analysis">
+          <ul className="flex flex-col gap-1 text-sm">
+            {report.analysis.playingDeviationAnalysisBySeat.map((seat) => (
+              <li key={seat.seatNumber}>
+                Seat {seat.seatNumber}: {seat.totalDeviations}/{seat.totalOpportunities} decisions deviated from basic strategy
+                {seat.deviationRate != null && ` (${(seat.deviationRate * 100).toFixed(0)}%)`}
+                {seat.indexTableProvided
+                  ? seat.indexConsistentDeviationRate != null &&
+                    `, ${(seat.indexConsistentDeviationRate * 100).toFixed(0)}% index-consistent`
+                  : " — no index table supplied, index-consistency not evaluated"}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {report.analysis?.insuranceAnalysisBySeat && report.analysis.insuranceAnalysisBySeat.length > 0 && (
+        <Section kind="analysis" title="Insurance Analysis">
+          <ul className="flex flex-col gap-1 text-sm">
+            {report.analysis.insuranceAnalysisBySeat.map((seat) => (
+              <li key={seat.seatNumber}>
+                Seat {seat.seatNumber}: offered {seat.timesOffered}, taken {seat.timesTaken} (threshold TC ≥ {seat.trueCountThresholdUsed})
+                {seat.countConsistentRate != null && `, ${(seat.countConsistentRate * 100).toFixed(0)}% count-consistent`}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {report.analysis?.observationConfidenceBySeat && report.analysis.observationConfidenceBySeat.length > 0 && (
+        <Section kind="analysis" title="Observation Confidence">
+          <ul className="flex flex-col gap-1 text-sm">
+            {report.analysis.observationConfidenceBySeat.map((seat) => (
+              <li key={seat.seatNumber}>
+                Seat {seat.seatNumber}: {seat.handsObserved} hands observed, {seat.handsWithUsableEvidence} with usable evidence (minimum{" "}
+                {seat.minimumHandsForClassification} required for any classification)
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {report.analysis?.methodology && (
+        <Section kind="analysis" title="Methodology">
+          <p className="text-sm">
+            Player Observation schema v{report.analysis.methodology.playerObservationSchemaVersion} · Confidence Engine v
+            {report.analysis.methodology.confidenceEngineVersion} · Status:{" "}
+            <span className="font-semibold">{report.analysis.methodology.validationStatus.replace(/_/g, " ")}</span>
+          </p>
+          <ul className="mt-1 flex list-disc flex-col gap-0.5 pl-4 text-xs text-muted-foreground">
+            {report.analysis.methodology.limitations.map((l, i) => (
+              <li key={i}>{l}</li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
       <Section kind="narrative" title="Disposition">
         <Field label="Outcome" value={report.disposition.outcome ?? "(not yet set)"} />
         {report.disposition.managementNotes && <p className="mt-1 text-sm">{report.disposition.managementNotes}</p>}
@@ -147,6 +236,15 @@ function Section({ kind, title, children }: { kind: "observed-fact" | "derived-a
       </div>
       {children}
     </section>
+  );
+}
+
+/** Rendered above Counter Analysis specifically — that section's Confidence Engine is EXPERIMENTAL / NOT VALIDATED (see docs/EYEONPIT_1_7_COUNTER_DETECTION.md), so every appearance of it must carry this notice; see the Methodology section below for the full limitations list. */
+function ExperimentalNotice() {
+  return (
+    <p className="mb-2 rounded-md border border-pending/40 bg-pending/10 p-2 text-xs font-medium text-pending">
+      EXPERIMENTAL — NOT VALIDATED. An investigative indicator only, never an accusation or conclusion. See Methodology below.
+    </p>
   );
 }
 

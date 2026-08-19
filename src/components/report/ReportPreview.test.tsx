@@ -64,4 +64,36 @@ describe("ReportPreview — renders every required section, never fabricates mis
     render(<ReportPreview report={report} />);
     expect(screen.getAllByText("(not yet written)").length).toBeGreaterThan(0);
   });
+
+  it("omits every 1.7 analytics section entirely when no player analytics were attached — no clutter, no fabrication", async () => {
+    const inv = await freshInvestigation();
+    const report = buildReportFromInvestigation({ investigation: inv, cardEvents: [] });
+    render(<ReportPreview report={report} />);
+    expect(screen.queryByText("Counter Analysis")).toBeNull();
+    expect(screen.queryByText("Methodology")).toBeNull();
+  });
+
+  it("shows Counter Analysis with an EXPERIMENTAL notice and the Methodology section when player analytics ARE attached", async () => {
+    const inv = await freshInvestigation();
+    const base = buildReportFromInvestigation({ investigation: inv, cardEvents: [] });
+    const report = {
+      ...base,
+      analysis: {
+        counterAnalysisBySeat: [
+          { seatNumber: 1, playerGroupId: null, classification: "MODERATE" as const, confidenceScore: 0.4, reasonCodes: [], strongestContributingSignals: [], contradictorySignals: [], engineVersion: 1 },
+        ],
+        methodology: {
+          playerObservationSchemaVersion: 1,
+          confidenceEngineVersion: 1,
+          validationStatus: "EXPERIMENTAL_NOT_VALIDATED" as const,
+          limitations: ["Test limitation statement."],
+        },
+      },
+    };
+    render(<ReportPreview report={report} />);
+    screen.getByText("Counter Analysis");
+    screen.getByText(/EXPERIMENTAL — NOT VALIDATED/);
+    screen.getByText("Methodology");
+    screen.getByText("Test limitation statement.");
+  });
 });

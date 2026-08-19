@@ -1,6 +1,7 @@
 import type { VersionedRecord } from "@/lib/versioning/types";
 import { generateCanonicalId } from "@/lib/versioning/id";
 import type { Rank } from "@/lib/counting-engine/types";
+import type { GameFamily } from "./game/gameFamily";
 
 /**
  * PRIORITY B2/B12 — the versioned Count Method Registry. This file defines
@@ -37,6 +38,9 @@ export const VERIFICATION_STATUS_DESCRIPTIONS: Record<CountMethodVerificationSta
 export type TrueCountMethod = "level-division" | "unbalanced-running-only" | "none" | "custom";
 export type AceHandling = "primary-tag" | "side-count" | "excluded" | "custom";
 
+/** PRIORITY 1.8-7 — what KIND of calculation a method performs, not just which game it's for. "Do not assume every method belongs to blackjack forever." */
+export type MethodKind = "running-count" | "side-count" | "exact-composition" | "side-bet-count" | "effect-of-removal" | "custom-research";
+
 export interface CountMethodDefinition extends VersionedRecord {
   /** Stable, human-chosen slug ("hi-lo", "wong-halves") — distinct from `id` (the opaque canonical uuid): this is what a user/report/scenario names the method BY, `id` is only the DB primary key. */
   canonicalId: string;
@@ -59,6 +63,12 @@ export interface CountMethodDefinition extends VersionedRecord {
   sourceReferences: string[];
   /** True ONLY for the four built-in adapters (see countMethodAdapters.ts) — never settable by user-added methods, and never persisted to the `countMethods` Dexie table (built-ins are code constants, not DB rows). */
   isBuiltInAdapter: boolean;
+
+  // ---- PRIORITY 1.8-7/8 — generic method framework (all optional, purely additive) ----
+  /** Which GameFamily/families this method is valid for — undeclared (undefined) is NOT the same as "blackjack assumed"; see gameMethodCompatibility.ts's own doc comment on why an undeclared method is treated as NOT verified-compatible with anything. */
+  supportedGameFamilies?: GameFamily[];
+  /** What kind of calculation this is — running counts aren't the only thing a "count method" can mean; see MethodKind's own doc comment. */
+  methodKind?: MethodKind;
 }
 
 export type CreateCountMethodInput = Omit<CountMethodDefinition, keyof VersionedRecord | "isBuiltInAdapter">;

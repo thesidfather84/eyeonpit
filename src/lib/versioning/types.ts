@@ -71,8 +71,10 @@ export function nextVersion(current: number): number {
 export const ENGINE_VERSIONS = {
   /** src/lib/counting-engine — bump only if COUNT_TAGS, initialRunningCount, or true-count math changes. Untouched by 1.5/1.6 foundation work. */
   countingEngine: "1.0.0",
-  /** src/lib/reporting/reportSchema.ts's Report shape itself. */
-  reportSchema: 1,
+  /** src/lib/reporting/reportSchema.ts's Report shape itself — kept in sync with REPORT_SCHEMA_VERSION there by hand. */
+  reportSchema: 2,
   /** src/lib/gold-standard's deterministic simulation engine (src/lib/gold-standard/simulation/engine.ts). */
   simulator: "0.1.0",
+  /** src/lib/player-analytics — PlayerObservation extraction + analytics + Confidence Engine (EXPERIMENTAL / NOT VALIDATED, see docs/EYEONPIT_1_7_COUNTER_DETECTION.md). */
+  playerAnalytics: "0.1.0",
 } as const;

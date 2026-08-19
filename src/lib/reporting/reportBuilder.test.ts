@@ -111,7 +111,7 @@ describe("buildReportFromInvestigation — derives a Report from authoritative i
   it("versionInfo always includes the current report schema and counting engine versions", async () => {
     const inv = await freshInvestigation();
     const report = buildReportFromInvestigation({ investigation: inv, cardEvents: [] });
-    expect(report.versionInfo.reportSchemaVersion).toBe(1);
+    expect(report.versionInfo.reportSchemaVersion).toBe(2);
     expect(report.versionInfo.countingEngineVersion).toBeTruthy();
     expect(report.versionInfo.generatedAt).toBeTruthy();
   });

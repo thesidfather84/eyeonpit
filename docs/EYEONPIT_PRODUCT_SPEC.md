@@ -246,6 +246,14 @@ EyeOnPit tracks, per investigation: seats and the players occupying them, the de
 
 ## 14a. EyeOnPit 1.5 / 1.6 — Reporting & Blackjack Research Architecture
 
+**UPDATE:** Counter Detection (§15's Deep Eye analysis) now has a real,
+tested, EXPERIMENTAL/NOT-VALIDATED implementation — see
+`docs/EYEONPIT_1_7_COUNTER_DETECTION.md`. Global/multi-property/
+multi-language/multi-game readiness — internationalization, property
+terminology/profile, generic Game Definition and Method frameworks, and
+multi-property membership/entitlement foundations — is documented in
+`docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md`.
+
 The advanced-reporting and blackjack-research-tooling work described in
 §15/§16 below has a foundation built and documented separately: see
 `docs/EYEONPIT_1_5_REPORTING.md` (Investigation ID,
@@ -363,7 +371,14 @@ This credit is discreet — present somewhere in the codebase/app (e.g. the Sett
 | Report: PDF / print-ready export | **IMPLEMENTED** | `window.print()` + `@media print` stylesheet in [`ReportPreview.tsx`](../src/components/report/ReportPreview.tsx) (PDF via the browser's own print-to-PDF); dependency-free RTF ("Word") export via [`lib/reporting/exportRtf.ts`](../src/lib/reporting/exportRtf.ts). No `.docx`/OOXML writer — see `docs/EYEONPIT_1_5_REPORTING.md` §7 for why |
 | 1.6 Blackjack Gold Standard: Game Definition, Count Method Registry + trusted-system adapters, exact-composition model, Simulation Scenario/Result models, deterministic simulation engine | **PARTIAL** | Foundation built and tested, no creation UI yet. See `docs/EYEONPIT_1_6_ARCHITECTURE.md` §2–7 |
 | 1.6 private `/lab` research area (independent passcode gate) | **PARTIAL** | Real-data list screens for methods/scenarios/results/research library; honest placeholders where creation UI is deferred. See `docs/EYEONPIT_1_6_ARCHITECTURE.md` §11 |
-| 1.6 Counter Detection Confidence Engine | **PLANNED** | Architecture and required validation metrics documented, zero implementation, by explicit instruction — see `docs/EYEONPIT_1_6_ARCHITECTURE.md` §8 |
+| 1.7 Counter Detection Confidence Engine + Player Analytics | **PARTIAL (EXPERIMENTAL / NOT VALIDATED)** | Real, tested, versioned classifier (5-state, never a boolean) and full PlayerObservation/bet-count/playing-deviation/insurance/entry-exit analytics pipeline — but not validated against real-world data; zero measured false positives on this session's own synthetic benchmark. See `docs/EYEONPIT_1_7_COUNTER_DETECTION.md` |
+| 1.7 Report integration for Counter/Betting/Playing-Deviation/Insurance Analysis | **PARTIAL** | 6 new optional `ReportAnalysisSection` fields (schema v2), populated only via explicit opt-in `attachPlayerAnalytics`, never automatically. See `docs/EYEONPIT_1_7_COUNTER_DETECTION.md` §10 |
+| 1.7 `/lab` Counter Detection, Player Behavior Analysis, Validation Benchmarks pages | **PARTIAL** | Real, data-backed pages (no more placeholder); not manually verified in a running browser this session. See `docs/EYEONPIT_1_7_COUNTER_DETECTION.md` §11 |
+| 1.8 Internationalization foundation (string catalog + Intl formatting, 8 target locales) | **PARTIAL** | Real, tested architecture; only a handful of keys seeded beyond English, and no live UI is wired through it yet. See `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §2 |
+| 1.8 Property terminology preference + expanded Property Profile | **PARTIAL** | Data model + resolver real and tested; not wired into Floor/Surveillance UI components yet. See `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §3–4 |
+| 1.8 Generic Game Definition / Method framework / compatibility validation | **PARTIAL** | Non-breaking umbrella over existing blackjack GameDefinition; only blackjack implemented. See `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §7 |
+| 1.8 Multi-property membership/role + feature-tier entitlement foundation | **PARTIAL** | Types and pure functions only; no persistence, no enforcement, `/lab`'s gate unaffected. See `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §8–9 |
+| 1.8 Global voice architecture (multilingual voice packs) | **PLANNED** | Documentation only, zero code, by explicit instruction — see `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §6 |
 | History / Review of past investigations | **PARTIAL** | [`app/(main)/investigations/page.tsx`](../src/app/(main)/investigations/page.tsx) lists investigations with status/casino/table/round-count and links into the live/report screens — functional but minimal (no search/filter, no report preview from the list) |
 | Internal credit (Sidney Impastato — Creator/Developer; Forge — Architect) | **IMPLEMENTED** | Small text line at the bottom of Settings → About, [`SettingsScreen.tsx`](../src/components/settings/SettingsScreen.tsx) |
 

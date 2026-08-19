@@ -1,5 +1,6 @@
-import type { VersionedRecord } from "@/lib/versioning/types";
+import type { VersionedRecord, VersionRef } from "@/lib/versioning/types";
 import { generateCanonicalId, validatePropertyCode } from "@/lib/versioning/id";
+import type { Locale } from "@/lib/i18n/locale";
 
 /**
  * PRIORITY A2 — configurable property metadata. Deliberately property-LEVEL
@@ -18,7 +19,46 @@ import { generateCanonicalId, validatePropertyCode } from "@/lib/versioning/id";
  * independent of `Investigation`, referenced only by `code`/`id` from
  * reports, never a foreign key Investigation itself needs to know about.
  */
-export interface PropertyMetadata extends VersionedRecord {
+/**
+ * PRIORITY 1.8-2 — "EyeOnPit adapts to the operator. The operator should
+ * not have to adapt to EyeOnPit" (docs/EYEONPIT_PRODUCT_SPEC.md §1),
+ * applied at the property level: a property can prefer "Spot," "Seat," or
+ * its own localized/custom term for a numbered player position, WITHOUT
+ * changing any internal seat number/ID anywhere — `playerPositionLabel` is
+ * a display preference only. SCOPE LIMITATION (documented, not hidden):
+ * this is the data model + a pure resolver (`resolveTerminology` below)
+ * only — it is NOT wired into ActiveSeatHeader/FloorPlayField/
+ * CardEntryPad's existing `terminology` prop in this patch, to avoid
+ * touching live Floor/Surveillance UI components outside this session's
+ * scope; see docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md.
+ */
+export type PlayerPositionLabel = "Spot" | "Seat" | { custom: string };
+
+export interface PropertyTerminologyPreference {
+  playerPositionLabel: PlayerPositionLabel;
+}
+
+/** PRIORITY 1.8-3 — expanded Property Profile. Every field is OPTIONAL — "do not require all fields today." Purely additive to the existing A2 property-level fields above; no existing field's meaning changes. */
+export interface PropertyProfileFields {
+  /** IANA time zone name, e.g. "America/Los_Angeles" — display formatting only, see lib/i18n/format.ts. */
+  timezone?: string;
+  defaultLanguage?: Locale;
+  terminology?: PropertyTerminologyPreference;
+  /** References a GameDefinition version (lib/gold-standard/gameDefinition.ts) — never embeds a copy of the rules themselves. */
+  defaultGameRulesRef?: VersionRef;
+  /** Free-text convention, e.g. "BJ-##" — display/documentation only, never parsed or enforced. */
+  tableNamingConvention?: string;
+  /** ISO 4217 currency code, e.g. "USD" — see lib/i18n/format.ts's formatCurrency. */
+  currency?: string;
+  reportingDefaults?: {
+    defaultInvestigatorName?: string;
+    defaultShift?: string;
+  };
+  /** Reserved for a future property logo/branding asset reference — no upload/storage mechanism exists yet; this field exists so a later feature doesn't need a schema migration to add it. */
+  logoRef?: string;
+}
+
+export interface PropertyMetadata extends VersionedRecord, PropertyProfileFields {
   /** Validated via validatePropertyCode — always uppercase, 2-10 chars. */
   code: string;
   name: string;
@@ -31,7 +71,16 @@ export interface PropertyMetadata extends VersionedRecord {
 }
 
 export type CreatePropertyMetadataInput = Pick<PropertyMetadata, "code" | "name"> &
-  Partial<Pick<PropertyMetadata, "city" | "state" | "country" | "notes" | "isDefault">>;
+  Partial<Pick<PropertyMetadata, "city" | "state" | "country" | "notes" | "isDefault">> &
+  Partial<PropertyProfileFields>;
+
+/** The display label a property prefers for a numbered player position — falls back to "Seat" (Surveillance's own default term) when the property has no preference set, matching ActiveSeatHeader's existing default convention. */
+export function resolveTerminology(property: Pick<PropertyMetadata, "terminology"> | undefined): string {
+  const label = property?.terminology?.playerPositionLabel;
+  if (!label) return "Seat";
+  if (typeof label === "string") return label;
+  return label.custom;
+}
 
 export type PropertyMetadataValidation = { valid: true } | { valid: false; errors: string[] };
 
@@ -65,5 +114,13 @@ export function buildPropertyMetadata(input: CreatePropertyMetadataInput): Prope
     country: input.country?.trim() || undefined,
     notes: input.notes?.trim() || undefined,
     isDefault: input.isDefault ?? false,
+    timezone: input.timezone,
+    defaultLanguage: input.defaultLanguage,
+    terminology: input.terminology,
+    defaultGameRulesRef: input.defaultGameRulesRef,
+    tableNamingConvention: input.tableNamingConvention,
+    currency: input.currency,
+    reportingDefaults: input.reportingDefaults,
+    logoRef: input.logoRef,
   };
 }

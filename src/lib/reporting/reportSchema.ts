@@ -20,7 +20,8 @@ import type { CountingSystem } from "@/types/investigation";
  * deliberately left untouched.
  */
 
-export const REPORT_SCHEMA_VERSION = 1;
+/** Bumped to 2 for EyeOnPit 1.7 — ReportAnalysisSection gained the counter/betting/playing-deviation/insurance/observation-confidence/methodology optional fields (see that interface's own doc comment). A schema-v1 report simply lacks these fields; nothing about v1 reports changes retroactively. */
+export const REPORT_SCHEMA_VERSION = 2;
 
 /** OBSERVED FACT vs. DERIVED ANALYSIS — every section of the report is tagged with which one it is, per docs/EYEONPIT_PRODUCT_SPEC.md §16's explicit requirement that the two never blur together. */
 export type ReportSectionKind = "observed-fact" | "derived-analysis" | "narrative";
@@ -157,13 +158,78 @@ export interface ReportAnalysisSection {
   }[];
   /** Priority B7/B8 — omitted entirely until a real SimulationResult has been explicitly linked to this investigation's methodology (e.g. "does this operator's observed strategy deviate meaningfully from optimal?"); not populated by the foundation this patch builds. */
   simulationMethodologyRef?: VersionRef;
-  // Deliberately no `counterDetection` field yet — Priority B13 is
-  // architecture/documentation only in this patch (see
-  // docs/EYEONPIT_1_6_ARCHITECTURE.md's Counter Detection section). Adding
-  // a field here before a real engine exists to populate it would be
-  // exactly the kind of placeholder-that-looks-real this schema's own
-  // "never fabricate" rule forbids — it will be added as a genuine,
-  // versioned field once that engine exists, not reserved in advance.
+
+  // ---- EyeOnPit 1.7 — Counter Detection / Player Analytics (Priority 9) ----
+  // Every field below is populated ONLY via the explicit, opt-in
+  // `attachPlayerAnalytics` helper in lib/player-analytics/reportIntegration.ts
+  // — never automatically by buildReportFromInvestigation. The Confidence
+  // Engine that produces `counterAnalysisBySeat` is EXPERIMENTAL / NOT
+  // VALIDATED (see docs/EYEONPIT_1_7_COUNTER_DETECTION.md) — a report that
+  // includes it MUST also include `methodology` disclosing that status;
+  // `attachPlayerAnalytics` enforces this structurally, not just by
+  // convention. "Do NOT present experimental analysis as fact" (Priority
+  // 9's own rule) is why this stays a deliberate, separate attachment step
+  // rather than a field every report silently gains.
+
+  /** The Confidence Engine's own five-state classification, per seat/player-group — see lib/player-analytics/confidenceEngine.ts. Never a bare boolean. */
+  counterAnalysisBySeat?: {
+    seatNumber: number;
+    playerGroupId: string | null;
+    classification: "INSUFFICIENT_DATA" | "LOW" | "MODERATE" | "HIGH" | "VERY_HIGH";
+    confidenceScore: number;
+    reasonCodes: string[];
+    strongestContributingSignals: { signalKey: string; description: string; strength: number }[];
+    contradictorySignals: { signalKey: string; description: string; strength: number }[];
+    engineVersion: number;
+  }[];
+
+  /** Richer than `betCountCorrelationBySeat` — includes bet spread and count-threshold response, from lib/player-analytics/betCountAnalytics.ts. */
+  bettingAnalysisBySeat?: {
+    seatNumber: number;
+    playerGroupId: string | null;
+    sampleSize: number;
+    correlationWithTrueCount: number | null;
+    betSpread: { minWager: number; maxWager: number; ratio: number | null } | null;
+    version: number;
+  }[];
+
+  /** Basic-strategy consistency is always real when present; index-consistency stays null unless a real, sourced index table was supplied — see lib/player-analytics/playingDeviationAnalysis.ts's own doc comment. */
+  playingDeviationAnalysisBySeat?: {
+    seatNumber: number;
+    playerGroupId: string | null;
+    totalOpportunities: number;
+    totalDeviations: number;
+    deviationRate: number | null;
+    indexTableProvided: boolean;
+    indexConsistentDeviationRate: number | null;
+    version: number;
+  }[];
+
+  insuranceAnalysisBySeat?: {
+    seatNumber: number;
+    playerGroupId: string | null;
+    timesOffered: number;
+    timesTaken: number;
+    countConsistentRate: number | null;
+    trueCountThresholdUsed: number;
+    version: number;
+  }[];
+
+  /** How much evidence backs each seat's analysis — the honest "how seriously should a reader take this" figure, always shown alongside `counterAnalysisBySeat`. */
+  observationConfidenceBySeat?: {
+    seatNumber: number;
+    handsObserved: number;
+    handsWithUsableEvidence: number;
+    minimumHandsForClassification: number;
+  }[];
+
+  /** Required whenever ANY 1.7 analytics field above is present — see `attachPlayerAnalytics`. */
+  methodology?: {
+    playerObservationSchemaVersion: number;
+    confidenceEngineVersion: number;
+    validationStatus: "EXPERIMENTAL_NOT_VALIDATED";
+    limitations: string[];
+  };
 }
 
 export interface ReportDisposition {

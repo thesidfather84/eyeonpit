@@ -12,6 +12,54 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### Floor Mode Operator Usability Cleanup (2026-08-18)
+
+**Problem:** Floor Mode's compact play-field summary (`FloorPlayField.tsx`)
+displayed each player position as the bare internal shorthand "S1"–"S7" —
+the one place in the whole live UI that ever leaked an internal-style
+identifier to the operator. Every other Floor/Surveillance surface, and
+every doc source, already spelled the word out. Layout hierarchy also put
+operational actions (Done/Next/Undo) between the active-target banner and
+the keypad they don't act on, rather than after it.
+
+**What shipped:**
+
+- **"Spot N," never "Sn."** `FloorPlayField.tsx`'s seat labels/aria-labels
+  now read "SPOT 3" / "ACTIVE · SPOT 3" — the sole occurrence of the bare
+  abbreviation in the codebase, fixed at the source.
+- **Floor Mode Terminology Standard** (new, see
+  `docs/EYEONPIT_PRODUCT_SPEC.md` §4): Floor Mode's visible vocabulary is
+  "Spot," Surveillance's stays "Seat" — a deliberate, tested divergence, not
+  an inconsistency. `ActiveSeatHeader.tsx` and `CardEntryPad.tsx` gained an
+  opt-in `terminology` prop (defaults to "seat," so Surveillance's call
+  sites needed zero changes) so Floor Mode's active-target banner and
+  "not enabled" card-entry message both say "Spot" too.
+- **Information hierarchy fix**: card entry now renders before Done/Next/
+  Undo in `FloorScreen.tsx`, matching the operator's actual glance-to-tap
+  path (active target → enter a card → then advance/undo).
+- **New permanent product principles** (`docs/EYEONPIT_PRODUCT_SPEC.md` §1):
+  "EyeOnPit adapts to the operator" and "the observer should not have to
+  learn EyeOnPit language."
+
+**Explicitly not touched (deliberately out of scope):** the voice
+resolver/parser (commit `4c90844` and everything built in the two rounds
+above), the CardEvent ledger, counting mathematics, investigation
+persistence, and reporting logic. VoiceControl's own confirmation toast and
+Debug panel still say "SEAT"/"DEALER" (sourced from
+`cardEntryResolution.ts`'s `targetLabel`, used by both manual and voice
+dispatch) — a known, deliberately deferred inconsistency, flagged rather
+than fixed, specifically to avoid touching anything voice-adjacent before
+PC Field Test #2.
+
+**Tests:** ~10 new/updated regression tests (`FloorScreen.test.tsx`)
+proving no "S1"–"S7" leakage across every seat state, the Spot-terminology
+card-entry message, and that Surveillance's own "Seat" terminology is
+unaffected. Full suite: 883 passed, 1 pre-existing skip, zero regressions.
+
+**Status:** complete, pending review. Not committed/pushed per this
+patch's own instructions — see the field-test report for the full
+findings/friction report.
+
 ### PC Field Test #1 Fixes — Canonicalization, ASR Normalization, Dealer Recovery (2026-08-18)
 
 **Problem:** the very first PC field test of the diagnostic system above
@@ -131,22 +179,34 @@ use it.
 
 ---
 
-## Next Up
+## Sequence (current, authoritative order)
 
-- **PC Field Test #2** — collect a fresh diagnostic export and compare it
-  against the Field Test #1 fixes above before making any further voice
-  changes.
+This is the actual next-priority order — do not treat 1.5 reporting work as
+the immediate next major priority; it is deferred (see the note below the
+list), not next.
+
+1. ~~Floor Mode operator usability cleanup~~ — complete, see above.
+2. **PC Voice Field Test #2** — a fresh diagnostic export, compared against
+   Field Test #1's fixes, before any further voice changes. *(up next)*
+3. Fix/validate remaining Voice failures surfaced by Field Test #2.
+4. Repeat Voice testing until the reliability gate is met.
+5. Blackjack Gold Standard architecture.
+6. Game Definition.
+7. Count Method Registry.
+8. Simulation Engine / private Simulation Lab.
+9. Counter Detection Confidence Engine.
+10. Later multi-game expansion.
+
+Also still pending, not yet scheduled into the sequence above:
+
 - **Real iPhone field testing** of the voice diagnostics/N-best/PC-field-fix
-  work, using Export JSON to capture and review field sessions — still
-  pending, now against this additionally-hardened baseline.
+  work, using Export JSON to capture and review field sessions.
 - **1.5 reporting work** — paused for the duration of the voice reliability
-  effort above; resumes once field testing confirms the diagnostic system
-  and N-best resolver hold up under real conditions.
-
-## Longer-Term / Not Yet Scheduled
+  effort; resumes only after the voice reliability gate (steps 2–4 above)
+  is met. Not the next major priority.
 
 See `docs/EYEONPIT_PRODUCT_SPEC.md`'s Implementation Status Matrix for the
 full list of **PLANNED**/**FUTURE** capabilities (voice wager mutation,
 hit/stand/double/split/surrender/insurance voice commands, fully natural
 conversational capture, etc.) — that matrix is the authoritative source for
-long-range voice scope; this roadmap only tracks active/near-term work.
+long-range voice scope; this roadmap only tracks active/near-term sequence.

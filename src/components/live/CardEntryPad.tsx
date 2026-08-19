@@ -41,10 +41,18 @@ const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
  * them why the pad had gone dead. "Seat not enabled" wording was also
  * updated to match current reality: a single tap on the seat (or its
  * spoken name) enables it now, not a double-tap.
+ *
+ * `terminology` (Floor Mode operator usability cleanup): only affects the
+ * "not enabled" block-reason wording below — everything else in this
+ * component (the rank buttons, the last-card-event message) has no target
+ * name in it at all. Defaults to "seat" so LiveScreen's own call site
+ * (Surveillance) needed no change. See ActiveSeatHeader's own doc comment
+ * for the same convention.
  */
-export function CardEntryPad() {
+export function CardEntryPad({ terminology = "seat" }: { terminology?: "seat" | "spot" } = {}) {
   const { investigation, currentRound } = useInvestigationContext();
   const { enterCard, disabled, locked, notEnabled } = useCardEntry();
+  const word = terminology === "spot" ? "spot" : "seat";
 
   const lastCardEvent = [...currentRound.eventLog].reverse().find((e) => e.type === "card");
 
@@ -52,7 +60,7 @@ export function CardEntryPad() {
   if (investigation.status === "paused") {
     blockReason = "Investigation paused — resume to continue";
   } else if (notEnabled) {
-    blockReason = "Seat not enabled — tap the seat, or say its name, to enable it";
+    blockReason = `${word[0].toUpperCase()}${word.slice(1)} not enabled — tap the ${word}, or say its name, to enable it`;
   } else if (locked) {
     blockReason = "Hand locked — result already recorded";
   } else if (currentRound.completed) {

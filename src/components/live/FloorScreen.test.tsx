@@ -253,8 +253,11 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
     );
 
     // ActiveSeatHeader is the ONE place that states the active target now —
-    // "SEAT 3" / "ENTER CARDS", no more "ACTIVE — SEAT n / group / bet".
-    await waitFor(() => screen.getByText("SEAT 3"));
+    // "SPOT 3" / "ENTER CARDS" in Floor Mode (Surveillance's own instance
+    // of this same component still says "SEAT 3" — see ActiveSeatHeader's
+    // own doc comment on the `terminology` prop and its Surveillance test
+    // coverage elsewhere).
+    await waitFor(() => screen.getByText("SPOT 3"));
     screen.getByText("ENTER CARDS");
   });
 
@@ -284,8 +287,13 @@ describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
     await within(field).findByRole("button", { name: "Dealer, active" });
     for (let seat = 1; seat <= 7; seat++) {
       const seatButton = within(field).getByTestId(`floor-seat-${seat}`);
-      expect(seatButton.getAttribute("aria-label")).toBe(`Seat ${seat}, empty`);
+      expect(seatButton.getAttribute("aria-label")).toBe(`Spot ${seat}, empty`);
       expect(within(seatButton).getByText("—")).toBeTruthy();
+      // Floor Mode operator usability cleanup — visible label reads "SPOT n",
+      // never the bare internal identifier "Sn" (see FloorPlayField's own
+      // doc comment on `terminology`).
+      expect(within(seatButton).getByText(`SPOT ${seat}`)).toBeTruthy();
+      expect(within(seatButton).queryByText(`S${seat}`)).toBeNull();
     }
   });
 
@@ -303,13 +311,18 @@ describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
       seat2.click();
     });
 
-    await waitFor(() => expect(seat2.getAttribute("aria-label")).toBe("Seat 2, active"));
+    await waitFor(() => expect(seat2.getAttribute("aria-label")).toBe("Spot 2, active"));
+    expect(within(seat2).getByText("ACTIVE · SPOT 2")).toBeTruthy();
     // ActiveSeatHeader (an existing, separately-tested component) renders
     // once a seat becomes the active target — its appearance here confirms
     // the play field drove the SAME context state, not a parallel one.
-    // occupySeat auto-creates a player group ("SEAT 2 · P1"), so this
-    // matches on the seat identity via regex rather than an exact string.
-    await waitFor(() => screen.getByText(/SEAT 2/));
+    // occupySeat auto-creates a player group ("SPOT 2 · P1" in Floor Mode),
+    // so this matches on the seat identity via regex rather than an exact
+    // string. Scoped to the header itself since FloorPlayField's own "ACTIVE
+    // · SPOT 2" label (just asserted above) would otherwise also match a
+    // document-wide search for the same text.
+    const header = await screen.findByTestId("active-seat-header");
+    await waitFor(() => within(header).getByText(/SPOT 2/));
   });
 
   it("tapping an already-occupied seat just selects it (no re-occupy, no duplicate player group)", async () => {
@@ -324,12 +337,12 @@ describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
 
     const field = await screen.findByTestId("floor-play-field");
     const seat4 = within(field).getByTestId("floor-seat-4");
-    await waitFor(() => expect(seat4.getAttribute("aria-label")).toBe("Seat 4, occupied"));
+    await waitFor(() => expect(seat4.getAttribute("aria-label")).toBe("Spot 4, occupied"));
 
     await act(async () => {
       seat4.click();
     });
-    await waitFor(() => expect(seat4.getAttribute("aria-label")).toBe("Seat 4, active"));
+    await waitFor(() => expect(seat4.getAttribute("aria-label")).toBe("Spot 4, active"));
   });
 
   it("cards entered through the manual keypad for the dealer and a seat show up in the play field immediately — same round/display state, no separate data model", async () => {
@@ -371,7 +384,7 @@ describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
 
     await waitFor(() => {
       const seat2 = within(field).getByTestId("floor-seat-2");
-      expect(seat2.getAttribute("aria-label")).toBe("Seat 2, active");
+      expect(seat2.getAttribute("aria-label")).toBe("Spot 2, active");
       expect(within(seat2).getByText("5")).toBeTruthy();
     });
   });
@@ -490,11 +503,92 @@ describe("FloorScreen and LiveScreen share the same underlying investigation/led
       seatTile.click();
     });
 
+    // Same underlying seat, deliberately different VISIBLE word per shell —
+    // Surveillance said "Seat 3" above, Floor Mode says "Spot 3" here (see
+    // ActiveSeatHeader/FloorPlayField's own doc comments on `terminology`).
+    // The underlying identifier (seat 3) and investigation state are the
+    // same either way — this is presentation-only, proven by both panes
+    // reacting to the identical tap.
     const floorPane = screen.getByTestId("floor-pane");
     await waitFor(() => {
       const floorSeat3 = within(floorPane).getByTestId("floor-seat-3");
-      expect(floorSeat3.getAttribute("aria-label")).toBe("Seat 3, active");
+      expect(floorSeat3.getAttribute("aria-label")).toBe("Spot 3, active");
     });
+  });
+});
+
+describe("FloorScreen — operator usability cleanup: no bare internal seat identifiers (S1-S7) in user-facing Floor Mode text", () => {
+  it('never renders the bare "S<n>" abbreviation for any occupied/active/empty seat, and always renders "SPOT <n>" instead', async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat, updateInvestigation } = await import("@/lib/db/repositories/investigations");
+    // A mix of empty, occupied, and active seats — every visible state this
+    // component can render for a seat row.
+    await occupySeat(investigationId, 2);
+    await occupySeat(investigationId, 5);
+    await updateInvestigation(investigationId, { activeTarget: 5 });
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const field = await screen.findByTestId("floor-play-field");
+    for (let seat = 1; seat <= 7; seat++) {
+      const seatButton = within(field).getByTestId(`floor-seat-${seat}`);
+      expect(within(seatButton).queryByText(`S${seat}`)).toBeNull();
+      expect(within(seatButton).queryByText(`ACTIVE · S${seat}`)).toBeNull();
+      expect(seatButton.getAttribute("aria-label")).not.toMatch(/^Seat /);
+      expect(seatButton.getAttribute("aria-label")).toMatch(/^Spot \d, /);
+    }
+    // The active-target header (a completely separate component) must be
+    // equally clean — this is the banner an operator is most likely to
+    // glance at for "where does the next card go."
+    const header = screen.getByTestId("active-seat-header");
+    expect(within(header).queryByText(/^S5\b/)).toBeNull();
+    within(header).getByText(/^SPOT 5\b/);
+  });
+
+  it('the card-entry "not enabled" message uses "spot" in Floor Mode, not "seat"', async () => {
+    const investigationId = await freshInvestigationId();
+    // Set BEFORE mount (mirrors CardEntryPad.test.tsx's own equivalent
+    // test) — seat 6, never occupied, is what produces the "not enabled"
+    // state; the active target is loaded once from the investigation
+    // record at mount, not re-derived from a later write.
+    const { updateInvestigation } = await import("@/lib/db/repositories/investigations");
+    await updateInvestigation(investigationId, { activeTarget: 6 });
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    await screen.findByText("SPOT 6");
+    await waitFor(() => screen.getByText("Spot not enabled — tap the spot, or say its name, to enable it"));
+    expect(screen.queryByText(/^Seat not enabled/)).toBeNull();
+  });
+
+  it("Surveillance's own ActiveSeatHeader/seat tiles are unaffected — still say SEAT, not SPOT", async () => {
+    const investigationId = await freshInvestigationId();
+    const { LiveScreen } = await import("./LiveScreen");
+    render(
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <LiveScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
+    );
+
+    const seatTile = await screen.findByRole("button", { name: "Seat 3" });
+    await act(async () => {
+      seatTile.click();
+    });
+
+    await screen.findByText("SEAT 3");
+    expect(screen.queryByText("SPOT 3")).toBeNull();
   });
 });
 

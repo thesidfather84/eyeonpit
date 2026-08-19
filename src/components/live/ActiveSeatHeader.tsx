@@ -21,9 +21,22 @@ import { resolveSeatTarget } from "@/lib/utils/seatTarget";
  * directly below (see PlayerDetailBar), and spot-of-count is already shown
  * on the seat tile itself (SeatTilesRow) — repeating either here would just
  * be duplication again, the exact thing this consolidation removes.
+ *
+ * `terminology` (Floor Mode operator usability cleanup): Surveillance and
+ * Floor Mode deliberately use different VISIBLE words for the same
+ * underlying seat — Surveillance says "SEAT n" (matching SeatTilesRow/
+ * DealerTile/every Surveillance sheet), Floor Mode says "SPOT n" (the
+ * casino-floor term this shell standardizes on — see
+ * docs/EYEONPIT_PRODUCT_SPEC.md's "Floor Mode Terminology Standard").
+ * Defaults to "seat" so LiveScreen's own call site (Surveillance) needed no
+ * change at all. This is presentation-only: the underlying seat
+ * number/identifier is completely unaffected either way, and voice input
+ * keeps accepting "seat"/"spot"/"player" as synonyms regardless of which
+ * word is on screen.
  */
-export function ActiveSeatHeader({ target }: { target: CardTarget }) {
+export function ActiveSeatHeader({ target, terminology = "seat" }: { target: CardTarget; terminology?: "seat" | "spot" }) {
   const { investigation, currentRound } = useInvestigationContext();
+  const word = terminology === "spot" ? "SPOT" : "SEAT";
 
   let identity: string;
   if (target === "dealer") {
@@ -32,7 +45,7 @@ export function ActiveSeatHeader({ target }: { target: CardTarget }) {
     const { seatNumber, isSplit } = resolveSeatTarget(currentRound, target);
     const groupId = investigation.seatPlayerGroups[seatNumber];
     const group = groupId ? investigation.playerGroups[groupId] : undefined;
-    identity = `SEAT ${seatNumber}${isSplit ? " · SPLIT" : ""}${group ? ` · ${group.label}` : ""}`;
+    identity = `${word} ${seatNumber}${isSplit ? " · SPLIT" : ""}${group ? ` · ${group.label}` : ""}`;
   }
 
   return (

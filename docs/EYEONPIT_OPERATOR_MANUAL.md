@@ -77,8 +77,10 @@ is there to confirm what EyeOnPit heard, not to be a second full table.
 - **A compact play field** — dealer and every seat, which are occupied,
   which is active, and their current cards at a glance.
 - **The active target** — exactly one line telling you what card entry
-  currently applies to ("SEAT 2 · P1" / "ENTER CARDS", or "DEALER" /
-  "ENTER CARDS").
+  currently applies to ("SPOT 2 · P1" / "ENTER CARDS", or "DEALER" /
+  "ENTER CARDS"). Floor Mode always says "Spot" — Surveillance's own
+  equivalent header says "Seat" instead; same seat, different word, see
+  below.
 - **Done / Next / Undo** and the manual card keypad, always available —
   voice is the fast path, not the only path.
 - **The microphone button**, showing whether voice is currently listening.
@@ -107,7 +109,11 @@ sentence or later ones) keep applying to it until you name a different
 target or say a workflow word (Done/Next/Undo/New Shoe).
 
 **Seat/Spot/Player/C-form all mean the same thing** — "Seat 2", "Spot 2",
-"Player 2", and "C2" are the exact same seat. Use whichever feels natural.
+"Player 2", and "C2" are the exact same seat. Use whichever feels natural
+when *speaking* — this is about what EyeOnPit understands, not what it
+shows you. On screen, Floor Mode always displays "Spot 2" and Surveillance
+always displays "Seat 2" for that identical seat; neither ever shows the
+bare internal shorthand "S2."
 
 **Naming an empty seat occupies it.** You don't need a separate "enable"
 step — saying "Seat 2" (or naming it with a card) is the same as tapping

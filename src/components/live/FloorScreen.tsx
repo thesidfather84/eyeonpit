@@ -114,11 +114,17 @@ export function FloorScreen() {
 
       <FloorPlayField />
 
-      <ActiveSeatHeader target={activeTarget} />
+      <ActiveSeatHeader target={activeTarget} terminology="spot" />
 
+      {/* Card entry before operational actions (Floor Mode operator
+          usability cleanup, information-hierarchy pass): an operator's eye
+          moves from "what's active" straight to "how do I enter a card,"
+          with Done/Next/Undo reachable right below once a card is in — not
+          the reverse, which put round controls between the active-target
+          banner and the keypad they don't act on. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <CardEntryPad terminology="spot" />
         <RoundControlsRow floorMode />
-        <CardEntryPad />
       </div>
 
       <VoiceControlErrorBoundary>

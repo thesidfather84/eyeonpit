@@ -21,6 +21,14 @@ import { formatCard } from "@/lib/utils/cards";
  * already occupied). An explicit voice target does the same thing (see
  * VoiceControl.tsx) — the compact view and voice entry can never disagree
  * about what "selecting seat 2" means.
+ *
+ * Labels read "SPOT n" (Floor Mode operator usability cleanup) — Floor
+ * Mode's visible terminology standard, distinct from Surveillance's "SEAT
+ * n" (see ActiveSeatHeader's `terminology` prop and
+ * docs/EYEONPIT_PRODUCT_SPEC.md's "Floor Mode Terminology Standard"). This
+ * used to read the bare internal seat number ("S3") — an operator should
+ * never need to know that "S" is short for the internal `seat` identifier;
+ * "SPOT 3" is what a casino-floor observer actually says out loud.
  */
 export function FloorPlayField() {
   const { investigation, currentRound, activeTarget, occupySeat, setActiveTarget } = useInvestigationContext();
@@ -39,18 +47,18 @@ export function FloorPlayField() {
         aria-label={isDealerActive ? "Dealer, active" : "Dealer"}
         data-testid="floor-dealer"
         style={{ touchAction: "manipulation" }}
-        className={`flex w-full items-center justify-between rounded-md px-1.5 py-0.5 text-left ${
+        className={`flex w-full min-w-0 items-center justify-between rounded-md px-1.5 py-0.5 text-left ${
           isDealerActive ? "bg-accent-secondary/15" : "bg-transparent"
         }`}
       >
         <span
-          className={`text-[10px] font-bold leading-none ${
+          className={`truncate text-[10px] font-bold leading-none ${
             isDealerActive ? "text-accent-secondary" : "text-dealer"
           }`}
         >
           {isDealerActive ? "ACTIVE · DEALER" : "DEALER"}
         </span>
-        <span className="text-[10px] leading-none text-muted-foreground">
+        <span className="shrink-0 text-[10px] leading-none text-muted-foreground">
           {dealerCards.length > 0 ? dealerCards.map(formatCard).join(" ") : "—"}
         </span>
       </button>
@@ -66,21 +74,21 @@ export function FloorPlayField() {
               key={seat}
               type="button"
               onClick={() => occupySeat(seat)}
-              aria-label={isActive ? `Seat ${seat}, active` : isOccupied ? `Seat ${seat}, occupied` : `Seat ${seat}, empty`}
+              aria-label={isActive ? `Spot ${seat}, active` : isOccupied ? `Spot ${seat}, occupied` : `Spot ${seat}, empty`}
               data-testid={`floor-seat-${seat}`}
               style={{ touchAction: "manipulation" }}
-              className={`flex items-center justify-between rounded-md px-1.5 py-0.5 text-left ${
+              className={`flex min-w-0 items-center justify-between rounded-md px-1.5 py-0.5 text-left ${
                 isActive ? "bg-accent-secondary/15" : isOccupied ? "bg-status-green/10" : "bg-transparent"
               }`}
             >
               <span
-                className={`text-[10px] font-bold leading-none ${
+                className={`truncate text-[10px] font-bold leading-none ${
                   isActive ? "text-accent-secondary" : isOccupied ? "text-status-green" : "text-muted-foreground"
                 }`}
               >
-                {isActive ? `ACTIVE · S${seat}` : `S${seat}`}
+                {isActive ? `ACTIVE · SPOT ${seat}` : `SPOT ${seat}`}
               </span>
-              <span className="text-[10px] leading-none text-muted-foreground">
+              <span className="shrink-0 text-[10px] leading-none text-muted-foreground">
                 {isOccupied ? (cards.length > 0 ? cards.map(formatCard).join(" ") : "—") : "—"}
               </span>
             </button>

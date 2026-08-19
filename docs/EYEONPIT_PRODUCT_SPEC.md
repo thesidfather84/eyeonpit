@@ -16,6 +16,18 @@ EyeOnPit is the successor to Bloodhound, the legacy surveillance tool it replace
 
 A surveillance operator's attention belongs on the table, the players, and the dealer — not on a clipboard, a spreadsheet, or a fight with a UI. EyeOnPit's job is to capture a complete, accurate, timestamped, mathematically sound record of a blackjack investigation — cards, counts, wagers, player behavior, and operator observations — with as little of the operator's attention diverted from the game as possible. Every architectural decision is judged against this: does it let the operator watch the game more, or less?
 
+### EyeOnPit Adapts to the Operator (permanent product principle)
+
+**EyeOnPit adapts to the operator. The operator should not have to adapt to EyeOnPit.**
+
+Assume the operator understands casino surveillance and blackjack, but may have little technical/computer knowledge. Do not require: developer terminology, memorized command syntax, perfect grammar, technical abbreviations, knowledge of internal application architecture, or unnecessary setup steps. An experienced casino observer should be able to understand the basic screen in front of them without reading documentation first.
+
+This applies to UI, voice, onboarding, documentation, error messages, and every future feature — not just the screen a given change happens to touch.
+
+**The observer should not have to learn EyeOnPit language. EyeOnPit should understand casino-surveillance language.**
+
+Concretely: UI text uses human-readable casino terminology, never a raw internal identifier, database field name, or parser/engine term (see "Floor Mode Terminology Standard" in §4 for the current concrete standard). Voice input should ultimately accept the natural ways an operator actually talks — "Spot five has a king," "Dealer showing ten," "Player sat down at spot six" — rather than requiring the operator to learn EyeOnPit-specific phrasing (see §5/§12 for what's already implemented versus planned here; voice grammar changes are their own deliberate, separately-tested work, never bundled into a UI/terminology patch). Legitimate, widely-understood casino/counting abbreviations (RC, TC) may remain — this principle targets terminology a first-time operator would find genuinely confusing or unexplained, not shorthand experienced operators already rely on.
+
 ## 2. Mobile First
 
 iOS and Android (phone form factor, one-handed/thumb operation, worn on a lanyard or held) are the **primary** targets. Desktop/tablet use is secondary and must never dictate architecture, layout, or interaction design. If a decision would make the phone experience worse to make the desktop experience better, the phone wins.
@@ -71,6 +83,20 @@ A calculator-like visual grammar is acceptable because it is familiar and low-at
 **Manual controls remain the mandatory fallback** in Floor Mode exactly as in Surveillance — Floor Mode never becomes voice-only. When voice is unavailable, inaccurate, too noisy, or inappropriate for the moment, the operator drops to the same manual keypad/round controls Surveillance uses, with zero loss of investigation function (see §3, Offline First, which applies identically to both shells).
 
 Reaching Floor Mode from Surveillance, and returning to Surveillance from Floor, must always be one deliberate tap away — never a dead end. Floor is also a first-class launch action in its own right, directly on the app's landing screen (§8) — an operator never has to enter Surveillance first and hunt for it.
+
+### Floor Mode Terminology Standard
+
+Floor Mode's VISIBLE vocabulary is deliberately different from Surveillance's, per the Floor Mode operator usability cleanup:
+
+| Concept | Floor Mode shows | Surveillance shows |
+|---|---|---|
+| A numbered player position | **Spot 1–7** | Seat 1–7 |
+| The current active target | **Active Spot** / Dealer | Seat N (active) / Dealer |
+| The live count | Running Count, True Count | Running Count, True Count |
+| Shoe depth | Decks | Decks |
+| Total cards recorded this shoe | Cards Seen | Cards Seen |
+
+"Spot" is the casino-floor term this shell standardizes on (see `ActiveSeatHeader`'s and `FloorPlayField`'s `terminology` prop/convention — `CardEntryPad` follows the same pattern for its own target-dependent messaging). The underlying seat identifier, database schema, and every internal function/variable name are completely unaffected — this is presentation-only, and it is **never** the bare internal shorthand ("S1"–"S7") in either shell; Floor Mode says "Spot N," Surveillance says "Seat N," full words, always. Voice input keeps accepting "seat"/"spot"/"player" (and the ASR-artifact letter-prefix forms — see §12/the Implementation Status Matrix) as synonyms in both shells regardless of which word is on screen; this terminology standard governs what's *displayed*, never what's *recognized*.
 
 ## 5. Voice Control Coverage
 
@@ -290,7 +316,8 @@ This credit is discreet — present somewhere in the codebase/app (e.g. the Sett
 | Unified live header (Hi-Lo primary, KO/Zen/Omega II/Aces/Decks secondary) | **IMPLEMENTED** | [`LiveHeader.tsx`](../src/components/live/LiveHeader.tsx), [`CountSummaryPanel.tsx`](../src/components/live/CountSummaryPanel.tsx) |
 | Table Edit Mode (deliberate interaction gate for config) | **IMPLEMENTED** | [`TableMap.tsx`](../src/components/live/TableMap.tsx), [`SeatTilesRow.tsx`](../src/components/live/SeatTilesRow.tsx), [`DealerTile.tsx`](../src/components/live/DealerTile.tsx) |
 | Dual Operational Roles: Surveillance shell | **IMPLEMENTED** | [`LiveScreen.tsx`](../src/components/live/LiveScreen.tsx) — pre-existing, unchanged |
-| Dual Operational Roles: Floor Mode minimal shell | **IMPLEMENTED (foundation)** | [`FloorScreen.tsx`](../src/components/live/FloorScreen.tsx), route at `app/investigations/[id]/floor/page.tsx`, reached from Surveillance via the "Floor Mode" entry in [`LiveMenu.tsx`](../src/components/live/LiveMenu.tsx). Reuses `InvestigationContext`, the CardEvent ledger, `CardEntryPad`, `RoundControlsRow`, `ActiveSeatHeader`, `CountSummaryPanel`, and `VoiceControl` unmodified — no parallel state, no duplicated count logic. Deliberately minimal: no table graphic, wager panel, or player-actions row yet (see §4) |
+| Dual Operational Roles: Floor Mode minimal shell | **IMPLEMENTED (foundation)** | [`FloorScreen.tsx`](../src/components/live/FloorScreen.tsx), route at `app/investigations/[id]/floor/page.tsx`, reached from Surveillance via the "Floor Mode" entry in [`LiveMenu.tsx`](../src/components/live/LiveMenu.tsx). Reuses `InvestigationContext`, the CardEvent ledger, `CardEntryPad`, `RoundControlsRow`, `ActiveSeatHeader`, `CountSummaryPanel`, and `VoiceControl` — no parallel state, no duplicated count logic. Deliberately minimal: no table graphic, wager panel, or player-actions row yet (see §4) |
+| Floor Mode Terminology Standard ("Spot N," never the bare internal "Sn" shorthand; see §4) | **IMPLEMENTED** | `terminology` prop on [`ActiveSeatHeader.tsx`](../src/components/live/ActiveSeatHeader.tsx) and [`CardEntryPad.tsx`](../src/components/live/CardEntryPad.tsx) (defaults to Surveillance's "seat," Floor passes "spot"); [`FloorPlayField.tsx`](../src/components/live/FloorPlayField.tsx)'s seat labels updated directly (Floor-only component). Regression-tested in [`FloorScreen.test.tsx`](../src/components/live/FloorScreen.test.tsx) to prove Surveillance is unaffected |
 | Voice: one-tap continuous listening ON/OFF | **IMPLEMENTED** | [`hooks/useVoiceRecognition.ts`](../src/hooks/useVoiceRecognition.ts), [`components/live/VoiceControl.tsx`](../src/components/live/VoiceControl.tsx) |
 | Voice: structured card/target commands (exact phrase + noisy-token fallback) | **IMPLEMENTED** | [`lib/voice/parseVoiceCommand.ts`](../src/lib/voice/parseVoiceCommand.ts) |
 | Voice: ambiguous-input rejection (never guess) | **IMPLEMENTED** | `extractFromNoisyTokens` ambiguity rule in [`lib/voice/parseVoiceCommand.ts`](../src/lib/voice/parseVoiceCommand.ts) |

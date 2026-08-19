@@ -13,6 +13,36 @@ export default function ReleaseNotesPage() {
       <DocsPageHeader title="Release Notes" subtitle="What changed, version by version." />
 
       <div className="mt-2">
+        <ReleaseEntry version="1.4.4" date="2026-08-18" title="Floor Mode Operator Usability Cleanup">
+          <p>
+            A presentation-only cleanup: Floor Mode&apos;s screen now consistently uses the same plain casino
+            language an operator would use out loud, with no internal shorthand anywhere in view.
+          </p>
+          <ul>
+            <li>
+              <strong>&ldquo;Spot 1&rdquo; through &ldquo;Spot 7,&rdquo; never &ldquo;S1&rdquo;–&ldquo;S7.&rdquo;</strong>{" "}
+              The compact play-field summary previously abbreviated each player position down to a bare
+              &ldquo;S3&rdquo; — the only place in the app that ever showed that shorthand. It now reads &ldquo;Spot
+              3,&rdquo; matching every other label on screen.
+            </li>
+            <li>
+              <strong>One consistent word per screen.</strong> Floor Mode now says &ldquo;Spot&rdquo; everywhere —
+              the active-target banner, the compact play field, and the card-entry status message. Surveillance
+              keeps its own &ldquo;Seat&rdquo; wording, unchanged. Voice recognition still understands &ldquo;seat,&rdquo;
+              &ldquo;spot,&rdquo; and &ldquo;player&rdquo; interchangeably either way — this only changes what&apos;s
+              displayed, never what&apos;s recognized.
+            </li>
+            <li>
+              <strong>Card entry, then round controls.</strong> The keypad now appears before Done/Next/Undo,
+              matching the natural glance-to-tap order: see the active target, enter the card, then advance.
+            </li>
+          </ul>
+          <p className="!mt-4 text-xs">
+            ~10 new/updated automated tests. Full suite: 883 passed, 1 pre-existing skip. Counting engine, voice
+            recognition, and investigation persistence were not touched in this release.
+          </p>
+        </ReleaseEntry>
+
         <ReleaseEntry version="1.4.3" date="2026-08-18" title="PC Field Test Fixes — Compact Forms &amp; Dealer Recovery">
           <p>
             A follow-up to 1.4.2, fixing issues surfaced by the very first round of PC field testing.

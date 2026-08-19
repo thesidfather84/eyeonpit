@@ -143,7 +143,7 @@ export function ReportScreen() {
                   (seat) =>
                     seat && (
                       <p key={seat.seatNumber} className="text-muted-foreground">
-                        Seat {seat.seatNumber}: ${seat.betAmount ?? 0} —{" "}
+                        Spot {seat.seatNumber}: ${seat.betAmount ?? 0} —{" "}
                         {seat.playerCards.map(formatCard).join(" ") || "no cards"} —{" "}
                         {seat.outcome ?? "pending"}
                       </p>
@@ -155,11 +155,28 @@ export function ReportScreen() {
         </div>
       </section>
 
-      <section>
+      <section className="flex flex-col gap-2">
         {investigation.status === "closed" ? (
-          <p className="rounded-lg border border-border bg-surface p-3 text-center text-xs font-medium text-muted-foreground">
-            Investigation closed — every round and card above is preserved.
-          </p>
+          <>
+            <p className="rounded-lg border border-border bg-surface p-3 text-center text-xs font-medium text-muted-foreground">
+              Investigation closed — every round and card above is preserved.
+            </p>
+            {/* PRIORITY 1.9-7 — "a completed investigation is historical data;
+                it must NEVER remain the operational working state." A full
+                navigation (not a client-side route change) — matching
+                LiveHeader's own "+ New" button exactly — so every piece of
+                transient live/entry state genuinely remounts fresh rather
+                than relying on manually resetting each one. */}
+            <Button
+              variant="primary"
+              fullWidth
+              onClick={() => {
+                window.location.href = "/app";
+              }}
+            >
+              Finish &amp; Start New Investigation
+            </Button>
+          </>
         ) : (
           <Button variant="destructive" fullWidth onClick={() => setCompleting(true)}>
             Complete Investigation
@@ -170,7 +187,7 @@ export function ReportScreen() {
       <ConfirmDialog
         open={completing}
         title="Complete this investigation?"
-        message={`${investigation.rounds.length} rounds recorded across ${investigation.occupiedSeats.length} occupied seat(s). You can still reopen it later from History.`}
+        message={`${investigation.rounds.length} rounds recorded across ${investigation.occupiedSeats.length} occupied spot(s). You can still review it later from History.`}
         confirmLabel="Complete"
         destructive
         busy={busy}

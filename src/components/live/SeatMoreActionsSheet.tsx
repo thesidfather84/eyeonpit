@@ -19,7 +19,7 @@ export function SeatMoreActionsSheet({ target, onClose }: { target: number; onCl
   function handleVoid() {
     mutate(
       (round) => updateSeatAtTarget(round, target, (seat) => ({ ...seat, outcome: "void" })),
-      { type: "action", message: `Seat ${seatNumber}${isSplit ? " (split)" : ""}: Result — Void` }
+      { type: "action", message: `Spot ${seatNumber}${isSplit ? " (split)" : ""}: Result — Void` }
     );
     onClose();
   }
@@ -27,7 +27,7 @@ export function SeatMoreActionsSheet({ target, onClose }: { target: number; onCl
   function handleManualBlackjack() {
     mutate(
       (round) => updateSeatAtTarget(round, target, (seat) => ({ ...seat, outcome: "blackjack" })),
-      { type: "action", message: `Seat ${seatNumber}${isSplit ? " (split)" : ""}: Manual Blackjack correction` }
+      { type: "action", message: `Spot ${seatNumber}${isSplit ? " (split)" : ""}: Manual Blackjack correction` }
     );
     onClose();
   }
@@ -35,13 +35,13 @@ export function SeatMoreActionsSheet({ target, onClose }: { target: number; onCl
   function handleOther() {
     mutate(
       (round) => updateSeatAtTarget(round, target, (seat) => ({ ...seat, actions: [...seat.actions, "other"] })),
-      { type: "action", message: `Seat ${seatNumber}${isSplit ? " (split)" : ""}: Other` }
+      { type: "action", message: `Spot ${seatNumber}${isSplit ? " (split)" : ""}: Other` }
     );
     onClose();
   }
 
   return (
-    <BottomSheet open onClose={onClose} title={`Seat ${seatNumber}${isSplit ? " · Split" : ""} — More`}>
+    <BottomSheet open onClose={onClose} title={`Spot ${seatNumber}${isSplit ? " · Split" : ""} — More`}>
       <div className="flex flex-col gap-1 pb-4">
         <button
           disabled={disabled}

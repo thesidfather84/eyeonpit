@@ -120,7 +120,7 @@ export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProp
               key={seat}
               role="button"
               tabIndex={0}
-              aria-label={editMode ? `Seat ${seat} options` : `Seat ${seat}`}
+              aria-label={editMode ? `Spot ${seat} options` : `Spot ${seat}`}
               onClick={() => handleTap(seat)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") handleTap(seat);
@@ -151,7 +151,7 @@ export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProp
               )}
 
               <span className="text-[10px] font-bold leading-none">
-                {isActive ? `ACTIVE · SEAT ${seat}` : `SEAT ${seat}`}
+                {isActive ? `ACTIVE · SPOT ${seat}` : `SPOT ${seat}`}
               </span>
 
               {isOccupied ? (
@@ -194,7 +194,7 @@ export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProp
               {splitRecord && (
                 <button
                   type="button"
-                  aria-label={`Seat ${seat} split hand`}
+                  aria-label={`Spot ${seat} split hand`}
                   onClick={(e) => {
                     e.stopPropagation();
                     setActiveTarget(splitTargetFor(seat));
@@ -259,7 +259,7 @@ export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProp
         onClick={() => setManageOpen(true)}
         className="mt-1 rounded-md px-2 text-[10px] font-medium text-muted-foreground hover:text-foreground short:hidden"
       >
-        Manage Seats
+        Manage Spots
       </button>
 
       {optionsSeat != null && (

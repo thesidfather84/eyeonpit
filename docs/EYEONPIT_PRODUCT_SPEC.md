@@ -26,7 +26,11 @@ This applies to UI, voice, onboarding, documentation, error messages, and every 
 
 **The observer should not have to learn EyeOnPit language. EyeOnPit should understand casino-surveillance language.**
 
-Concretely: UI text uses human-readable casino terminology, never a raw internal identifier, database field name, or parser/engine term (see "Floor Mode Terminology Standard" in §4 for the current concrete standard). Voice input should ultimately accept the natural ways an operator actually talks — "Spot five has a king," "Dealer showing ten," "Player sat down at spot six" — rather than requiring the operator to learn EyeOnPit-specific phrasing (see §5/§12 for what's already implemented versus planned here; voice grammar changes are their own deliberate, separately-tested work, never bundled into a UI/terminology patch). Legitimate, widely-understood casino/counting abbreviations (RC, TC) may remain — this principle targets terminology a first-time operator would find genuinely confusing or unexplained, not shorthand experienced operators already rely on.
+Concretely: UI text uses human-readable casino terminology, never a raw internal identifier, database field name, or parser/engine term (see "Global Operator Terminology Standard" in §4 for the current concrete standard). Voice input should ultimately accept the natural ways an operator actually talks — "Spot five has a king," "Dealer showing ten," "Player sat down at spot six" — rather than requiring the operator to learn EyeOnPit-specific phrasing (see §5/§12 for what's already implemented versus planned here; voice grammar changes are their own deliberate, separately-tested work, never bundled into a UI/terminology patch). Legitimate, widely-understood casino/counting abbreviations (RC, TC) may remain — this principle targets terminology a first-time operator would find genuinely confusing or unexplained, not shorthand experienced operators already rely on.
+
+**Internal identifiers belong to EyeOnPit. Casino language belongs to the operator.** (added 1.9) Internal identifiers — `seatNumber` props, Dexie keys, `activeTarget` values, canonical export fields like `SEAT1`/`S1` — are engineering diagnostics. They may legitimately appear in raw developer diagnostic exports. They must never appear on a normal operator-facing surface: no screen, toast, confirmation message, status panel, or report an operator reads may display bare `S1`–`S7`. See §4 for the current global standard this principle governs.
+
+**Completed investigations belong in history, not in the live operational workspace.** (added 1.9) A `"closed"` investigation is historical data. It must never remain — or silently become again — the operational working state after the operator has finished the investigation/report workflow: not on reload, not via a bookmark or History link, not by any implicit means. It stays fully viewable, reportable, exportable, and auditable through Investigation History, entirely separate from whatever is currently live. See `docs/EYEONPIT_1_9_OPERATOR_LIFECYCLE.md` for the full lifecycle rule this principle governs.
 
 ## 2. Mobile First
 
@@ -84,19 +88,44 @@ A calculator-like visual grammar is acceptable because it is familiar and low-at
 
 Reaching Floor Mode from Surveillance, and returning to Surveillance from Floor, must always be one deliberate tap away — never a dead end. Floor is also a first-class launch action in its own right, directly on the app's landing screen (§8) — an operator never has to enter Surveillance first and hunt for it.
 
-### Floor Mode Terminology Standard
+### Global Operator Terminology Standard (updated 1.9)
 
-Floor Mode's VISIBLE vocabulary is deliberately different from Surveillance's, per the Floor Mode operator usability cleanup:
+Floor Mode and Surveillance previously showed different words for a
+player position ("Spot" vs. "Seat") — a deliberate, tested divergence at
+the time. **1.9 supersedes that split with one global standard**, per the
+"internal identifiers belong to EyeOnPit, casino language belongs to the
+operator" principle (§1): no normal operator-facing surface in **either**
+shell may display the bare internal shorthand ("S1"–"S7"), and both
+shells now default to the same visible word.
 
-| Concept | Floor Mode shows | Surveillance shows |
-|---|---|---|
-| A numbered player position | **Spot 1–7** | Seat 1–7 |
-| The current active target | **Active Spot** / Dealer | Seat N (active) / Dealer |
-| The live count | Running Count, True Count | Running Count, True Count |
-| Shoe depth | Decks | Decks |
-| Total cards recorded this shoe | Cards Seen | Cards Seen |
+| Concept | What every operator-facing surface shows |
+|---|---|
+| A numbered player position | **Spot 1–7** |
+| The current active target | **Active Spot** / Dealer |
+| The live count | Running Count, True Count |
+| Shoe depth | Decks |
+| Total cards recorded this shoe | Cards Seen |
 
-"Spot" is the casino-floor term this shell standardizes on (see `ActiveSeatHeader`'s and `FloorPlayField`'s `terminology` prop/convention — `CardEntryPad` follows the same pattern for its own target-dependent messaging). The underlying seat identifier, database schema, and every internal function/variable name are completely unaffected — this is presentation-only, and it is **never** the bare internal shorthand ("S1"–"S7") in either shell; Floor Mode says "Spot N," Surveillance says "Seat N," full words, always. Voice input keeps accepting "seat"/"spot"/"player" (and the ASR-artifact letter-prefix forms — see §12/the Implementation Status Matrix) as synonyms in both shells regardless of which word is on screen; this terminology standard governs what's *displayed*, never what's *recognized*.
+"Spot" is the global default (see `ActiveSeatHeader`'s, `SeatTilesRow`'s,
+and `FloorPlayField`'s `terminology` prop/convention — `CardEntryPad`
+follows the same pattern for its own target-dependent messaging). The
+underlying seat identifier, database schema, and every internal function/
+variable name are completely unaffected — this is presentation-only.
+Raw developer diagnostic exports MAY retain canonical identifiers such as
+`SEAT1`/`S1`, since those are engineering diagnostics, not operator-facing
+feedback — see §1. Voice input keeps accepting "seat"/"spot"/"player"
+(and the ASR-artifact letter-prefix forms — see §12/the Implementation
+Status Matrix) as synonyms regardless of which word is on screen; this
+terminology standard governs what's *displayed*, never what's
+*recognized*.
+
+A future property-level preference (`resolveTerminology()`,
+`docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §3) may eventually let a
+specific property select "Seat" or another localized term instead. Until
+that preference is actually wired into these components' `terminology`
+prop, **"Spot" is the default for every operator, every property, both
+shells** — see `docs/EYEONPIT_1_9_OPERATOR_LIFECYCLE.md` §7 for the full
+rationale and the terminology-leak regression tests that enforce it.
 
 ## 5. Voice Control Coverage
 
@@ -252,7 +281,13 @@ tested, EXPERIMENTAL/NOT-VALIDATED implementation — see
 multi-language/multi-game readiness — internationalization, property
 terminology/profile, generic Game Definition and Method frameworks, and
 multi-property membership/entitlement foundations — is documented in
-`docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md`.
+`docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md`. The investigation lifecycle
+rule (READY/ACTIVE/PAUSED/COMPLETED — a completed investigation never
+remains or resurfaces as the live operational workspace) and the global
+operator terminology standard (§4) are documented in
+`docs/EYEONPIT_1_9_OPERATOR_LIFECYCLE.md`; the future voice-provider
+abstraction and Firefox/cross-browser roadmap are documented in
+`docs/EYEONPIT_1_9_VOICE_INDEPENDENCE.md`.
 
 The advanced-reporting and blackjack-research-tooling work described in
 §15/§16 below has a foundation built and documented separately: see
@@ -337,7 +372,7 @@ This credit is discreet — present somewhere in the codebase/app (e.g. the Sett
 | Table Edit Mode (deliberate interaction gate for config) | **IMPLEMENTED** | [`TableMap.tsx`](../src/components/live/TableMap.tsx), [`SeatTilesRow.tsx`](../src/components/live/SeatTilesRow.tsx), [`DealerTile.tsx`](../src/components/live/DealerTile.tsx) |
 | Dual Operational Roles: Surveillance shell | **IMPLEMENTED** | [`LiveScreen.tsx`](../src/components/live/LiveScreen.tsx) — pre-existing, unchanged |
 | Dual Operational Roles: Floor Mode minimal shell | **IMPLEMENTED (foundation)** | [`FloorScreen.tsx`](../src/components/live/FloorScreen.tsx), route at `app/investigations/[id]/floor/page.tsx`, reached from Surveillance via the "Floor Mode" entry in [`LiveMenu.tsx`](../src/components/live/LiveMenu.tsx). Reuses `InvestigationContext`, the CardEvent ledger, `CardEntryPad`, `RoundControlsRow`, `ActiveSeatHeader`, `CountSummaryPanel`, and `VoiceControl` — no parallel state, no duplicated count logic. Deliberately minimal: no table graphic, wager panel, or player-actions row yet (see §4) |
-| Floor Mode Terminology Standard ("Spot N," never the bare internal "Sn" shorthand; see §4) | **IMPLEMENTED** | `terminology` prop on [`ActiveSeatHeader.tsx`](../src/components/live/ActiveSeatHeader.tsx) and [`CardEntryPad.tsx`](../src/components/live/CardEntryPad.tsx) (defaults to Surveillance's "seat," Floor passes "spot"); [`FloorPlayField.tsx`](../src/components/live/FloorPlayField.tsx)'s seat labels updated directly (Floor-only component). Regression-tested in [`FloorScreen.test.tsx`](../src/components/live/FloorScreen.test.tsx) to prove Surveillance is unaffected |
+| Global Operator Terminology Standard ("Spot N" everywhere, never the bare internal "Sn" shorthand, both shells; see §4) | **IMPLEMENTED** | `terminology` prop on [`ActiveSeatHeader.tsx`](../src/components/live/ActiveSeatHeader.tsx) and [`CardEntryPad.tsx`](../src/components/live/CardEntryPad.tsx) now defaults to "spot" for both shells; [`SeatTilesRow.tsx`](../src/components/live/SeatTilesRow.tsx) and [`FloorPlayField.tsx`](../src/components/live/FloorPlayField.tsx)'s seat labels updated directly. Regression-tested by [`terminologyLeak.test.tsx`](../src/components/live/terminologyLeak.test.tsx) (cross-cutting leak detection across Surveillance/Floor/Report Preview) plus per-component assertions throughout `FloorScreen.test.tsx`/`LiveScreen.test.tsx`/`TableMap.test.tsx`/`VoiceControl.test.tsx` |
 | Voice: one-tap continuous listening ON/OFF | **IMPLEMENTED** | [`hooks/useVoiceRecognition.ts`](../src/hooks/useVoiceRecognition.ts), [`components/live/VoiceControl.tsx`](../src/components/live/VoiceControl.tsx) |
 | Voice: structured card/target commands (exact phrase + noisy-token fallback) | **IMPLEMENTED** | [`lib/voice/parseVoiceCommand.ts`](../src/lib/voice/parseVoiceCommand.ts) |
 | Voice: ambiguous-input rejection (never guess) | **IMPLEMENTED** | `extractFromNoisyTokens` ambiguity rule in [`lib/voice/parseVoiceCommand.ts`](../src/lib/voice/parseVoiceCommand.ts) |
@@ -375,7 +410,9 @@ This credit is discreet — present somewhere in the codebase/app (e.g. the Sett
 | 1.7 Report integration for Counter/Betting/Playing-Deviation/Insurance Analysis | **PARTIAL** | 6 new optional `ReportAnalysisSection` fields (schema v2), populated only via explicit opt-in `attachPlayerAnalytics`, never automatically. See `docs/EYEONPIT_1_7_COUNTER_DETECTION.md` §10 |
 | 1.7 `/lab` Counter Detection, Player Behavior Analysis, Validation Benchmarks pages | **PARTIAL** | Real, data-backed pages (no more placeholder); not manually verified in a running browser this session. See `docs/EYEONPIT_1_7_COUNTER_DETECTION.md` §11 |
 | 1.8 Internationalization foundation (string catalog + Intl formatting, 8 target locales) | **PARTIAL** | Real, tested architecture; only a handful of keys seeded beyond English, and no live UI is wired through it yet. See `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §2 |
-| 1.8 Property terminology preference + expanded Property Profile | **PARTIAL** | Data model + resolver real and tested; not wired into Floor/Surveillance UI components yet. See `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §3–4 |
+| 1.8 Property terminology preference + expanded Property Profile | **PARTIAL** | Data model + resolver real and tested; not wired into Floor/Surveillance UI components' `terminology` prop yet — that prop's default is now globally "spot" (1.9), but still hardcoded rather than property-configurable. See `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §3–4 |
+| 1.9 Investigation lifecycle rule (READY/ACTIVE/PAUSED/COMPLETED; closed investigations never resurface as the live console) | **IMPLEMENTED** | [`lib/investigationLifecycle.ts`](../src/lib/investigationLifecycle.ts), [`useInvestigationLifecycleState.ts`](../src/hooks/useInvestigationLifecycleState.ts), [`ConsoleShell.tsx`](../src/components/live/ConsoleShell.tsx), [`ResumeOrNewScreen.tsx`](../src/components/live/ResumeOrNewScreen.tsx), [`InvestigationReportsView.tsx`](../src/components/live/InvestigationReportsView.tsx). See `docs/EYEONPIT_1_9_OPERATOR_LIFECYCLE.md` |
+| 1.9 Voice Independence — `SpeechProvider` abstraction + Firefox/cross-browser roadmap + benchmark corpus | **PLANNED (documentation only)** | Zero code — see `docs/EYEONPIT_1_9_VOICE_INDEPENDENCE.md` |
 | 1.8 Generic Game Definition / Method framework / compatibility validation | **PARTIAL** | Non-breaking umbrella over existing blackjack GameDefinition; only blackjack implemented. See `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §7 |
 | 1.8 Multi-property membership/role + feature-tier entitlement foundation | **PARTIAL** | Types and pure functions only; no persistence, no enforcement, `/lab`'s gate unaffected. See `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §8–9 |
 | 1.8 Global voice architecture (multilingual voice packs) | **PLANNED** | Documentation only, zero code, by explicit instruction — see `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §6 |

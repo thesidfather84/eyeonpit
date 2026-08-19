@@ -94,7 +94,7 @@ describe("LiveScreen — wager/player actions collapse to one compact entry poin
       bar.click();
     });
 
-    const dialog = await screen.findByRole("dialog", { name: "Seat 1 — Player Details" });
+    const dialog = await screen.findByRole("dialog", { name: "Spot 1 — Player Details" });
     const chip = within(dialog).getByRole("button", { name: "$25" });
     within(dialog).getByRole("button", { name: "Double" });
     within(dialog).getByRole("button", { name: "Split" });
@@ -120,7 +120,7 @@ describe("LiveScreen — wager/player actions collapse to one compact entry poin
     await act(async () => {
       bar.click();
     });
-    const dialog = await screen.findByRole("dialog", { name: "Seat 1 — Player Details" });
+    const dialog = await screen.findByRole("dialog", { name: "Spot 1 — Player Details" });
     await act(async () => {
       within(dialog).getByRole("button", { name: "$25" }).click();
     });
@@ -140,21 +140,21 @@ describe("LiveScreen — one clear active-target statement (ActiveSeatHeader)", 
     expect(screen.queryByText(/ACTIVE —/)).toBeNull();
   });
 
-  it("once a seat is occupied and active, it reads SEAT n — no repeated 'CURRENT WAGER — SEAT n' title anywhere else on screen", async () => {
+  it("once a seat is occupied and active, it reads SPOT n — no repeated 'CURRENT WAGER — SPOT n' title anywhere else on screen (PRIORITY 1.9-10: Spot is now the global default, including Surveillance)", async () => {
     const investigationId = await freshInvestigationId();
     await occupyAndActivate(investigationId, 2);
     renderLive(investigationId);
 
     // Scoped to ActiveSeatHeader itself, since the seat tile on the table
-    // map ALSO legitimately shows "ACTIVE · SEAT 2" (spatial highlight,
+    // map ALSO legitimately shows "ACTIVE · SPOT 2" (spatial highlight,
     // deliberately preserved — see that component's own doc comment) and
     // would otherwise collide with a page-wide text query. occupySeat
     // auto-creates a player group (e.g. "P1"), so the exact text is
-    // "SEAT 2 · P1" — a regex proves the seat identity without
+    // "SPOT 2 · P1" — a regex proves the seat identity without
     // over-asserting the group label's exact value.
     const header = await screen.findByTestId("active-seat-header");
-    within(header).getByText(/SEAT 2/);
+    within(header).getByText(/SPOT 2/);
     within(header).getByText("ENTER CARDS");
-    expect(screen.queryByText(/CURRENT (BET|WAGER) — SEAT/)).toBeNull();
+    expect(screen.queryByText(/CURRENT (BET|WAGER) — SPOT/)).toBeNull();
   });
 });

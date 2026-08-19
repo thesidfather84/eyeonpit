@@ -36,7 +36,7 @@ export function QuickBetPanel({ target }: { target: number }) {
         })),
       {
         type: "bet-change",
-        message: `Seat ${seatNumber}${isSplit ? " (split)" : ""} ${t.currentBet.toLowerCase()} $${previousStartingWager ?? 0} → $${newAmount}${label ? ` (${label})` : ""}`,
+        message: `Spot ${seatNumber}${isSplit ? " (split)" : ""} ${t.currentBet.toLowerCase()} $${previousStartingWager ?? 0} → $${newAmount}${label ? ` (${label})` : ""}`,
       }
     );
     setCustomOpen(false);

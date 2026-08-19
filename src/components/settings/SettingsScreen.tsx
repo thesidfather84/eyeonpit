@@ -20,7 +20,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 const LANGUAGE_OPTIONS: { value: TerminologyLevel; label: string; hint: string }[] = [
   { value: "standard", label: "Standard", hint: "Generic software terms" },
-  { value: "casino", label: "Casino", hint: "Casino-floor terms (Wager, Seat, Next Hand)" },
+  { value: "casino", label: "Casino", hint: "Casino-floor terms (Wager, Spot, Next Hand)" },
   {
     value: "casinoProfessional",
     label: "Casino Professional",

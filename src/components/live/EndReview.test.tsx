@@ -1,19 +1,29 @@
 // @vitest-environment jsdom
 //
-// Operator-loop correction #4/#5: "End & Review" must actually land the
-// operator on the investigation they just finished — not bare home. Two
-// things are proven here, at the component level (the E2E test in
-// OperatorLoop.e2e.test.tsx proves the manual/voice End & Review actions
-// target the right URL; jsdom has no real Next.js router to actually follow
-// that navigation, so this file proves what the destination itself renders):
+// Operator-loop correction #4/#5, extended by PRIORITY 1.9-6/8/9: "End &
+// Review" must actually land the operator on the investigation they just
+// finished — not bare home — AND a completed investigation must never
+// again present as the live operational workspace (see
+// docs/EYEONPIT_1_9_OPERATOR_LIFECYCLE.md). What's proven here, at the
+// component level (the E2E test in OperatorLoop.e2e.test.tsx proves the
+// manual/voice End & Review actions target the right URL; jsdom has no
+// real Next.js router to actually follow that navigation, so this file
+// proves what the destination itself renders):
 //
-// 1. A closed investigation, loaded with `?review=1` in the URL (exactly
-//    what handleEndInvestigation/VoiceControl's confirm-end-investigation
-//    navigate to), auto-opens Reports — the operator sees the round-by-round
-//    evidence and count for THAT investigation immediately, no extra tap.
+// 1. A closed investigation shows its full Reports content (round-by-round
+//    evidence, count, notes) directly — no query param, no extra tap, and
+//    (PRIORITY 1.9 change) NOT as a dismissible overlay: LiveScreen swaps
+//    its entire body to this content whenever `status === "closed"`, so
+//    there is no live-looking console underneath to reveal by "closing"
+//    anything. This is a deliberate, stronger fix than the overlay-based
+//    approach the three now-removed "X/backdrop closes it" tests below
+//    used to protect — there is no overlay left to have a stuck-open bug
+//    in, because a closed investigation never renders the live console at
+//    all anymore, regardless of how the operator got here (reload, a
+//    History link, a stale bookmark, or the back button).
 // 2. From there, Return Home ("+ New") and History/Export all remain
 //    reachable — the operator is never trapped on a closed screen.
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { InvestigationProvider } from "@/contexts/InvestigationContext";
 import { LockProvider } from "@/contexts/LockContext";
@@ -122,7 +132,7 @@ describe("End & Review — landing on the just-finished investigation (operator-
     expect(menuButton).toBeTruthy();
   });
 
-  it('real production bug repro: tapping X on the auto-opened Reports sheet actually closes it, and it stays closed — the ?review=1 param must not force it back open on the next render', async () => {
+  it("PRIORITY 1.9-6/8/9: the Reports content is NOT a dismissible overlay for a closed investigation — there is no live console underneath to reveal by closing anything", async () => {
     const investigationId = await freshClosedInvestigationWithEvidence();
 
     render(
@@ -137,94 +147,45 @@ describe("End & Review — landing on the just-finished investigation (operator-
 
     await screen.findByText("Round-by-Round Evidence");
 
-    const closeButtons = screen.getAllByRole("button", { name: "Close" });
-    await act(async () => {
-      closeButtons[closeButtons.length - 1].click();
-    });
+    // No "Close"/"X" control exists for this content at all now — it's the
+    // screen's own body, not a BottomSheet overlay on top of a live console.
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
 
-    expect(screen.queryByText("Round-by-Round Evidence")).toBeNull();
+    // The card keypad / table map — the actual live editing surface — is
+    // never rendered for a closed investigation, confirmed directly rather
+    // than inferred from an overlay's dismiss behavior.
+    expect(screen.queryByRole("button", { name: "A" })).toBeNull(); // card rank button
+    expect(screen.queryByTestId("active-seat-header")).toBeNull();
+  });
 
-    // The bug: closing changes LiveMenu's own `overlay` state, which
-    // re-renders LiveMenu, which (before the fix) recreated the inline
-    // onOpen callback AutoOpenReviewFromQuery depends on, re-running its
-    // effect — and since the URL still has ?review=1 (never consumed),
-    // that effect calls onOpen() again and reopens the sheet. Any
-    // subsequent re-render must not resurrect it.
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(screen.queryByText("Round-by-Round Evidence")).toBeNull();
+  it("PRIORITY 1.9-8: reload-after-completion regression — a fresh render against an already-closed investigation shows Reports directly, driven only by investigation.status, never a query param", async () => {
+    const investigationId = await freshClosedInvestigationWithEvidence();
 
-    // Real-world equivalent of "give React a few more render/effect
-    // cycles and see if it comes back" — waitFor polls repeatedly; if the
-    // sheet ever reappears within this window, this fails exactly like
-    // the real trapped-operator bug did.
-    await expect(
-      waitFor(() => expect(screen.queryByText("Round-by-Round Evidence")).not.toBeNull(), { timeout: 500 })
-    ).rejects.toThrow();
-
-    // Closing the summary must not have touched investigation state.
-    const inv = await import("@/lib/db/repositories/investigations").then((m) =>
-      m.getInvestigation(investigationId)
+    // Simulates a full browser reload: a brand-new render against the SAME
+    // already-closed investigationId. This file's own top-level mock
+    // still reports `?review=1` in the URL, but nothing in LiveScreen
+    // reads that anymore (the query-param-driven auto-open mechanism was
+    // removed entirely) — this test's real assertion is that the Reports
+    // content, the closed-state message, and the absence of the live
+    // keypad all still hold, proving `investigation.status` alone is what
+    // decides this now.
+    render(
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <LiveScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
+
+    await screen.findByText("Round-by-Round Evidence");
+    screen.getByText(/Investigation closed — every round and card above is preserved/);
+    expect(screen.queryByRole("button", { name: "A" })).toBeNull();
+
+    const inv = await import("@/lib/db/repositories/investigations").then((m) => m.getInvestigation(investigationId));
     expect(inv!.status).toBe("closed");
     const events = await getCardEventsForInvestigation(investigationId);
-    expect(events).toHaveLength(1);
-
-    // Operator isn't trapped or on a blank screen — the live shell
-    // (header, count, Menu, "+ New") is still right there underneath.
-    screen.getByRole("button", { name: "+ New" });
-    screen.getByRole("button", { name: "Menu" });
-  });
-
-  it("the one-shot ?review=1 query param is consumed (stripped from the URL via history.replaceState) after the first auto-open — not left there to force a reopen on a later reload or shared link", async () => {
-    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
-    try {
-      const investigationId = await freshClosedInvestigationWithEvidence();
-
-      render(
-        <LockProvider>
-          <EntryLockProvider>
-            <InvestigationProvider investigationId={investigationId}>
-              <LiveScreen />
-            </InvestigationProvider>
-          </EntryLockProvider>
-        </LockProvider>
-      );
-
-      await screen.findByText("Round-by-Round Evidence");
-
-      await waitFor(() => expect(replaceStateSpy).toHaveBeenCalledTimes(1));
-      const [, , replacedTo] = replaceStateSpy.mock.calls[0] as [unknown, string, string];
-      expect(replacedTo).not.toContain("review");
-    } finally {
-      replaceStateSpy.mockRestore();
-    }
-  });
-
-  it("tapping the backdrop (mobile tap-to-dismiss — the same interaction a real touch produces) closes the summary just as reliably as the X button", async () => {
-    const investigationId = await freshClosedInvestigationWithEvidence();
-
-    render(
-      <LockProvider>
-        <EntryLockProvider>
-          <InvestigationProvider investigationId={investigationId}>
-            <LiveScreen />
-          </InvestigationProvider>
-        </EntryLockProvider>
-      </LockProvider>
-    );
-
-    await screen.findByText("Round-by-Round Evidence");
-
-    const backdrop = screen.getAllByRole("button", { name: "Close" })[0];
-    await act(async () => {
-      backdrop.click();
-    });
-
-    expect(screen.queryByText("Round-by-Round Evidence")).toBeNull();
-    await expect(
-      waitFor(() => expect(screen.queryByText("Round-by-Round Evidence")).not.toBeNull(), { timeout: 500 })
-    ).rejects.toThrow();
+    expect(events).toHaveLength(1); // nothing lost, nothing re-openable as live
   });
 });

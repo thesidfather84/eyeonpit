@@ -462,7 +462,7 @@ describe("VoiceControl — noisy real-world transcripts, end to end (the safety 
     await startListening();
     await act(async () => sayFinal("seat three ace"));
 
-    await waitFor(() => screen.getByText("✓ SEAT 3: A"));
+    await waitFor(() => screen.getByText("✓ SPOT 3: A"));
     await waitFor(() => expect(screen.getByTestId("seat-3-card-count").textContent).toBe("1"));
     expect(screen.getByTestId("active-target").textContent).toBe("3");
     // Confirms the dealer wasn't touched — the card went to exactly the
@@ -504,7 +504,7 @@ describe("VoiceControl — noisy real-world transcripts, end to end (the safety 
     await startListening();
     await act(async () => sayFinal("C1 Ace"));
 
-    await waitFor(() => screen.getByText("✓ SEAT 1: A"));
+    await waitFor(() => screen.getByText("✓ SPOT 1: A"));
     await waitFor(() => expect(screen.getByTestId("seat-1-card-count").textContent).toBe("1"));
     expect(screen.getByTestId("active-target").textContent).toBe("1");
   });
@@ -3276,10 +3276,10 @@ describe("VoiceControl — PC field test #1 (2026-08-18): canonicalization, blac
         ])
       );
     });
-    await waitFor(() => screen.getByText("✓ SEAT 1: 5"));
+    await waitFor(() => screen.getByText("✓ SPOT 1: 5"));
   });
 
-  it('"set one has a 3" — recognized ASR artifact for "seat" — commits SEAT 1: 3', async () => {
+  it('"set one has a 3" — recognized ASR artifact for "seat" — commits SPOT 1: 3', async () => {
     const investigationId = await freshInvestigationId();
     render(
       <InvestigationProvider investigationId={investigationId}>
@@ -3288,10 +3288,10 @@ describe("VoiceControl — PC field test #1 (2026-08-18): canonicalization, blac
     );
     await startListening();
     await act(async () => sayFinal("set one has a 3"));
-    await waitFor(() => screen.getByText("✓ SEAT 1: 3"));
+    await waitFor(() => screen.getByText("✓ SPOT 1: 3"));
   });
 
-  it('"S1 9" compact target+card form commits SEAT 1: 9', async () => {
+  it('"S1 9" compact target+card form commits SPOT 1: 9', async () => {
     const investigationId = await freshInvestigationId();
     render(
       <InvestigationProvider investigationId={investigationId}>
@@ -3300,10 +3300,10 @@ describe("VoiceControl — PC field test #1 (2026-08-18): canonicalization, blac
     );
     await startListening();
     await act(async () => sayFinal("S1 9"));
-    await waitFor(() => screen.getByText("✓ SEAT 1: 9"));
+    await waitFor(() => screen.getByText("✓ SPOT 1: 9"));
   });
 
-  it('"seat 1:9" colon-punctuated compact form commits SEAT 1: 9', async () => {
+  it('"seat 1:9" colon-punctuated compact form commits SPOT 1: 9', async () => {
     const investigationId = await freshInvestigationId();
     render(
       <InvestigationProvider investigationId={investigationId}>
@@ -3312,7 +3312,7 @@ describe("VoiceControl — PC field test #1 (2026-08-18): canonicalization, blac
     );
     await startListening();
     await act(async () => sayFinal("seat 1:9"));
-    await waitFor(() => screen.getByText("✓ SEAT 1: 9"));
+    await waitFor(() => screen.getByText("✓ SPOT 1: 9"));
   });
 
   it('"Taylor has a 10" — no genuine dealer alternative offered — is rescued via contextual recovery to DEALER: 10', async () => {

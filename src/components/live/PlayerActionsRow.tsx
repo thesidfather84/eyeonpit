@@ -34,7 +34,7 @@ export function PlayerActionsRow({ target }: { target: number }) {
           doubledAtCardCount: seat.playerCards.length,
           actions: [...seat.actions, "double"],
         })),
-      { type: "action", message: `Seat ${seatNumber}${isSplit ? " (split)" : ""}: Double — wager doubled, one card` }
+      { type: "action", message: `Spot ${seatNumber}${isSplit ? " (split)" : ""}: Double — wager doubled, one card` }
     );
   }
 
@@ -51,7 +51,7 @@ export function PlayerActionsRow({ target }: { target: number }) {
           const half = seat.startingWagerAmount != null ? Math.round(seat.startingWagerAmount / 2) : 0;
           return { ...seat, insuranceAmount: isOn ? null : half };
         }),
-      { type: "action", message: `Seat ${seatNumber}${isSplit ? " (split)" : ""}: Insurance ${((record?.insuranceAmount ?? 0) > 0) ? "cleared" : "taken"}` }
+      { type: "action", message: `Spot ${seatNumber}${isSplit ? " (split)" : ""}: Insurance ${((record?.insuranceAmount ?? 0) > 0) ? "cleared" : "taken"}` }
     );
   }
 
@@ -63,7 +63,7 @@ export function PlayerActionsRow({ target }: { target: number }) {
           actions: [...seat.actions, "surrender"],
           outcome: "surrender",
         })),
-      { type: "action", message: `Seat ${seatNumber}${isSplit ? " (split)" : ""}: Surrender` }
+      { type: "action", message: `Spot ${seatNumber}${isSplit ? " (split)" : ""}: Surrender` }
     );
   }
 

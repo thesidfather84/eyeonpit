@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowLeftRight, Headphones } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { InvestigationReportsView } from "./InvestigationReportsView";
 import { CountSummaryPanel } from "./CountSummaryPanel";
 import { FloorPlayField } from "./FloorPlayField";
 import { ActiveSeatHeader } from "./ActiveSeatHeader";
@@ -54,9 +55,13 @@ import { VoiceControlErrorBoundary } from "./VoiceControlErrorBoundary";
  * the normal path off a closed investigation is the automatic navigation
  * to that investigation's own review screen (Surveillance, with Reports
  * opened) that follows a successful End Investigation (voice or menu)
- * either way; this "+ New" is the safety net for reaching a stale Floor
- * view of an already-closed investigation by some other route (e.g.
- * closed from Surveillance in another tab).
+ * either way. PRIORITY 1.9-6/8/9: this "+ New" bar is no longer the ONLY
+ * protection for reaching a stale Floor view of an already-closed
+ * investigation by some other route (e.g. closed from Surveillance in
+ * another tab, a bookmark, or a reload) — the body below now swaps to
+ * `<ReportScreen />` whenever `isClosed`, so a completed investigation
+ * never presents as a live, hands-free-looking console (and VoiceControl
+ * is never mounted for it) regardless of how the operator got here.
  *
  * `<RoundControlsRow floorMode />` / `<VoiceControl floorMode />`
  * (operator-loop correction): Floor's Done — tap or voice — completes AND
@@ -108,28 +113,41 @@ export function FloorScreen() {
         )}
       </div>
 
-      <div className="flex-none border-b border-border bg-surface px-2 py-1">
-        <CountSummaryPanel />
-      </div>
+      {isClosed ? (
+        // PRIORITY 1.9-6/8/9 — same rule as LiveScreen's own closed-state
+        // branch (see that component's doc comment): a closed investigation
+        // reached here shows its Report/Review content, never a live-
+        // looking hands-free console — and VoiceControl is never mounted
+        // for a historical record, so it never requests the microphone.
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3">
+          <InvestigationReportsView />
+        </div>
+      ) : (
+        <>
+          <div className="flex-none border-b border-border bg-surface px-2 py-1">
+            <CountSummaryPanel />
+          </div>
 
-      <FloorPlayField />
+          <FloorPlayField />
 
-      <ActiveSeatHeader target={activeTarget} terminology="spot" />
+          <ActiveSeatHeader target={activeTarget} terminology="spot" />
 
-      {/* Card entry before operational actions (Floor Mode operator
-          usability cleanup, information-hierarchy pass): an operator's eye
-          moves from "what's active" straight to "how do I enter a card,"
-          with Done/Next/Undo reachable right below once a card is in — not
-          the reverse, which put round controls between the active-target
-          banner and the keypad they don't act on. */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <CardEntryPad terminology="spot" />
-        <RoundControlsRow floorMode />
-      </div>
+          {/* Card entry before operational actions (Floor Mode operator
+              usability cleanup, information-hierarchy pass): an operator's eye
+              moves from "what's active" straight to "how do I enter a card,"
+              with Done/Next/Undo reachable right below once a card is in — not
+              the reverse, which put round controls between the active-target
+              banner and the keypad they don't act on. */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <CardEntryPad terminology="spot" />
+            <RoundControlsRow floorMode />
+          </div>
 
-      <VoiceControlErrorBoundary>
-        <VoiceControl floorMode />
-      </VoiceControlErrorBoundary>
+          <VoiceControlErrorBoundary>
+            <VoiceControl floorMode />
+          </VoiceControlErrorBoundary>
+        </>
+      )}
     </div>
   );
 }

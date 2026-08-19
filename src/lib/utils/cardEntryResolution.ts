@@ -24,6 +24,14 @@ export interface CardEntryResolution {
  * by a target spoken in the same utterance, e.g. "dealer king") both build
  * on, so the disabled/lock/label rules can never drift between the two
  * entry surfaces.
+ *
+ * PRIORITY 1.9-10/13 — `targetLabel`/`eventMessage` are the shared,
+ * non-voice-specific source of both surfaces' operator-facing text (the
+ * on-screen "last card" line in CardEntryPad, and the same event message
+ * voice-triggered entries produce) — normal operator feedback says "Spot
+ * N," never the bare internal shorthand. This file lives in `lib/utils/`,
+ * not `lib/voice/`, and changes no recognition/parsing/matching behavior —
+ * only the display text a card-entry target resolves to either way.
  */
 export function resolveCardEntryTarget(
   investigation: Investigation,
@@ -38,7 +46,7 @@ export function resolveCardEntryTarget(
   const disabled = busy || investigation.status !== "active" || currentRound.completed || locked || notEnabled;
   const targetLabel = isDealerTarget
     ? "DEALER"
-    : `SEAT ${seatResolved?.seatNumber}${seatResolved?.isSplit ? " · SPLIT" : ""}`;
+    : `SPOT ${seatResolved?.seatNumber}${seatResolved?.isSplit ? " · SPLIT" : ""}`;
 
   if (isDealerTarget) {
     return {
@@ -64,6 +72,6 @@ export function resolveCardEntryTarget(
     applyCard: (round, card) =>
       updateSeatAtTarget(round, seatNumber, (seat) => ({ ...seat, playerCards: [...seat.playerCards, card] })),
     eventMessage: (card) =>
-      `Seat ${seatResolved?.seatNumber}${seatResolved?.isSplit ? " (split)" : ""}: ${formatCard(card)}`,
+      `Spot ${seatResolved?.seatNumber}${seatResolved?.isSplit ? " (split)" : ""}: ${formatCard(card)}`,
   };
 }

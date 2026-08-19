@@ -66,6 +66,20 @@ same cards, the same count, the same everything. Switching between them
 (the "Surveillance" link in Floor, or "Floor Mode" in Surveillance's Menu)
 never creates a second copy of anything and never loses data.
 
+**If you left an investigation open,** reopening EyeOnPit (after a
+refresh, a crash, closing the tab, or restarting your device) picks up
+right where you left off automatically — no extra tap, no lost work. If
+EyeOnPit instead finds an investigation that's been sitting untouched for
+a while (or more than one unfinished investigation at once), it won't
+guess which one you mean: you'll see **"Unfinished Investigation
+Found"** with a **RESUME INVESTIGATION** button (showing which one and
+when you last touched it) and a **START NEW INVESTIGATION** button.
+Starting new never deletes or touches the one you set aside — it stays
+exactly where it was, in History, for whenever you come back to it. A
+**finished, closed investigation never comes back as your working
+table** — closing one always lands you back at this clean home screen
+next time, never back inside the case you already wrapped up.
+
 ---
 
 ## What Floor shows you
@@ -78,9 +92,8 @@ is there to confirm what EyeOnPit heard, not to be a second full table.
   which is active, and their current cards at a glance.
 - **The active target** — exactly one line telling you what card entry
   currently applies to ("SPOT 2 · P1" / "ENTER CARDS", or "DEALER" /
-  "ENTER CARDS"). Floor Mode always says "Spot" — Surveillance's own
-  equivalent header says "Seat" instead; same seat, different word, see
-  below.
+  "ENTER CARDS"). Floor and Surveillance both say "Spot" — one word,
+  everywhere, see below.
 - **Done / Next / Undo** and the manual card keypad, always available —
   voice is the fast path, not the only path.
 - **The microphone button**, showing whether voice is currently listening.
@@ -111,9 +124,8 @@ target or say a workflow word (Done/Next/Undo/New Shoe).
 **Seat/Spot/Player/C-form all mean the same thing** — "Seat 2", "Spot 2",
 "Player 2", and "C2" are the exact same seat. Use whichever feels natural
 when *speaking* — this is about what EyeOnPit understands, not what it
-shows you. On screen, Floor Mode always displays "Spot 2" and Surveillance
-always displays "Seat 2" for that identical seat; neither ever shows the
-bare internal shorthand "S2."
+shows you. On screen, both Floor and Surveillance always display "Spot 2"
+for that seat; it never shows the bare internal shorthand "S2."
 
 **Naming an empty seat occupies it.** You don't need a separate "enable"
 step — saying "Seat 2" (or naming it with a card) is the same as tapping
@@ -257,7 +269,7 @@ pausing.
 EyeOnPit always tells you why, right above the keypad:
 
 - **"Investigation paused — resume to continue."**
-- **"Seat not enabled — tap the seat, or say its name, to enable it."**
+- **"Spot not enabled — tap the spot, or say its name, to enable it."**
 - **"Hand locked — result already recorded."**
 - **"Round complete — say or tap Next for the next hand."** In Floor
   this one shouldn't come up during normal play — Done already moves you
@@ -292,13 +304,18 @@ finishes and reviews the *whole investigation*.
 - **Manual:** open the Menu → **End & Review** → confirm.
 
 Nothing you recorded is ever deleted. You land directly on that
-investigation's own review — the same **Reports** view, opened
-automatically, showing the executive summary, notes, and full
-round-by-round evidence for the investigation you just finished. From
-there:
+investigation's own review — the same **Reports** view, shown
+automatically in place of the live table, showing the executive summary,
+notes, and full round-by-round evidence for the investigation you just
+finished. A closed investigation's Reports view is a permanent screen,
+not a pop-up you can accidentally dismiss back into the live table — that
+table is gone the moment the investigation closes. From there:
 
-- **Return Home** — the **"+ New"** button, always visible once an
-  investigation is closed.
+- **Return Home** — either the **"+ New"** button in the header, or
+  **"Finish & Start New Investigation"** at the bottom of the report
+  itself; both do the same thing. Either way, the app comes up completely
+  clean — no leftover cards, spots, or wager state from the investigation
+  you just finished.
 - **Export** — download everything (every round, every card, every event)
   as a JSON file.
 - **Preview / Export Report** — a print-ready, shareable version of the

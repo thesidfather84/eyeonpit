@@ -57,7 +57,7 @@ describe("CardEntryPad — blocked-state messaging explains WHY, never just goes
       </InvestigationProvider>
     );
 
-    await waitFor(() => screen.getByText(/Seat not enabled — tap the seat, or say its name, to enable it/));
+    await waitFor(() => screen.getByText(/Spot not enabled — tap the spot, or say its name, to enable it/));
     expect(screen.queryByText(/double-tap/)).toBeNull();
   });
 

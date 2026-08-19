@@ -42,17 +42,18 @@ const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
  * updated to match current reality: a single tap on the seat (or its
  * spoken name) enables it now, not a double-tap.
  *
- * `terminology` (Floor Mode operator usability cleanup): only affects the
- * "not enabled" block-reason wording below — everything else in this
- * component (the rank buttons, the last-card-event message) has no target
- * name in it at all. Defaults to "seat" so LiveScreen's own call site
- * (Surveillance) needed no change. See ActiveSeatHeader's own doc comment
- * for the same convention.
+ * `terminology` (PRIORITY 1.9-10/12 — global operator terminology rule):
+ * only affects the "not enabled" block-reason wording below — everything
+ * else in this component (the rank buttons, the last-card-event message)
+ * has no target name in it at all. Defaults to "spot" (the new global
+ * default — see ActiveSeatHeader's own doc comment for the full
+ * reasoning) so LiveScreen's own call site (Surveillance) needed no
+ * change to pick it up.
  */
-export function CardEntryPad({ terminology = "seat" }: { terminology?: "seat" | "spot" } = {}) {
+export function CardEntryPad({ terminology = "spot" }: { terminology?: "seat" | "spot" } = {}) {
   const { investigation, currentRound } = useInvestigationContext();
   const { enterCard, disabled, locked, notEnabled } = useCardEntry();
-  const word = terminology === "spot" ? "spot" : "seat";
+  const word = terminology === "seat" ? "seat" : "spot";
 
   const lastCardEvent = [...currentRound.eventLog].reverse().find((e) => e.type === "card");
 

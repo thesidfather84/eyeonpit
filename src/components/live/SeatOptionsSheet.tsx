@@ -70,8 +70,8 @@ export function SeatOptionsSheet({ seatNumber, onClose }: SeatOptionsSheetProps)
   }
 
   const title = isOccupied
-    ? `Seat ${seatNumber}${group ? ` — ${group.label}` : ""}`
-    : `Seat ${seatNumber} (empty)`;
+    ? `Spot ${seatNumber}${group ? ` — ${group.label}` : ""}`
+    : `Spot ${seatNumber} (empty)`;
 
   return (
     <>
@@ -169,7 +169,7 @@ export function SeatOptionsSheet({ seatNumber, onClose }: SeatOptionsSheetProps)
       <BottomSheet
         open={step === "add-label"}
         onClose={() => setStep("menu")}
-        title={`Label — Seat ${seatNumber}`}
+        title={`Label — Spot ${seatNumber}`}
       >
         <div className="flex flex-col gap-3 pb-4">
           <input
@@ -203,7 +203,7 @@ export function SeatOptionsSheet({ seatNumber, onClose }: SeatOptionsSheetProps)
       <ConfirmDialog
         open={markEmptyConfirmOpen}
         title="Clear this seat?"
-        message={`Seat ${seatNumber} contains a bet or hand data. Clear this seat?`}
+        message={`Spot ${seatNumber} contains a bet or hand data. Clear this spot?`}
         confirmLabel="Clear Seat"
         destructive
         busy={busy}
@@ -275,7 +275,7 @@ function SeatPicker({
             onClick={() => onPick(seat)}
             className="tap-target flex items-center justify-between rounded-lg px-3 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-40"
           >
-            <span>Seat {seat}</span>
+            <span>Spot {seat}</span>
             <span className="text-xs text-muted-foreground">
               {occupied ? group?.label ?? "occupied" : "empty"}
             </span>

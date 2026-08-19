@@ -12,6 +12,86 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### 1.9 Operator Lifecycle + Global Terminology (2026-08-19)
+
+**Problem:** nothing in the app checked investigation status before
+deciding what to render — a completed (`"closed"`) investigation could
+resurface as the live operational console after a reload, a History link,
+or the End Investigation redirect, with only a "+New" button
+acknowledging it was actually finished. Separately, an earlier session's
+deliberate Floor="Spot"/Surveillance="Seat" terminology split meant
+Surveillance's own live console still displayed bare "SEAT N" tiles —
+confirmed as the root cause of a recent production screenshot showing
+"SEAT 1", "SEAT 2", "SEAT 3" on an operational screen.
+
+**What shipped** (full detail in
+`docs/EYEONPIT_1_9_OPERATOR_LIFECYCLE.md`):
+
+- **Investigation lifecycle rule (READY/ACTIVE/PAUSED/COMPLETED)** — a
+  new pure classifier (`lib/investigationLifecycle.ts`) distinguishes a
+  fresh active/paused investigation (auto-resume, no confirmation step —
+  refresh/crash/tab-close recovery stays instant) from a stale or
+  ambiguous one (explicit RESUME/START NEW choice via the new
+  `ResumeOrNewScreen`) from nothing at all (clean READY launch screen).
+  A `"closed"` investigation is never a lifecycle candidate at all.
+- **Closed investigation → report view, never the live console** — a new
+  shared `InvestigationReportsView` renders directly as the body of
+  `LiveScreen`/`FloorScreen` whenever `status === "closed"`, replacing
+  the old one-shot `?review=1` query-param mechanism entirely. This is
+  what actually fixes the reload-after-completion regression: the guard
+  is driven purely by persisted status, not a query flag.
+  `ReportScreen.tsx` gained a "Finish & Start New Investigation" action
+  that does a full page navigation back to `/app`, guaranteeing every
+  piece of leftover operational state is gone, not just visually reset.
+  The underlying investigation/report data is never cleared.
+- **Global Spot-everywhere terminology** — the earlier Floor/Surveillance
+  "Spot"/"Seat" split is superseded; Spot is now the operator-facing
+  default everywhere (`ActiveSeatHeader`, `CardEntryPad`, `SeatTilesRow`,
+  reports, exports, sheets, settings hints). Internal identifiers
+  (`seatNumber`, Dexie keys, `activeTarget`, raw diagnostic export fields
+  like `SEAT1`) are completely unchanged — this is a display-layer fix.
+  A shared, non-voice utility (`lib/utils/cardEntryResolution.ts`)
+  already fed both manual AND voice-triggered display text, so fixing it
+  there corrected voice confirmation toasts too, with zero changes to
+  any file under `lib/voice/` or `VoiceControl.tsx` — confirmed via a
+  full, unmodified 177/177 `VoiceControl.test.tsx` pass.
+  New dedicated `terminologyLeak.test.tsx` regression tests scan real
+  rendered surfaces for bare `S1`–`S7` leakage, word-boundary-anchored so
+  legitimate strings like the "S17" dealer-stands-on-17 rule label are
+  never a false positive.
+- **New product principles** added to `docs/EYEONPIT_PRODUCT_SPEC.md`:
+  "the observer should not have to learn EyeOnPit language," "internal
+  identifiers belong to EyeOnPit, casino language belongs to the
+  operator," and "completed investigations belong in history, not in the
+  live operational workspace."
+- **Voice Independence architecture — documentation only** (see
+  `docs/EYEONPIT_1_9_VOICE_INDEPENDENCE.md`): a `SpeechProvider`
+  abstraction design (current browser Web Speech as the one real
+  implementation), the Firefox/cross-browser gap this exists to close,
+  and a benchmark-corpus methodology for evaluating any future
+  replacement engine. Zero voice code added or changed.
+
+**Explicitly not touched:** the voice parser/resolver/normalization,
+browser ASR behavior, the CardEvent ledger, counting mathematics,
+simulation mathematics, and Counter Detection mathematics — confirmed via
+`git diff` showing zero changes under `src/lib/voice/`,
+`src/hooks/useVoiceRecognition.ts`, `src/components/live/VoiceControl.tsx`,
+the counting engine, or the simulation engine. No PC Voice Field Test #2
+finding was fixed in this release, by explicit instruction, so that field
+test measures a clean, unmodified baseline.
+
+**Tests:** new lifecycle regression suite (`ConsoleShell.test.tsx`,
+8 tests covering the full READY/fresh/stale/multiple-candidate/reload-
+after-completion matrix), a rewritten `EndReview.test.tsx` proving closed
+investigations have no dismissible overlay, and a new
+`terminologyLeak.test.tsx` cross-cutting leak-detection suite, plus
+targeted assertion updates across every file touched by the terminology
+default flip. Full suite green, `tsc --noEmit` clean, `eslint` clean.
+
+**Status:** complete, pending review. Not committed/pushed — see the
+1.9 final report for the full findings list. PC Voice Field Test #2
+remains in progress, unaffected by any of the above.
+
 ### 1.7 Counter Detection + Player Analytics, 1.8 Global/Multi-Property/Multi-Game Foundation (2026-08-19)
 
 **Problem:** the 1.6 architecture explicitly deferred Counter Detection to
@@ -326,7 +406,7 @@ use it.
 
 ## Sequence (current, authoritative order)
 
-This is the actual next-priority order. The 1.5/1.6/1.7/1.8 foundation
+This is the actual next-priority order. The 1.5/1.6/1.7/1.8/1.9 foundation
 below is now **built** (pending review), but that does not change voice's
 priority — **do not skip PC Voice Field Test #2** for any reason; it
 remains the next voice-specific gate, deliberately untouched by all of
@@ -338,32 +418,44 @@ this foundation work.
 3. ~~1.7 Counter Detection + Player Analytics, 1.8 Global/Multi-Property/
    Multi-Game foundation~~ — complete, pending review, see above. Built
    without touching voice.
-4. **PC Voice Field Test #2** — a fresh diagnostic export, compared against
+4. ~~1.9 Operator Lifecycle + Global Terminology~~ — complete, pending
+   review, see above. Built without touching voice.
+5. **PC Voice Field Test #2** — a fresh diagnostic export, compared against
    Field Test #1's fixes, before any further voice changes. Being
    performed separately by the user. *(up next)*
-5. Fix/validate remaining Voice failures surfaced by Field Test #2.
-6. Repeat Voice testing until the reliability gate is met.
-7. Build-out on top of the now-existing foundation: property metadata
+6. Fix/validate remaining Voice failures surfaced by Field Test #2.
+7. Repeat Voice testing until the reliability gate is met.
+8. Voice Independence — implement a real `SpeechProvider` abstraction
+   (design finalized, see `docs/EYEONPIT_1_9_VOICE_INDEPENDENCE.md`) and,
+   behind it, a Firefox/cross-browser-capable engine — only after the
+   Field Test #2 gate above closes on the current browser baseline; run
+   the benchmark corpus (same doc §6) against any candidate before it is
+   approved.
+9. Build-out on top of the now-existing foundation: property metadata
    management UI, AI-narrative review/edit UI, `/lab` creation flows (add
    method, add scenario).
-8. **i18n/terminology integration, in this explicit order — never skip
+10. **i18n/terminology integration, in this explicit order — never skip
    ahead** (see `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §3.1): (a) Floor
    Mode visible labels, (b) `/lab` UI, (c) Reporting, (d) Documentation/site
    UI, (e) Voice localization LAST, as its own separate project with its
    own safety re-verification — never bundled into the earlier stages.
-9. **Real-world Counter Detection validation** (see
+   Note: (a) is now effectively also true of Surveillance, since 1.9 made
+   Spot the global default across both shells — what remains for this
+   stage is wiring 1.8's `resolveTerminology()` *property preference*
+   into that now-shared default, not introducing Spot itself.
+11. **Real-world Counter Detection validation** (see
    `docs/EYEONPIT_1_7_COUNTER_DETECTION.md` §9) — labeled datasets across
    known counters/non-counters/multiple count methods/conservative/covered
    profiles; the Confidence Engine's `EXPERIMENTAL_NOT_VALIDATED` status
    does not change until this exists and is reviewed.
-10. **`validateMethodGameCompatibility` MUST be wired into
+12. **`validateMethodGameCompatibility` MUST be wired into
     `createSimulationScenario`/`validateSimulationScenario` before or
     alongside any second `GameFamily` implementation** — not after (see
     `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §7's explicit
     production-readiness gate). A second real `GameFamily` (Spanish 21,
     Baccarat, etc.) itself — architecture ready, no second game
     implemented yet.
-11. Real accounts/subscriptions/roles for `/lab`, once actually
+13. Real accounts/subscriptions/roles for `/lab`, once actually
     prioritized — foundation only today
     (`docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §8-9).
 

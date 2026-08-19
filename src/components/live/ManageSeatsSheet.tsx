@@ -19,7 +19,7 @@ export function ManageSeatsSheet({ onClose }: { onClose: () => void }) {
 
   return (
     <>
-      <BottomSheet open onClose={onClose} title="Manage Seats">
+      <BottomSheet open onClose={onClose} title="Manage Spots">
         <div className="flex flex-col gap-1 pb-4">
           {seats.map((seat) => {
             const isOccupied = investigation.occupiedSeats.includes(seat);
@@ -35,7 +35,7 @@ export function ManageSeatsSheet({ onClose }: { onClose: () => void }) {
                 onClick={() => setOptionsSeat(seat)}
                 className="tap-target flex items-center justify-between rounded-lg border border-border px-3 hover:bg-surface-raised"
               >
-                <span className="text-sm font-semibold text-foreground">Seat {seat}</span>
+                <span className="text-sm font-semibold text-foreground">Spot {seat}</span>
                 {isOccupied ? (
                   <span className="text-xs text-muted-foreground">
                     {group?.label ?? "Occupied"}

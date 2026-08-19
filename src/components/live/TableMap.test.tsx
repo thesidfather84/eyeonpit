@@ -44,7 +44,7 @@ describe("TableMap — normal tap", () => {
         <ActiveTargetProbe />
       </InvestigationProvider>
     );
-    const seat3 = await screen.findByRole("button", { name: "Seat 3" });
+    const seat3 = await screen.findByRole("button", { name: "Spot 3" });
 
     await act(async () => {
       seat3.click();
@@ -64,7 +64,7 @@ describe("TableMap — normal tap", () => {
         <ActiveTargetProbe />
       </InvestigationProvider>
     );
-    const seat2 = await screen.findByRole("button", { name: "Seat 2" });
+    const seat2 = await screen.findByRole("button", { name: "Spot 2" });
 
     await act(async () => {
       seat2.click();
@@ -99,9 +99,9 @@ describe("TableMap — normal tap", () => {
         <TableMap />
       </InvestigationProvider>
     );
-    await screen.findByRole("button", { name: "Seat 1" });
+    await screen.findByRole("button", { name: "Spot 1" });
 
-    expect(screen.queryByRole("button", { name: "Seat 1 options" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Spot 1 options" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Dealer options" })).toBeNull();
   });
 });
@@ -114,14 +114,14 @@ describe("TableMap — Edit Mode", () => {
         <TableMap />
       </InvestigationProvider>
     );
-    await screen.findByRole("button", { name: "Seat 1" });
+    await screen.findByRole("button", { name: "Spot 1" });
 
     await act(async () => {
       editToggle().click();
     });
 
     expect(editToggle().getAttribute("aria-pressed")).toBe("true");
-    screen.getByRole("button", { name: "Seat 1 options" });
+    screen.getByRole("button", { name: "Spot 1 options" });
     screen.getByRole("button", { name: "Dealer options" });
   });
 
@@ -133,17 +133,17 @@ describe("TableMap — Edit Mode", () => {
         <ActiveTargetProbe />
       </InvestigationProvider>
     );
-    await screen.findByRole("button", { name: "Seat 4" });
+    await screen.findByRole("button", { name: "Spot 4" });
 
     await act(async () => {
       editToggle().click();
     });
     await act(async () => {
-      screen.getByRole("button", { name: "Seat 4 options" }).click();
+      screen.getByRole("button", { name: "Spot 4 options" }).click();
     });
 
     // The sheet opened...
-    await waitFor(() => screen.getByRole("dialog", { name: "Seat 4 (empty)" }));
+    await waitFor(() => screen.getByRole("dialog", { name: "Spot 4 (empty)" }));
     // ...the seat was never selected as the active target by this tap...
     expect(screen.getByTestId("active-target").textContent).toBe("dealer");
     // ...and Edit Mode is already off again, one-shot.
@@ -159,7 +159,7 @@ describe("TableMap — Edit Mode", () => {
         <ActiveTargetProbe />
       </InvestigationProvider>
     );
-    await screen.findByRole("button", { name: "Seat 1" });
+    await screen.findByRole("button", { name: "Spot 1" });
 
     await act(async () => {
       editToggle().click();
@@ -180,7 +180,7 @@ describe("TableMap — Edit Mode", () => {
         <ActiveTargetProbe />
       </InvestigationProvider>
     );
-    await screen.findByRole("button", { name: "Seat 5" });
+    await screen.findByRole("button", { name: "Spot 5" });
 
     await act(async () => {
       editToggle().click(); // on
@@ -191,7 +191,7 @@ describe("TableMap — Edit Mode", () => {
 
     expect(editToggle().getAttribute("aria-pressed")).toBe("false");
     await act(async () => {
-      screen.getByRole("button", { name: "Seat 5" }).click();
+      screen.getByRole("button", { name: "Spot 5" }).click();
     });
     await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("5"));
     expect(screen.queryByRole("dialog")).toBeNull();

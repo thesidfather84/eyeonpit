@@ -55,7 +55,7 @@ export function AnalysisScreen() {
       </section>
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-foreground">Seat-by-Seat Timelines</h2>
+        <h2 className="mb-2 text-sm font-semibold text-foreground">Spot-by-Spot Timelines</h2>
         <div className="flex flex-col gap-3">
           {investigation.occupiedSeats.map((seatNumber) => {
             const ap = apBySeat[seatNumber];
@@ -63,7 +63,7 @@ export function AnalysisScreen() {
             return (
               <div key={seatNumber} className="rounded-lg border border-border bg-surface p-3">
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="text-sm font-semibold text-foreground">Seat {seatNumber}</span>
+                  <span className="text-sm font-semibold text-foreground">Spot {seatNumber}</span>
                   <span
                     className={`text-xs font-bold ${
                       ap && ap.level !== "low" ? "text-status-orange" : "text-status-green"

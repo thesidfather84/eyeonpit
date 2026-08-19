@@ -106,7 +106,7 @@ export function ReportPreview({ report }: { report: Report }) {
             <ul className="flex flex-col gap-1 text-sm">
               {report.analysis.betCountCorrelationBySeat.map((seat) => (
                 <li key={seat.seatNumber}>
-                  Seat {seat.seatNumber}: correlation {seat.correlation.toFixed(2)} ({seat.level}), sample size {seat.sampleSize}
+                  Spot {seat.seatNumber}: correlation {seat.correlation.toFixed(2)} ({seat.level}), sample size {seat.sampleSize}
                 </li>
               ))}
             </ul>
@@ -122,7 +122,7 @@ export function ReportPreview({ report }: { report: Report }) {
           <ul className="flex flex-col gap-1 text-sm">
             {report.analysis.counterAnalysisBySeat.map((seat) => (
               <li key={seat.seatNumber}>
-                Seat {seat.seatNumber}: <span className="font-semibold">{seat.classification.replace("_", " ")}</span> (confidence{" "}
+                Spot {seat.seatNumber}: <span className="font-semibold">{seat.classification.replace("_", " ")}</span> (confidence{" "}
                 {seat.confidenceScore.toFixed(2)})
                 {seat.strongestContributingSignals.length > 0 && (
                   <span className="text-muted-foreground"> — {seat.strongestContributingSignals.map((s) => s.description).join("; ")}</span>
@@ -138,7 +138,7 @@ export function ReportPreview({ report }: { report: Report }) {
           <ul className="flex flex-col gap-1 text-sm">
             {report.analysis.bettingAnalysisBySeat.map((seat) => (
               <li key={seat.seatNumber}>
-                Seat {seat.seatNumber}: {seat.sampleSize} usable hands
+                Spot {seat.seatNumber}: {seat.sampleSize} usable hands
                 {seat.correlationWithTrueCount != null && `, wager/true-count correlation ${seat.correlationWithTrueCount.toFixed(2)}`}
                 {seat.betSpread && `, spread ${seat.betSpread.minWager}-${seat.betSpread.maxWager}${seat.betSpread.ratio ? ` (${seat.betSpread.ratio.toFixed(1)}x)` : ""}`}
               </li>
@@ -152,7 +152,7 @@ export function ReportPreview({ report }: { report: Report }) {
           <ul className="flex flex-col gap-1 text-sm">
             {report.analysis.playingDeviationAnalysisBySeat.map((seat) => (
               <li key={seat.seatNumber}>
-                Seat {seat.seatNumber}: {seat.totalDeviations}/{seat.totalOpportunities} decisions deviated from basic strategy
+                Spot {seat.seatNumber}: {seat.totalDeviations}/{seat.totalOpportunities} decisions deviated from basic strategy
                 {seat.deviationRate != null && ` (${(seat.deviationRate * 100).toFixed(0)}%)`}
                 {seat.indexTableProvided
                   ? seat.indexConsistentDeviationRate != null &&
@@ -169,7 +169,7 @@ export function ReportPreview({ report }: { report: Report }) {
           <ul className="flex flex-col gap-1 text-sm">
             {report.analysis.insuranceAnalysisBySeat.map((seat) => (
               <li key={seat.seatNumber}>
-                Seat {seat.seatNumber}: offered {seat.timesOffered}, taken {seat.timesTaken} (threshold TC ≥ {seat.trueCountThresholdUsed})
+                Spot {seat.seatNumber}: offered {seat.timesOffered}, taken {seat.timesTaken} (threshold TC ≥ {seat.trueCountThresholdUsed})
                 {seat.countConsistentRate != null && `, ${(seat.countConsistentRate * 100).toFixed(0)}% count-consistent`}
               </li>
             ))}
@@ -182,7 +182,7 @@ export function ReportPreview({ report }: { report: Report }) {
           <ul className="flex flex-col gap-1 text-sm">
             {report.analysis.observationConfidenceBySeat.map((seat) => (
               <li key={seat.seatNumber}>
-                Seat {seat.seatNumber}: {seat.handsObserved} hands observed, {seat.handsWithUsableEvidence} with usable evidence (minimum{" "}
+                Spot {seat.seatNumber}: {seat.handsObserved} hands observed, {seat.handsWithUsableEvidence} with usable evidence (minimum{" "}
                 {seat.minimumHandsForClassification} required for any classification)
               </li>
             ))}

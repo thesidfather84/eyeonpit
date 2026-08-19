@@ -22,21 +22,24 @@ import { resolveSeatTarget } from "@/lib/utils/seatTarget";
  * on the seat tile itself (SeatTilesRow) — repeating either here would just
  * be duplication again, the exact thing this consolidation removes.
  *
- * `terminology` (Floor Mode operator usability cleanup): Surveillance and
- * Floor Mode deliberately use different VISIBLE words for the same
- * underlying seat — Surveillance says "SEAT n" (matching SeatTilesRow/
- * DealerTile/every Surveillance sheet), Floor Mode says "SPOT n" (the
- * casino-floor term this shell standardizes on — see
- * docs/EYEONPIT_PRODUCT_SPEC.md's "Floor Mode Terminology Standard").
- * Defaults to "seat" so LiveScreen's own call site (Surveillance) needed no
- * change at all. This is presentation-only: the underlying seat
- * number/identifier is completely unaffected either way, and voice input
- * keeps accepting "seat"/"spot"/"player" as synonyms regardless of which
- * word is on screen.
+ * `terminology` (PRIORITY 1.9-10/12 — global operator terminology rule,
+ * superseding the earlier Floor-only "Spot"/Surveillance-only "Seat"
+ * split): "Spot" is now the default VISIBLE word for a numbered player
+ * position everywhere in the app — no normal operator-facing surface may
+ * show the bare internal shorthand "S1"-"S7", and "Seat" is no longer
+ * Surveillance's own default either, until a future property-level
+ * terminology preference (docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md §3) is
+ * actually wired in. Defaults to "spot" so every existing call site
+ * (Surveillance's LiveScreen included) needed no change to pick up the new
+ * default. This is presentation-only: the underlying seat number/
+ * identifier is completely unaffected either way, and voice input keeps
+ * accepting "seat"/"spot"/"player" as synonyms regardless of which word is
+ * on screen (see docs/EYEONPIT_PRODUCT_SPEC.md §4's terminology standard,
+ * updated for this priority).
  */
-export function ActiveSeatHeader({ target, terminology = "seat" }: { target: CardTarget; terminology?: "seat" | "spot" }) {
+export function ActiveSeatHeader({ target, terminology = "spot" }: { target: CardTarget; terminology?: "seat" | "spot" }) {
   const { investigation, currentRound } = useInvestigationContext();
-  const word = terminology === "spot" ? "SPOT" : "SEAT";
+  const word = terminology === "seat" ? "SEAT" : "SPOT";
 
   let identity: string;
   if (target === "dealer") {

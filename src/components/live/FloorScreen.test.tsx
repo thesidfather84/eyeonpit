@@ -253,10 +253,10 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
     );
 
     // ActiveSeatHeader is the ONE place that states the active target now —
-    // "SPOT 3" / "ENTER CARDS" in Floor Mode (Surveillance's own instance
-    // of this same component still says "SEAT 3" — see ActiveSeatHeader's
-    // own doc comment on the `terminology` prop and its Surveillance test
-    // coverage elsewhere).
+    // "SPOT 3" / "ENTER CARDS" in Floor Mode. PRIORITY 1.9-10: Surveillance's
+    // own instance of this same component says "SPOT 3" too now (the new
+    // global default) — see ActiveSeatHeader's own doc comment on the
+    // `terminology` prop.
     await waitFor(() => screen.getByText("SPOT 3"));
     screen.getByText("ENTER CARDS");
   });
@@ -498,17 +498,16 @@ describe("FloorScreen and LiveScreen share the same underlying investigation/led
     );
 
     const surveillancePane = await screen.findByTestId("surveillance-pane");
-    const seatTile = within(surveillancePane).getByRole("button", { name: "Seat 3" });
+    const seatTile = within(surveillancePane).getByRole("button", { name: "Spot 3" });
     await act(async () => {
       seatTile.click();
     });
 
-    // Same underlying seat, deliberately different VISIBLE word per shell —
-    // Surveillance said "Seat 3" above, Floor Mode says "Spot 3" here (see
-    // ActiveSeatHeader/FloorPlayField's own doc comments on `terminology`).
-    // The underlying identifier (seat 3) and investigation state are the
-    // same either way — this is presentation-only, proven by both panes
-    // reacting to the identical tap.
+    // PRIORITY 1.9-10: both shells now say "Spot" by default (the new
+    // global operator terminology rule, superseding the earlier
+    // Floor-only "Spot"/Surveillance-only "Seat" split) — the underlying
+    // identifier (seat 3) and investigation state are the same either
+    // way, proven by both panes reacting to the identical tap.
     const floorPane = screen.getByTestId("floor-pane");
     await waitFor(() => {
       const floorSeat3 = within(floorPane).getByTestId("floor-seat-3");
@@ -569,7 +568,7 @@ describe("FloorScreen — operator usability cleanup: no bare internal seat iden
     expect(screen.queryByText(/^Seat not enabled/)).toBeNull();
   });
 
-  it("Surveillance's own ActiveSeatHeader/seat tiles are unaffected — still say SEAT, not SPOT", async () => {
+  it("PRIORITY 1.9-10: Surveillance's own ActiveSeatHeader/seat tiles now say SPOT too — the global default, no longer a Floor-only word", async () => {
     const investigationId = await freshInvestigationId();
     const { LiveScreen } = await import("./LiveScreen");
     render(
@@ -582,13 +581,13 @@ describe("FloorScreen — operator usability cleanup: no bare internal seat iden
       </LockProvider>
     );
 
-    const seatTile = await screen.findByRole("button", { name: "Seat 3" });
+    const seatTile = await screen.findByRole("button", { name: "Spot 3" });
     await act(async () => {
       seatTile.click();
     });
 
-    await screen.findByText("SEAT 3");
-    expect(screen.queryByText("SPOT 3")).toBeNull();
+    await screen.findByText("SPOT 3");
+    expect(screen.queryByText("SEAT 3")).toBeNull();
   });
 });
 

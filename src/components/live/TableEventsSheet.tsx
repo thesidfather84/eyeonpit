@@ -9,8 +9,8 @@ import type { TableEventKind } from "@/types/investigation";
 const EVENTS: { kind: TableEventKind; label: string; needsDetail?: boolean }[] = [
   { kind: "dealer-change", label: "Dealer Change", needsDetail: true },
   { kind: "shuffle", label: "Shuffle" },
-  { kind: "seat-opens", label: "Seat Opens" },
-  { kind: "seat-closes", label: "Seat Closes" },
+  { kind: "seat-opens", label: "Spot Opens" },
+  { kind: "seat-closes", label: "Spot Closes" },
   { kind: "player-joins", label: "Player Joins" },
   { kind: "player-leaves", label: "Player Leaves" },
   { kind: "table-closed", label: "Table Closed" },

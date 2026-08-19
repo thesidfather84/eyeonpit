@@ -39,15 +39,22 @@ const STANDARD: TerminologyDictionary = {
   export: "Export",
 };
 
-/** Casino-floor terms for what the operator is directly doing at the table — the back-office/reporting vocabulary stays generic. */
+/**
+ * Casino-floor terms for what the operator is directly doing at the table
+ * — the back-office/reporting vocabulary stays generic. `playerPosition`/
+ * `currentPlayer` follow the PRIORITY 1.9-10 global default ("Spot," not
+ * "Seat") — these two fields aren't currently rendered by any component
+ * (confirmed unused as of this priority), but are updated for consistency
+ * with the rest of the app's terminology should they ever be wired up.
+ */
 const CASINO: TerminologyDictionary = {
   ...STANDARD,
   completeRound: "Next Hand",
   resetShoe: "New Shoe",
   dealerCard: "Dealer Up Card",
   secondDealerCard: "Dealer Hole Card",
-  playerPosition: "Seat",
-  currentPlayer: "Selected Seat",
+  playerPosition: "Spot",
+  currentPlayer: "Selected Spot",
   bet: "Wager",
   currentBet: "Current Wager",
   baseBet: "Starting Wager",

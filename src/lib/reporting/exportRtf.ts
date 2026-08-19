@@ -98,7 +98,7 @@ export function buildReportRtf(report: Report): string {
     parts.push(rtfSubheading("DERIVED ANALYSIS — Bet/Count Correlation"));
     parts.push(rtfParagraph("Correlation between wager size and true count at time of bet, by seat — an indicator, not a conclusion. See docs/EYEONPIT_PRODUCT_SPEC.md §15."));
     for (const seat of report.analysis.betCountCorrelationBySeat) {
-      parts.push(rtfLabelValue(`Seat ${seat.seatNumber}`, `correlation ${seat.correlation.toFixed(2)} (${seat.level}), sample size ${seat.sampleSize}`));
+      parts.push(rtfLabelValue(`Spot ${seat.seatNumber}`, `correlation ${seat.correlation.toFixed(2)} (${seat.level}), sample size ${seat.sampleSize}`));
     }
   } else {
     parts.push(rtfSubheading("DERIVED ANALYSIS"));
@@ -109,7 +109,7 @@ export function buildReportRtf(report: Report): string {
     parts.push(rtfSubheading("DERIVED ANALYSIS — Counter Analysis"));
     parts.push(rtfParagraph("EXPERIMENTAL — NOT VALIDATED. An investigative indicator only, never an accusation or conclusion. See Methodology below."));
     for (const seat of report.analysis.counterAnalysisBySeat) {
-      parts.push(rtfLabelValue(`Seat ${seat.seatNumber}`, `${seat.classification.replace(/_/g, " ")} (confidence ${seat.confidenceScore.toFixed(2)})`));
+      parts.push(rtfLabelValue(`Spot ${seat.seatNumber}`, `${seat.classification.replace(/_/g, " ")} (confidence ${seat.confidenceScore.toFixed(2)})`));
     }
   }
 
@@ -118,7 +118,7 @@ export function buildReportRtf(report: Report): string {
     for (const seat of report.analysis.bettingAnalysisBySeat) {
       const correlation = seat.correlationWithTrueCount != null ? `, correlation ${seat.correlationWithTrueCount.toFixed(2)}` : "";
       const spread = seat.betSpread ? `, spread ${seat.betSpread.minWager}-${seat.betSpread.maxWager}` : "";
-      parts.push(rtfLabelValue(`Seat ${seat.seatNumber}`, `${seat.sampleSize} usable hands${correlation}${spread}`));
+      parts.push(rtfLabelValue(`Spot ${seat.seatNumber}`, `${seat.sampleSize} usable hands${correlation}${spread}`));
     }
   }
 
@@ -127,7 +127,7 @@ export function buildReportRtf(report: Report): string {
     for (const seat of report.analysis.playingDeviationAnalysisBySeat) {
       parts.push(
         rtfLabelValue(
-          `Seat ${seat.seatNumber}`,
+          `Spot ${seat.seatNumber}`,
           `${seat.totalDeviations}/${seat.totalOpportunities} deviations from basic strategy${seat.indexTableProvided ? "" : " (no index table supplied)"}`
         )
       );
@@ -137,14 +137,14 @@ export function buildReportRtf(report: Report): string {
   if (report.analysis?.insuranceAnalysisBySeat && report.analysis.insuranceAnalysisBySeat.length > 0) {
     parts.push(rtfSubheading("DERIVED ANALYSIS — Insurance Analysis"));
     for (const seat of report.analysis.insuranceAnalysisBySeat) {
-      parts.push(rtfLabelValue(`Seat ${seat.seatNumber}`, `offered ${seat.timesOffered}, taken ${seat.timesTaken} (threshold TC >= ${seat.trueCountThresholdUsed})`));
+      parts.push(rtfLabelValue(`Spot ${seat.seatNumber}`, `offered ${seat.timesOffered}, taken ${seat.timesTaken} (threshold TC >= ${seat.trueCountThresholdUsed})`));
     }
   }
 
   if (report.analysis?.observationConfidenceBySeat && report.analysis.observationConfidenceBySeat.length > 0) {
     parts.push(rtfSubheading("DERIVED ANALYSIS — Observation Confidence"));
     for (const seat of report.analysis.observationConfidenceBySeat) {
-      parts.push(rtfLabelValue(`Seat ${seat.seatNumber}`, `${seat.handsObserved} hands observed, ${seat.handsWithUsableEvidence} usable (minimum ${seat.minimumHandsForClassification})`));
+      parts.push(rtfLabelValue(`Spot ${seat.seatNumber}`, `${seat.handsObserved} hands observed, ${seat.handsWithUsableEvidence} usable (minimum ${seat.minimumHandsForClassification})`));
     }
   }
 

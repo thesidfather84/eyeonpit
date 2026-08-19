@@ -37,7 +37,7 @@ export function PlayerDetailSheet({
     <BottomSheet
       open={open}
       onClose={onClose}
-      title={`Seat ${seatNumber}${isSplit ? " · Split" : ""} — Player Details`}
+      title={`Spot ${seatNumber}${isSplit ? " · Split" : ""} — Player Details`}
     >
       <div className="flex flex-col gap-2 pb-2">
         <QuickBetPanel target={target} />

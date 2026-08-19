@@ -1,8 +1,7 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   ArrowLeftRight,
@@ -24,10 +23,7 @@ import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SettingsScreen } from "@/components/settings/SettingsScreen";
 import { WorkflowHelpContent } from "@/components/settings/WorkflowHelpContent";
-import { AnalysisScreen } from "@/components/analysis/AnalysisScreen";
-import { ReportScreen } from "@/components/report/ReportScreen";
-import { EventLogPanel } from "./EventLogPanel";
-import { BottomStatusBar } from "./BottomStatusBar";
+import { InvestigationReportsView } from "./InvestigationReportsView";
 import { TableEventsSheet } from "./TableEventsSheet";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { completeInvestigation, listInvestigations } from "@/lib/db/repositories/investigations";
@@ -93,58 +89,6 @@ function ExportOverlayContent() {
       </Button>
     </div>
   );
-}
-
-/**
- * Reads `?review=1` (set by the post-End-Investigation redirect — see
- * handleEndInvestigation below) and opens the Reports overlay automatically
- * EXACTLY ONCE, so the operator lands directly on the investigation they
- * just finished instead of a bare, otherwise-empty Live screen. Isolated
- * in its own component since useSearchParams requires a Suspense
- * boundary — mirrors EmptyConsole's own AutoOpenFromQuery (`?open=new`).
- *
- * BUG FIX (real iPhone production bug — the X on Investigation Summary
- * appeared not to close it): the effect below used to run every time
- * `onOpen` changed identity, and `onOpen={() => setOverlay("reports")}` at
- * the call site is a fresh inline closure on every LiveMenu render.
- * Tapping X calls `setOverlay(null)`, which itself re-renders LiveMenu,
- * which recreates that inline closure, which re-ran this effect — and
- * since the URL still had `?review=1` (never consumed), the effect
- * immediately called `onOpen()` again and reopened the sheet in the same
- * render pass. The operator's tap looked like it did nothing.
- *
- * Two independent fixes, both real one-shot mechanisms:
- * 1. `openedRef` — once this effect has opened the sheet a single time,
- *    it never calls `onOpen` again for the lifetime of this component,
- *    regardless of how many times the effect itself re-runs.
- * 2. The query param is stripped from the URL right after consuming it —
- *    via the plain `history.replaceState` Web API, deliberately NOT
- *    Next's `useRouter().replace()`. Next's `useRouter` throws outright
- *    ("invariant expected app router to be mounted") in any render tree
- *    without a real App Router context, which every test mounting
- *    LiveMenu directly (not through Next's own page routing) is —
- *    `history.replaceState` needs no router context at all, updates the
- *    URL bar with no reload/remount exactly like `router.replace` would,
- *    and works identically in the browser and under jsdom.
- */
-function AutoOpenReviewFromQuery({ onOpen }: { onOpen: () => void }) {
-  // Optional chaining, not a bare call: outside of a real Next.js router
-  // context (every test that mounts LiveMenu without mocking
-  // next/navigation, e.g. via FloorScreen/LiveScreen), useSearchParams()
-  // returns null rather than an empty ReadonlyURLSearchParams. The real
-  // app always has a router context here, so this is purely defensive.
-  const searchParams = useSearchParams();
-  const openedRef = useRef(false);
-  useEffect(() => {
-    if (openedRef.current) return;
-    if (searchParams?.get("review") !== "1") return;
-    openedRef.current = true;
-    onOpen();
-    const url = new URL(window.location.href);
-    url.searchParams.delete("review");
-    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
-  }, [searchParams, onOpen]);
-  return null;
 }
 
 /**
@@ -242,14 +186,12 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
       await completeInvestigation(investigation.localId);
       // "End & Review" means review, not "return home" — the operator must
       // land on the investigation they just finished, not on the launch
-      // screen with no path back to it short of History. Surveillance's own
-      // Live screen already renders correctly for a closed investigation
-      // (LiveHeader always mounts LiveMenu regardless of isClosed — only
-      // the pause/"+ New" control on the right swaps), so it's the
-      // "existing review/report experience" to route to rather than
-      // building a new one — `?review=1` (read by AutoOpenReviewFromQuery
-      // above) opens straight into Reports so the operator doesn't need an
-      // extra tap to actually see what they just recorded.
+      // screen with no path back to it short of History. PRIORITY 1.9-6/8/9:
+      // LiveScreen/FloorScreen now swap their ENTIRE body to the full
+      // Reports content the instant `investigation.status === "closed"`
+      // (see those components' own doc comments) — this route needs no
+      // special query param to land there anymore; it's simply what a
+      // closed investigation always shows.
       //
       // A full `window.location.assign` (not client-side router.push) is
       // required here for the same reason a full navigation to "/" was
@@ -262,7 +204,7 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
       diagnostics.info("investigation-lifecycle", "status written to closed, navigating to its review screen", {
         investigationId: investigation.localId,
       });
-      window.location.assign(`/investigations/${investigation.localId}/live?review=1`);
+      window.location.assign(`/investigations/${investigation.localId}/live`);
     } finally {
       setEnding(false);
       setEndConfirmOpen(false);
@@ -272,10 +214,6 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
 
   return (
     <>
-      <Suspense fallback={null}>
-        <AutoOpenReviewFromQuery onOpen={() => setOverlay("reports")} />
-      </Suspense>
-
       <button
         onClick={() => setMenuOpen(true)}
         aria-label="Menu"
@@ -375,18 +313,7 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
       </BottomSheet>
 
       <BottomSheet open={overlay === "reports"} onClose={() => setOverlay(null)} title={t.report}>
-        <div className="flex flex-col gap-4 pb-4">
-          <EventLogPanel />
-          <div className="border-t border-border pt-4">
-            <BottomStatusBar />
-          </div>
-          <div className="border-t border-border pt-4">
-            <AnalysisScreen />
-          </div>
-          <div className="border-t border-border pt-4">
-            <ReportScreen />
-          </div>
-        </div>
+        <InvestigationReportsView />
       </BottomSheet>
 
       <BottomSheet open={overlay === "export"} onClose={() => setOverlay(null)} title={t.export}>
@@ -499,7 +426,7 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
       <ConfirmDialog
         open={endConfirmOpen}
         title="End & Review this investigation?"
-        message={`${investigation.rounds.length} rounds recorded across ${investigation.occupiedSeats.length} occupied seat(s). Nothing is deleted — you'll land on the finished investigation's own review, and can still reopen it later from History.`}
+        message={`${investigation.rounds.length} rounds recorded across ${investigation.occupiedSeats.length} occupied spot(s). Nothing is deleted — you'll land on the finished investigation's own review, and can still review it later from History.`}
         confirmLabel="End & Review"
         destructive
         busy={ending}

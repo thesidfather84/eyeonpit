@@ -125,7 +125,7 @@ describe("live entry surface — mobile layout regression", () => {
     });
     await waitFor(() => expect(screen.getByTestId("seat2-bet").textContent).toBe("none"));
 
-    const dialog = screen.getByRole("dialog", { name: "Seat 1 — Player Details" });
+    const dialog = screen.getByRole("dialog", { name: "Spot 1 — Player Details" });
     const applyButton = await within(dialog).findByRole("button", {
       name: "Apply $25 to all 2 linked spots",
     });
@@ -150,7 +150,7 @@ describe("live entry surface — mobile layout regression", () => {
       </InvestigationProvider>
     );
 
-    const dialog = await screen.findByRole("dialog", { name: "Seat 1 — Player Details" });
+    const dialog = await screen.findByRole("dialog", { name: "Spot 1 — Player Details" });
     // Proves the sheet actually rendered QuickBetPanel's real controls,
     // not just an empty dialog shell, before asserting the linked-spots
     // button is absent.

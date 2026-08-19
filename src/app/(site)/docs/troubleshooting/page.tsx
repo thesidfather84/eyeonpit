@@ -65,6 +65,15 @@ export default function TroubleshootingPage() {
         investigation data; both are voice-pipeline debugging information only.
       </p>
 
+      <h3>Normalization and recovery lines</h3>
+      <p>
+        When EyeOnPit corrects a known, narrow recognition quirk — a misheard &ldquo;seat&rdquo;, a punctuated
+        shorthand like &ldquo;seat 1:9&rdquo;, or (rarely, as a last resort) a known dealer misreading — the Debug log
+        shows exactly which rule fired and why, right next to that alternative&apos;s line. Nothing is ever corrected
+        silently: if a card ends up somewhere unexpected, the Debug panel will always show whether it came from a
+        normalization/recovery rule or from ordinary recognition, and which one.
+      </p>
+
       <h2>Command rejected / control disabled</h2>
       <p>
         A command can be correctly recognized but still not act — for example, saying a card while the investigation

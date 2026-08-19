@@ -27,7 +27,7 @@
  * must not guess at; VoiceControl keeps reading alternatives[0] verbatim for
  * those two modes, entirely unchanged from before this module existed.
  */
-import { classifyVoiceTranscript, type TranscriptClassification } from "./classifyVoiceTranscript";
+import { classifyVoiceTranscript, tryDealerConfusionRecovery, type TranscriptClassification } from "./classifyVoiceTranscript";
 import type { RejectionCode } from "./voiceDiagnosticsTypes";
 
 export interface AlternativeTrace {
@@ -130,6 +130,47 @@ export function resolveAlternatives(
     if (uncertain) {
       return { accepted: false, code: "UNCERTAIN_LANGUAGE", reason: uncertain.classification.valid ? "" : uncertain.classification.reason, alternatives: traces };
     }
+
+    // CONTEXTUAL DEALER-CONFUSION RECOVERY — voice reliability spec §4 and
+    // the PC headset follow-up finding (Chrome repeatedly returning
+    // "Taylor"/"Spotify" with NO alternative containing the literal word
+    // "dealer" at all). Deliberately the LAST resort, tried only once
+    // ordinary classification has already failed for every alternative —
+    // see classifyVoiceTranscript.ts's own doc comment on why this is never
+    // part of ordinary classification. Every alternative is re-checked
+    // (not just alternatives[0]): if exactly one distinct recovered action
+    // results, it's accepted with a reason that names the specific rule
+    // that fired; if two recovered alternatives disagree on the rank, that
+    // is exactly the "not unambiguous" case the recovery grammar itself
+    // requires — refused, never guessed.
+    const recovered = traces
+      .map((t) => {
+        const classification = tryDealerConfusionRecovery(t.transcript);
+        return classification ? { ...t, classification, score: baseScore(classification, t.confidence, t.index) } : null;
+      })
+      .filter((t): t is AlternativeTrace => t != null);
+
+    if (recovered.length > 0) {
+      const finalTraces = traces.map((t) => recovered.find((r) => r.index === t.index) ?? t);
+      const distinctKeys = new Set(recovered.map((t) => (t.classification.valid ? t.classification.actionKey : "")));
+      if (distinctKeys.size === 1) {
+        const winner = recovered.reduce((best, t) => (t.score > best.score ? t : best));
+        const ruleId = winner.classification.valid ? winner.classification.recoveryRuleId : undefined;
+        return {
+          accepted: true,
+          winnerIndex: winner.index,
+          reason: `Rescued via contextual dealer-confusion recovery (${ruleId}) — ${recovered.length} alternative(s) recovered to the same action.`,
+          alternatives: finalTraces,
+        };
+      }
+      return {
+        accepted: false,
+        code: "NO_VALID_ALTERNATIVE",
+        reason: `Contextual dealer-confusion recovery found ${distinctKeys.size} conflicting candidate actions across alternatives — refusing to guess.`,
+        alternatives: finalTraces,
+      };
+    }
+
     return {
       accepted: false,
       code: "NO_VALID_ALTERNATIVE",

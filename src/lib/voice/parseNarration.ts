@@ -45,7 +45,7 @@ import {
   containsUncertaintyLanguage,
   matchSeatTargetPhrase,
   normalizeAsrSeatArtifacts,
-  seatFromCToken,
+  seatFromLetterToken,
   type VoiceRank,
   type VoiceTarget,
 } from "./parseVoiceCommand";
@@ -121,8 +121,17 @@ const TARGET_ACTIVATION_WORDS = new Set(["active"]);
  * target-context, rather than swallowing these words unconditionally, is
  * what keeps this from silently reopening the noise tolerance the "Team
  * 5" fix closed.
+ *
+ * "as" (voice reliability spec §2/§16 — real captured PC-field ASR
+ * misreading of "has", e.g. "spot 2 as a king") is included under the
+ * EXACT same target-gated safety rule as every other word here: it is only
+ * ever swallowed once a real target has already been established via
+ * dealer/seat/spot/player vocabulary, so ordinary conversation using "as"
+ * for its normal meaning ("I saw him as a kid") never establishes a target
+ * in the first place and "as" there still counts as an ordinary noise
+ * token exactly as before.
  */
-const HAND_CONNECTOR_WORDS = new Set(["has", "and", "with", "gets", "got", "shows"]);
+const HAND_CONNECTOR_WORDS = new Set(["has", "as", "and", "with", "gets", "got", "shows"]);
 
 const SINGLE_WORD_WORKFLOW: Record<string, "done" | "next" | "undo"> = {
   done: "done",
@@ -378,10 +387,10 @@ export function parseNarration(rawTranscript: string): NarrationResult {
       continue;
     }
 
-    const cSeat = seatFromCToken(token);
-    if (cSeat != null) {
+    const letterSeat = seatFromLetterToken(token);
+    if (letterSeat != null) {
       recognizedAnything = true;
-      setTarget({ kind: "seat", seat: cSeat });
+      setTarget({ kind: "seat", seat: letterSeat });
       continue;
     }
 

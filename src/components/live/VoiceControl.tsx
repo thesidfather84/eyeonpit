@@ -891,7 +891,17 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       const resolution = resolveAlternatives(result.alternatives);
       resolution.alternatives.forEach((trace) => {
         const c = trace.classification;
-        appendLog(`PARSE ALT #${trace.index + 1}`, c.valid ? `VALID (${c.source}) -> ${c.summary}` : `REJECT ${c.code}: ${c.reason}`);
+        if (c.appliedRules.length > 0) {
+          appendLog(
+            `NORMALIZATION ALT #${trace.index + 1}`,
+            c.appliedRules.map((r) => `[${r.id}] ${r.reason}`).join("; ")
+          );
+        }
+        const recoveryNote = c.valid && c.recoveryRuleId ? ` RESCUED(${c.recoveryRuleId})` : "";
+        appendLog(
+          `PARSE ALT #${trace.index + 1}`,
+          `${c.valid ? `VALID (${c.source}) -> ${c.summary}${recoveryNote}` : `REJECT ${c.code}: ${c.reason}`} score=${trace.score === -Infinity ? "n/a" : trace.score.toFixed(1)}`
+        );
       });
       appendLog("ACTIVE_TARGET_BEFORE", activeTargetLabel(activeTarget));
 
@@ -969,6 +979,39 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
           return next.length > MAX_LOG_ENTRIES ? next.slice(next.length - MAX_LOG_ENTRIES) : next;
         });
       };
+
+      // CONTEXTUAL DEALER-CONFUSION RECOVERY (voice reliability spec §4 + PC
+      // headset finding) — the winning transcript still literally says
+      // "Taylor"/"Spotify", which none of the checks below (lifecycle
+      // phrases, table change, read-only query, narration, legacy) can ever
+      // parse — see classifyVoiceTranscript.ts's own doc comment on why
+      // `recoveredCommand` exists specifically to skip re-parsing
+      // winningTranscript here. Dispatched directly, through the exact same
+      // `dispatch()` every ordinary legacy card command uses, so a
+      // recovered dealer card is entered exactly like any other.
+      const winningClassification = resolution.alternatives[resolution.winnerIndex].classification;
+      if (winningClassification.valid && winningClassification.source === "dealer-confusion-recovery" && winningClassification.recoveredCommand) {
+        const label = dispatch(winningClassification.recoveredCommand);
+        if (label == null) {
+          diagnostics.info("voice", "dealer-confusion recovery rejected — control currently disabled", {
+            recoveryRuleId: winningClassification.recoveryRuleId,
+          });
+          appendLog("REJECTED", `"${winningNormalized}" — recovered dealer command, but that control is currently disabled`);
+          setStatus({ kind: "disabled", transcript: winningNormalized });
+          finishUtterance("REJECTED", winningClassification.summary, "CONTROL_DISABLED");
+          scheduleReset();
+          return;
+        }
+        diagnostics.info("voice", "accepted — dealer-confusion recovery", {
+          recoveryRuleId: winningClassification.recoveryRuleId,
+          command: winningClassification.recoveredCommand,
+        });
+        appendLog("ACCEPTED", label);
+        setStatus({ kind: "accepted", label });
+        finishUtterance("ACCEPTED", label);
+        scheduleReset();
+        return;
+      }
 
       if (winningNormalized === PAUSE_PHRASE || winningNormalized === END_COUNT_PHRASE) {
         if (investigation.status !== "active") {

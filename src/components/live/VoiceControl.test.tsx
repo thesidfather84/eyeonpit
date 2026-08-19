@@ -3170,18 +3170,18 @@ describe("VoiceControl — Done and the immediately-following Status refer to th
   });
 });
 
-describe("VoiceControl — N-best resolution (field-captured: the correct result was FINAL alternative #2, not #1)", () => {
-  function makeMultiAltFinalEvent(alts: MockAlternative[]) {
-    const result: Record<number, MockAlternative> & { isFinal: boolean; length: number } = {
-      isFinal: true,
-      length: alts.length,
-    };
-    alts.forEach((alt, i) => {
-      result[i] = alt;
-    });
-    return { resultIndex: 0, results: { length: 1, 0: result } };
-  }
+function makeMultiAltFinalEvent(alts: MockAlternative[]) {
+  const result: Record<number, MockAlternative> & { isFinal: boolean; length: number } = {
+    isFinal: true,
+    length: alts.length,
+  };
+  alts.forEach((alt, i) => {
+    result[i] = alt;
+  });
+  return { resultIndex: 0, results: { length: 1, 0: result } };
+}
 
+describe("VoiceControl — N-best resolution (field-captured: the correct result was FINAL alternative #2, not #1)", () => {
   it('"killer king" (ALT1, unscoped noise+card — rejected) / "dealer King" (ALT2, explicit target) commits DEALER: K', async () => {
     const investigationId = await freshInvestigationId();
     render(
@@ -3256,5 +3256,116 @@ describe("VoiceControl — N-best resolution (field-captured: the correct result
     await waitFor(() => screen.getByText(/ALT #2 "dealer King"/));
     const summaryMatches = await screen.findAllByText(/DEALER:K.*ACCEPTED|ACCEPTED/);
     expect(summaryMatches.length).toBeGreaterThan(0);
+  });
+});
+
+describe("VoiceControl — PC field test #1 (2026-08-18): canonicalization, blackjack ASR normalization, compact narration, dealer-confusion recovery", () => {
+  it('V-000006/V-000018 fix: ALT1 "seat one has a five" (legacy) / ALT2 "the player in seat one has a five" (narration) now AGREE and commit S1: 5, instead of CONFLICTING_ALTERNATIVES', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => {
+      MockSpeechRecognition.latest().onresult?.(
+        makeMultiAltFinalEvent([
+          { transcript: "seat one has a five", confidence: 0.9 },
+          { transcript: "the player in seat one has a five", confidence: 0.85 },
+        ])
+      );
+    });
+    await waitFor(() => screen.getByText("✓ SEAT 1: 5"));
+  });
+
+  it('"set one has a 3" — recognized ASR artifact for "seat" — commits SEAT 1: 3', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("set one has a 3"));
+    await waitFor(() => screen.getByText("✓ SEAT 1: 3"));
+  });
+
+  it('"S1 9" compact target+card form commits SEAT 1: 9', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("S1 9"));
+    await waitFor(() => screen.getByText("✓ SEAT 1: 9"));
+  });
+
+  it('"seat 1:9" colon-punctuated compact form commits SEAT 1: 9', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("seat 1:9"));
+    await waitFor(() => screen.getByText("✓ SEAT 1: 9"));
+  });
+
+  it('"Taylor has a 10" — no genuine dealer alternative offered — is rescued via contextual recovery to DEALER: 10', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("Taylor has a 10"));
+    await waitFor(() => screen.getByText("✓ DEALER: 10"));
+  });
+
+  it('"Spotify has an ace" is rescued to DEALER: A', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("Spotify has an ace"));
+    await waitFor(() => screen.getByText("✓ DEALER: A"));
+  });
+
+  it('"Spotify is dead" MUST remain rejected — the recovery grammar never matches ordinary unrelated speech, even with a recognized confusion token', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("Spotify is dead"));
+    await waitFor(() => screen.getByText(/Not recognized/));
+  });
+
+  it('"deactivate Spotify" and "Taylor called me" both remain rejected', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    let before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("deactivate Spotify"));
+    await waitFor(() => screen.getByText(/Not recognized/));
+
+    await awaitRestartFrom(before);
+    before = MockSpeechRecognition.instances.length;
+    await act(async () => sayFinal("Taylor called me"));
+    await waitFor(() => screen.getByText(/Not recognized/));
   });
 });

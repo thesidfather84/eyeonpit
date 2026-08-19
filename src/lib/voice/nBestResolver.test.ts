@@ -88,3 +88,76 @@ describe("resolveAlternatives — field-captured N-best conflicts", () => {
     expect(result.accepted).toBe(false);
   });
 });
+
+describe("PC field test #1 — V-000006/V-000018 resolver bug: canonicalized agreement, not a false conflict", () => {
+  it('ALT1 "seat one has a five" (legacy) and ALT2 "the player in seat one has a five" (narration) now AGREE — accepted, not CONFLICTING_ALTERNATIVES', () => {
+    const result = resolveAlternatives([alt("seat one has a five", 0.9), alt("the player in seat one has a five", 0.85)]);
+    expect(result.accepted).toBe(true);
+    if (result.accepted) {
+      expect(result.reason).toMatch(/agreed/);
+      const winnerClassification = result.alternatives[result.winnerIndex].classification;
+      expect(winnerClassification.valid && winnerClassification.actionKey).toBe("C:SEAT1:5");
+    }
+  });
+
+  it("the exact field-reported shape also holds with the extended form ranked FIRST", () => {
+    const result = resolveAlternatives([alt("the player in seat one has a five", 0.85), alt("seat one has a five", 0.9)]);
+    expect(result.accepted).toBe(true);
+  });
+});
+
+describe("PC field test #1 — contextual dealer-confusion recovery via the resolver's last-resort fallback", () => {
+  it('a single "Taylor has a 10" alternative (no genuine dealer alternative offered) is rescued to DEALER:10', () => {
+    const result = resolveAlternatives([alt("Taylor has a 10", 0.8)]);
+    expect(result.accepted).toBe(true);
+    if (result.accepted) {
+      expect(result.reason).toMatch(/DEALER_ASR_TAYLOR/);
+      const c = result.alternatives[result.winnerIndex].classification;
+      expect(c.valid && c.actionKey).toBe("C:DEALER:10");
+    }
+  });
+
+  it('"Spotify has an ace" alone is rescued to DEALER:A', () => {
+    const result = resolveAlternatives([alt("Spotify has an ace", 0.75)]);
+    expect(result.accepted).toBe(true);
+    if (result.accepted) {
+      const c = result.alternatives[result.winnerIndex].classification;
+      expect(c.valid && c.actionKey).toBe("C:DEALER:A");
+    }
+  });
+
+  it("recovery is never even attempted when a normal valid alternative already exists — 'dealer has a king' alongside 'Taylor has a king' wins on the genuine alternative, not recovery", () => {
+    const result = resolveAlternatives([alt("Taylor has a king", 0.92), alt("dealer has a king", 0.85)]);
+    expect(result.accepted).toBe(true);
+    if (result.accepted) {
+      expect(result.reason).not.toMatch(/DEALER_ASR/);
+      const winner = result.alternatives[result.winnerIndex];
+      expect(winner.transcript).toBe("dealer has a king");
+    }
+  });
+
+  it("multiple alternatives recovering to DIFFERENT dealer ranks refuse to guess", () => {
+    const result = resolveAlternatives([alt("Taylor has a king", 0.7), alt("Spotify has an ace", 0.68)]);
+    expect(result.accepted).toBe(false);
+  });
+
+  it("'Spotify is dead' remains rejected even though 'Spotify' is a recognized confusion token — the recovery grammar never matches it", () => {
+    const result = resolveAlternatives([alt("Spotify is dead", 0.7)]);
+    expect(result.accepted).toBe(false);
+    if (!result.accepted) expect(result.code).toBe("NO_VALID_ALTERNATIVE");
+  });
+
+  it("random/non-blackjack phrases remain rejected with no recovery applicable", () => {
+    const result = resolveAlternatives([alt("can you turn up the music", 0.6), alt("what time is it", 0.5)]);
+    expect(result.accepted).toBe(false);
+  });
+
+  it('ALT1 "dealer has an eight" / ALT2 "dealer has an eighth" — both genuinely valid and in agreement (same rank), accepted as DEALER:8', () => {
+    const result = resolveAlternatives([alt("dealer has an eight", 0.88), alt("dealer has an eighth", 0.7)]);
+    expect(result.accepted).toBe(true);
+    if (result.accepted) {
+      const c = result.alternatives[result.winnerIndex].classification;
+      expect(c.valid && c.actionKey).toBe("C:DEALER:8");
+    }
+  });
+});

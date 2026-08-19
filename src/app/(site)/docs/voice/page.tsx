@@ -54,6 +54,17 @@ export default function VoiceGuidePage() {
         <VoicePhrase>Seat one active.</VoicePhrase>
       </VoicePhraseGroup>
 
+      <h2>Compact and shorthand forms</h2>
+      <p>
+        If you (or your device) prefer a terser form, these all work identically to their spelled-out equivalents —
+        useful for a quick correction or when narrating fast:
+      </p>
+      <VoicePhraseGroup>
+        <VoicePhrase result='Same as "Seat 1"'>S1</VoicePhrase>
+        <VoicePhrase result='Same as "Seat 1 has a 9"'>S1 9</VoicePhrase>
+        <VoicePhrase result='Same as "Seat 1 has a 9"'>Seat 1:9</VoicePhrase>
+      </VoicePhraseGroup>
+
       <h2>Asking a question — read-only, always safe</h2>
       <p>A question never adds a card, never completes a hand, and never advances anything. It&apos;s always safe to ask:</p>
       <VoicePhraseGroup>
@@ -114,6 +125,13 @@ export default function VoiceGuidePage() {
         entered — you don&apos;t need to repeat yourself. If two different alternatives would each produce a
         different valid command, EyeOnPit still refuses to guess between them, exactly like any other ambiguous
         input.
+      </p>
+      <p>
+        As a last resort, when EVERY reading offered fails to make sense on its own, EyeOnPit also recognizes a
+        short, specific list of known dealer-related misreadings (for example, some devices occasionally return
+        &ldquo;Taylor&rdquo; for &ldquo;dealer&rdquo;) — but only in an unambiguous &ldquo;&lt;word&gt; has a
+        &lt;card&gt;&rdquo; shape, never as a general guess. When this happens, the Debug panel always shows exactly
+        which recovery rule fired, so it&apos;s never a silent correction.
       </p>
 
       <h2>If voice isn&apos;t working</h2>

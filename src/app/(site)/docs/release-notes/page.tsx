@@ -13,6 +13,40 @@ export default function ReleaseNotesPage() {
       <DocsPageHeader title="Release Notes" subtitle="What changed, version by version." />
 
       <div className="mt-2">
+        <ReleaseEntry version="1.4.3" date="2026-08-18" title="PC Field Test Fixes — Compact Forms &amp; Dealer Recovery">
+          <p>
+            A follow-up to 1.4.2, fixing issues surfaced by the very first round of PC field testing.
+          </p>
+          <ul>
+            <li>
+              <strong>Fixed a resolver bug.</strong> A correctly-heard &ldquo;seat one has a five&rdquo; was sometimes
+              rejected as ambiguous, because two different valid readings of the same card were being compared as if
+              they described different actions. They&apos;re now recognized as identical whenever they really are.
+            </li>
+            <li>
+              <strong>More recognized phrasing.</strong> &ldquo;set one has a 3&rdquo;, &ldquo;seet&rdquo;/&ldquo;ceit&rdquo;/&ldquo;see&rdquo;/&ldquo;cheap&rdquo;
+              before a seat number, and &ldquo;eighth&rdquo; for eight are now all recognized, alongside the existing
+              &ldquo;C1&rdquo;-style shorthand extended to &ldquo;S1&rdquo; and &ldquo;T1&rdquo;.
+            </li>
+            <li>
+              <strong>Compact forms.</strong> &ldquo;S1 9&rdquo; and &ldquo;Seat 1:9&rdquo; are now recognized the
+              same as &ldquo;Seat 1 has a 9&rdquo;.
+            </li>
+            <li>
+              <strong>Dealer recovery, as a last resort.</strong> When every reading offered fails to make sense on
+              its own, EyeOnPit now recognizes a short, specific list of known dealer misreadings (e.g.
+              &ldquo;Taylor&rdquo;) — but only in an unambiguous shape, and always logged as a rescue in the Debug
+              panel, never a silent correction. Unrelated speech (&ldquo;Spotify is dead&rdquo;) is unaffected and
+              stays rejected.
+            </li>
+            <li>The Debug panel now shows exactly which normalization or recovery rule fired, and why, for each alternative considered.</li>
+          </ul>
+          <p className="!mt-4 text-xs">
+            ~55 new automated tests added. Full suite: 880 passed, 1 pre-existing skip. Counting engine and
+            recognition lifecycle untouched.
+          </p>
+        </ReleaseEntry>
+
         <ReleaseEntry version="1.4.2" date="2026-08-18" title="Voice Diagnostics &amp; Multi-Alternative Recognition">
           <p>
             A reliability-focused release: EyeOnPit now checks every alternative your device&apos;s speech recognizer

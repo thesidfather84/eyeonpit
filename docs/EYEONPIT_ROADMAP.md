@@ -12,6 +12,71 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### PC Field Test #1 Fixes — Canonicalization, ASR Normalization, Dealer Recovery (2026-08-18)
+
+**Problem:** the very first PC field test of the diagnostic system above
+surfaced a real resolver bug and several unhandled ASR patterns:
+
+- A confirmed N-best bug (V-000006/V-000018): "seat one has a five" was
+  correctly heard, but the resolver compared narration's and legacy's
+  differently-shaped representations of the SAME resulting action as
+  string keys, saw them as distinct, and rejected as
+  `CONFLICTING_ALTERNATIVES`.
+- Chrome's PC/headset speech recognizer showed additional recurring
+  misreadings not yet handled: "seat" as "set"/"seet"/"ceit"/"see"/"cheap";
+  "seat five" as "T5"/"C5"/"cheap 5"; "has" as "as"; "eight" as "eighth";
+  and compact punctuated forms ("seat 1:9", "seat 1/9").
+- "dealer" repeatedly misheard as "Taylor" or "Spotify" with **no**
+  alternative containing the literal word "dealer" at all — the existing
+  N-best resolver had nothing to fall back to in that situation.
+
+**What shipped:**
+
+- **Action canonicalization** (`classifyVoiceTranscript.ts`) — narration ops
+  and legacy commands describing the identical resulting action now always
+  produce the same `actionKey`/`summary`, regardless of which parser
+  produced them or whether one representation carries redundant
+  target-selection metadata. This is the actual fix for the V-000006 bug.
+- **Blackjack-specific ASR normalization** (`normalizeAsrSeatArtifacts` in
+  `parseVoiceCommand.ts`) — "set"/"seet"/"ceit"/"see"/"cheap" recognized as
+  "seat" ASR artifacts under the same seat-number-lookahead safety guard as
+  the existing "play"/"start" rules; "eighth" added as a rank word;
+  deliberately did NOT add "ate" (common past-tense-verb collision risk —
+  see the field-test report for the rationale). "as" added as a narration
+  hand-connector (the "has"->"as" ASR pattern), gated on an
+  already-established target exactly like every other connector word.
+- **Compact narration forms** — "S1"/"T5" letter-prefix seat tokens
+  (symmetric with the existing "C1" artifact — `seatFromLetterToken`), and
+  `:`/`/` folded into ordinary punctuation stripping so "seat 1:9"/"seat
+  1/9" tokenize identically to "seat 1 9".
+- **Contextual dealer-confusion recovery** (`tryDealerConfusionRecovery` in
+  `classifyVoiceTranscript.ts`, invoked only as nBestResolver's last resort
+  when EVERY alternative has already failed ordinary classification) — a
+  named, closed list of confusion tokens (`DEALER_ASR_TAYLOR`,
+  `DEALER_ASR_SPOTIFY`), rescued to a dealer card ONLY when the transcript
+  matches a narrow `<token> <connector> (a|an)? <single rank>` shape with no
+  other explicit target present. Every recovery is logged with its specific
+  rule ID — never a silent guess.
+- **Diagnostic logging enrichment** — VoiceControl's `PARSE ALT` lines now
+  show which normalization rule fired and why, the resolver score, and
+  (when applicable) which recovery rule rescued the result.
+
+**Explicitly refused:** a general fuzzy/phonetic target matcher; blindly
+mapping every "Taylor"/"Spotify" occurrence to "dealer"; adding "ate" as a
+rank word. See the field-test report for the full list of what was
+deliberately left ambiguous/rejected and why.
+
+**Tests:** ~55 new regression tests covering every confirmed field failure
+from this round (including the exact V-000006/V-000018 shape, all four
+required-recoverable Taylor/Spotify examples, and all four
+required-to-remain-rejected examples). Full suite: 880 passed, 1
+pre-existing skip, zero regressions. Counting engine and recognition
+lifecycle untouched.
+
+**Status:** approved and pushed to master. Next step is PC Field Test #2 —
+a fresh diagnostic export, compared against this round's fixes, before any
+further voice changes.
+
 ### Voice Reliability + Advanced Diagnostic System (2026-08-18)
 
 **Problem:** field reports showed the correct recognition result was
@@ -68,8 +133,12 @@ use it.
 
 ## Next Up
 
-- **Real iPhone field testing** of the voice diagnostics/N-best work above,
-  using Export JSON to capture and review field sessions.
+- **PC Field Test #2** — collect a fresh diagnostic export and compare it
+  against the Field Test #1 fixes above before making any further voice
+  changes.
+- **Real iPhone field testing** of the voice diagnostics/N-best/PC-field-fix
+  work, using Export JSON to capture and review field sessions — still
+  pending, now against this additionally-hardened baseline.
 - **1.5 reporting work** — paused for the duration of the voice reliability
   effort above; resumes once field testing confirms the diagnostic system
   and N-best resolver hold up under real conditions.

@@ -70,17 +70,21 @@ function buildSeatPhrases(): Record<string, VoiceSeat> {
       phrases[`${prefix} ${word}`] = seat;
     }
   }
-  // "C1", "C2", ... — a recurring Web Speech recognition artifact for
-  // "seat one"/"seat two"/etc. (captured directly from live diagnostics:
-  // "seat one" -> "C1"). "seat"/"C" are phonetically close enough that the
-  // engine collapses the word and returns the number as a bare digit
-  // instead. Generalized across the full 1-7 seat range rather than
-  // hardcoding only "C1" — it's the same mechanical substitution for every
+  // "C1", "C2", ... / "S1", "S2", ... / "T1", "T2", ... — recurring Web
+  // Speech recognition artifacts for "seat one"/"seat two"/etc. (captured
+  // directly from live diagnostics: "seat one" -> "C1"; PC-field diagnostics
+  // additionally captured "S1" and "T5" — voice reliability spec §16).
+  // "seat"/C/S/T are phonetically close enough that the engine collapses
+  // the word and returns the number as a bare digit instead. Generalized
+  // across the full 1-7 seat range for each letter rather than hardcoding
+  // individual tokens — it's the same mechanical substitution for every
   // seat number, not a one-off guess — but bounded to exactly the valid
-  // seat range (see seatFromCToken for the same bound applied inside the
-  // noisy-token fallback).
+  // seat range (see seatFromLetterToken for the same bound applied inside
+  // the noisy-token fallback).
   for (let seat = 1; seat <= 7; seat++) {
     phrases[`c${seat}`] = seat as VoiceSeat;
+    phrases[`s${seat}`] = seat as VoiceSeat;
+    phrases[`t${seat}`] = seat as VoiceSeat;
   }
   return phrases;
 }
@@ -180,6 +184,18 @@ export function containsUncertaintyLanguage(tokens: string[]): boolean {
 }
 
 /**
+ * A single applied ASR-artifact substitution, for diagnostics only (see
+ * VoiceControl's PARSE ALT log lines — "NORMALIZATION RULE ID" / "WHY RULE
+ * APPLIED" in the voice reliability spec). `id` is a small, stable,
+ * greppable category; `reason` carries the specific word/phrase that
+ * triggered it. Never consulted by parsing/dispatch logic itself.
+ */
+export interface AppliedNormalizationRule {
+  id: string;
+  reason: string;
+}
+
+/**
  * Narrow, deterministic normalization for specific, real captured ASR
  * artifacts — never broadened into general fuzzy matching, per explicit
  * product direction ("Seat/player/spot ambiguity should fail closed when
@@ -193,7 +209,7 @@ export function containsUncertaintyLanguage(tokens: string[]): boolean {
  *   2. "play R2" — captured in place of "player two": "play" immediately
  *      followed by an "r<n>" token (an artifact of the same shape as the
  *      already-recognized "c<n>" -> seat n substitution — see
- *      seatFromCToken). Both tokens are replaced together with
+ *      seatFromLetterToken). Both tokens are replaced together with
  *      "player <n>", never just the first, so a bare "r2" NOT preceded by
  *      "play" is left alone (too ambiguous on its own to ever guess).
  *   3. "start 3 as a 7" — "start" recognized in place of "spot", under the
@@ -205,16 +221,32 @@ export function containsUncertaintyLanguage(tokens: string[]): boolean {
  *      two phrases are matched on the transcript BEFORE
  *      normalizeAsrSeatArtifacts is even invoked (see VoiceControl's
  *      handleFinalResult), so there is no ordering risk either way.
+ *   4. "set"/"seet"/"ceit"/"see"/"cheap" immediately before a valid seat
+ *      number — additional real captured PC-field ASR misreadings of
+ *      "seat" (voice reliability spec §2/§16), under the EXACT same
+ *      seat-number-lookahead guard as "play"/"start" above. This is what
+ *      keeps ordinary sentences ("let's set the table", "did you see
+ *      that", "a cheap seat") untouched: none of them are immediately
+ *      followed by a bare seat number 1-7.
  *
  * Applied once, at the string level, immediately after normalizeTranscript
  * and before any other parsing — both parseVoiceCommand and parseNarration
  * call this so the substitution is visible to every downstream check
  * (exact-phrase fast path, noisy fallback, and narration's own grammar)
- * identically.
+ * identically. `onRuleApplied`, when given, is invoked once per
+ * substitution actually made — purely a diagnostic hook (see
+ * classifyVoiceTranscript.ts's `diagnoseNormalization`), never consulted by
+ * this function's own logic and never required by existing callers.
  */
 const ASR_R_SEAT_TOKEN_RE = /^r([0-9]+)$/;
 
-export function normalizeAsrSeatArtifacts(normalized: string): string {
+/** See rule 4 above — kept as its own small set rather than folded into SEAT_PREFIX_WORDS so these stay confined to this narrow, lookahead-guarded substitution and never become recognized target-trigger words anywhere else in the grammar. */
+const SEAT_PREFIX_ASR_VARIANTS = new Set(["set", "seet", "ceit", "see", "cheap"]);
+
+export function normalizeAsrSeatArtifacts(
+  normalized: string,
+  onRuleApplied?: (rule: AppliedNormalizationRule) => void
+): string {
   const tokens = normalized.split(" ").filter(Boolean);
   const result: string[] = [];
 
@@ -224,6 +256,7 @@ export function normalizeAsrSeatArtifacts(normalized: string): string {
 
     if (token === "play" && next != null) {
       if (SEAT_NUMBER_BY_WORD[next] != null) {
+        onRuleApplied?.({ id: "ASR_PLAY_TO_PLAYER", reason: '"play" immediately before a seat number — recognized artifact for "player"' });
         result.push("player");
         continue;
       }
@@ -231,6 +264,7 @@ export function normalizeAsrSeatArtifacts(normalized: string): string {
       if (rMatch) {
         const n = Number(rMatch[1]);
         if (n >= 1 && n <= 7) {
+          onRuleApplied?.({ id: "ASR_PLAY_R_TOKEN_TO_PLAYER", reason: `"play r${n}" — recognized artifact for "player ${n}"` });
           result.push("player", String(n));
           i += 1;
           continue;
@@ -239,7 +273,14 @@ export function normalizeAsrSeatArtifacts(normalized: string): string {
     }
 
     if (token === "start" && next != null && SEAT_NUMBER_BY_WORD[next] != null) {
+      onRuleApplied?.({ id: "ASR_START_TO_SPOT", reason: '"start" immediately before a seat number — recognized artifact for "spot"' });
       result.push("spot");
+      continue;
+    }
+
+    if (SEAT_PREFIX_ASR_VARIANTS.has(token) && next != null && SEAT_NUMBER_BY_WORD[next] != null) {
+      onRuleApplied?.({ id: "ASR_SEAT_PREFIX_VARIANT", reason: `"${token}" immediately before a seat number — recognized artifact for "seat"` });
+      result.push("seat");
       continue;
     }
 
@@ -250,17 +291,27 @@ export function normalizeAsrSeatArtifacts(normalized: string): string {
 }
 
 /**
- * Recognizes the same "C<n>" artifact as a TARGET token inside the noisy
- * fallback (see extractFromNoisyTokens) — deliberately its own function,
- * checked only where a target is being looked for, never anywhere a bare
- * card word is checked. This is what keeps "C1" from ever being read as
- * arbitrary text that could become a card: it either resolves to a seat
- * target (1-7) here, or it falls through to the generic "discarded as
- * noise" case exactly like any other unrecognized token — it is never
- * added to the RANK_WORDS lexicon, so it can never itself become a card.
+ * Recognizes a "C<n>"/"S<n>"/"T<n>" artifact as a TARGET token inside the
+ * noisy fallback (see extractFromNoisyTokens) — deliberately its own
+ * function, checked only where a target is being looked for, never anywhere
+ * a bare card word is checked. This is what keeps "C1"/"S1"/"T1" from ever
+ * being read as arbitrary text that could become a card: it either resolves
+ * to a seat target (1-7) here, or it falls through to the generic
+ * "discarded as noise" case exactly like any other unrecognized token — it
+ * is never added to the RANK_WORDS lexicon, so it can never itself become a
+ * card.
+ *
+ * Three letters, not just "C": "seat"/"C" collapsing to a bare digit was the
+ * original captured artifact (see buildSeatPhrases' own comment), and
+ * "S" is the even more direct phonetic match ("seat" begins with the exact
+ * same sound) — both "S1" and "T5" (a further captured PC-field variant,
+ * voice reliability spec §16) are recognized identically. All three are
+ * bounded to exactly the valid seat range, never guessed beyond it.
  */
-export function seatFromCToken(token: string): VoiceSeat | null {
-  const match = /^c([0-9]+)$/.exec(token);
+const SEAT_LETTER_TOKEN_RE = /^[cst]([0-9]+)$/;
+
+export function seatFromLetterToken(token: string): VoiceSeat | null {
+  const match = SEAT_LETTER_TOKEN_RE.exec(token);
   if (!match) return null;
   const n = Number(match[1]);
   return n >= 1 && n <= 7 ? (n as VoiceSeat) : null;
@@ -300,6 +351,14 @@ export const RANK_WORDS: Record<string, VoiceRank> = {
   seven: "7",
   "7": "7",
   eight: "8",
+  // "eighth" — real captured PC-field ASR misreading of "eight" (voice
+  // reliability spec §2/§16). Deliberately NOT including "ate": that's a
+  // common past-tense verb ("I ate lunch") with real collision risk under
+  // the noisy-fallback's 1-tolerated-noise-word budget ("I ate" -> a bare
+  // "8" against whatever's active) that "eighth" — a distinctly card-shaped
+  // word with no ordinary-sentence collision — does not share. See the
+  // final report / roadmap for this deliberate exclusion.
+  eighth: "8",
   "8": "8",
   nine: "9",
   "9": "9",
@@ -438,9 +497,9 @@ function cardCommand(word: string, target?: VoiceTarget): VoiceCommandKind {
  * The rule, in order:
  * 1. Tokenize on whitespace. Walk left to right.
  * 2. At most one TARGET is recognized: "dealer"; "seat"/"player"/"spot" + a
- *    number word/digit 1-7 (two tokens, consumed together); or "C<n>" as a
- *    single token (a recurring Web Speech artifact for "seat n" — see
- *    seatFromCToken). Whichever is found first wins; anything after it
+ *    number word/digit 1-7 (two tokens, consumed together); or "C<n>"/
+ *    "S<n>"/"T<n>" as a single token (a recurring Web Speech artifact for
+ *    "seat n" — see seatFromLetterToken). Whichever is found first wins; anything after it
  *    that also looks like a target is treated as an ordinary stray token
  *    (point 4), not an error.
  * 3. If a seat-prefix word ("seat"/"player"/"spot") is immediately followed
@@ -508,9 +567,9 @@ function extractFromNoisyTokens(normalized: string): VoiceCommandKind | null {
     }
 
     if (!target) {
-      const cSeat = seatFromCToken(token);
-      if (cSeat != null) {
-        target = { kind: "seat", seat: cSeat };
+      const letterSeat = seatFromLetterToken(token);
+      if (letterSeat != null) {
+        target = { kind: "seat", seat: letterSeat };
         continue;
       }
     }

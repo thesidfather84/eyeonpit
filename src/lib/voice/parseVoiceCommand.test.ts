@@ -499,3 +499,51 @@ describe("voice reliability spec §16 — additional field-realistic regression 
     expect(parseVoiceCommand("seat zero").command).toBeNull();
   });
 });
+
+describe("PC field test #1 — blackjack-specific ASR normalization (voice reliability spec §2/§16)", () => {
+  it.each(["set", "seet", "ceit", "see", "cheap"])('"%s one has a 3" — recognized artifact for "seat"', (word) => {
+    expect(parseVoiceCommand(`${word} one has a 3`).command).toEqual({
+      kind: "card",
+      rank: "3",
+      target: { kind: "seat", seat: 1 },
+    });
+  });
+
+  it.each(["set", "seet", "ceit", "see", "cheap"])('"%s" NOT immediately before a seat number is left untouched', (word) => {
+    expect(parseVoiceCommand(word).command).toBeNull();
+  });
+
+  it('"dealer has an eighth" -> DEALER: 8 (real captured PC ASR misreading of "eight")', () => {
+    expect(parseVoiceCommand("dealer has an eighth").command).toEqual({
+      kind: "card",
+      rank: "8",
+      target: { kind: "dealer" },
+    });
+    expect(parseVoiceCommand("eighth").command).toEqual({ kind: "card", rank: "8" });
+  });
+
+  it('"S1"/"T5" compact letter-prefix seat tokens, symmetric with the existing "C1" artifact', () => {
+    expect(parseVoiceCommand("s1").command).toEqual({ kind: "select-seat", seat: 1 });
+    expect(parseVoiceCommand("t5").command).toEqual({ kind: "select-seat", seat: 5 });
+    expect(parseVoiceCommand("c3").command).toEqual({ kind: "select-seat", seat: 3 });
+  });
+
+  it('"S1 9" / "T5 9" compact target+card forms', () => {
+    expect(parseVoiceCommand("s1 9").command).toEqual({ kind: "card", rank: "9", target: { kind: "seat", seat: 1 } });
+    expect(parseVoiceCommand("t5 9").command).toEqual({ kind: "card", rank: "9", target: { kind: "seat", seat: 5 } });
+  });
+
+  it('"seat 1:9" / "seat 1/9" — colon/slash punctuation between seat and card', () => {
+    expect(parseVoiceCommand("seat 1:9").command).toEqual({ kind: "card", rank: "9", target: { kind: "seat", seat: 1 } });
+    expect(parseVoiceCommand("seat 1/9").command).toEqual({ kind: "card", rank: "9", target: { kind: "seat", seat: 1 } });
+  });
+
+  it('"seat one as a king" — "as" tolerated as the existing 1-noise-token budget already allowed, unaffected by the new "as" HAND_CONNECTOR addition (that addition is narration-layer only)', () => {
+    expect(parseVoiceCommand("seat one as a king").command).toEqual({
+      kind: "card",
+      rank: "10",
+      displayRank: "K",
+      target: { kind: "seat", seat: 1 },
+    });
+  });
+});

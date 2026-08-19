@@ -434,3 +434,68 @@ describe('EyeOnPit 1.3 — "next hand" is a natural alias for "done" (a DIFFEREN
     expect(parseVoiceCommand("new hand").command).toEqual({ kind: "next" });
   });
 });
+
+describe('voice reliability spec §7/§16 — "start" ASR artifact for "spot", under the exact same seat-number-lookahead guard as "play"->"player"', () => {
+  it('"start 3 as a 7" -> SEAT 3: 7', () => {
+    expect(parseVoiceCommand("start 3 as a 7").command).toEqual({ kind: "card", rank: "7", target: { kind: "seat", seat: 3 } });
+  });
+
+  it('"start" NOT immediately followed by a seat number is left completely untouched — "start count"/"start note" (real, unrelated phrases handled separately in VoiceControl/lifecyclePhrases.ts) are never touched by this substitution', () => {
+    expect(parseVoiceCommand("start").command).toBeNull();
+    expect(parseVoiceCommand("start count").command).toBeNull();
+    expect(parseVoiceCommand("start note").command).toBeNull();
+  });
+});
+
+describe("voice reliability spec §16 — additional field-realistic regression variants", () => {
+  it.each([
+    ["seat one", { kind: "select-seat", seat: 1 }],
+    ["spot one", { kind: "select-seat", seat: 1 }],
+    ["player one", { kind: "select-seat", seat: 1 }],
+    ["c1", { kind: "select-seat", seat: 1 }],
+  ])('every seat-prefix synonym for seat 1 parses identically: "%s"', (transcript, expected) => {
+    expect(parseVoiceCommand(transcript as string).command).toEqual(expected);
+  });
+
+  it.each([
+    ["jack", "10"],
+    ["queen", "10"],
+    ["king", "10"],
+    ["ten", "10"],
+    ["10", "10"],
+    ["ace", "A"],
+    ["one", "A"],
+  ])('card word/digit variant "%s" -> rank %s', (word, rank) => {
+    const command = parseVoiceCommand(word as string).command;
+    expect(command).not.toBeNull();
+    expect(command).toMatchObject({ kind: "card", rank });
+  });
+
+  it.each(["qing", "kyng", "kinh"])(
+    'garbled face-card near-miss "%s" alone (no target) is NOT in the lexicon and is correctly rejected — near-miss spelling only resolves inside an established card-rank slot elsewhere in the grammar, never invented wholesale',
+    (word) => {
+      expect(parseVoiceCommand(word).command).toBeNull();
+    }
+  );
+
+  it('a genuine sentence merely containing a card word is never entered as a card: "I saw an ace earlier"', () => {
+    expect(parseVoiceCommand("I saw an ace earlier").command).toBeNull();
+  });
+
+  it('a genuine sentence merely containing a card word is never entered as a card: "player bet ace"', () => {
+    expect(parseVoiceCommand("player bet ace").command).toBeNull();
+  });
+
+  it('unrelated background speech never becomes a command: "Spotify is dead"', () => {
+    expect(parseVoiceCommand("Spotify is dead").command).toBeNull();
+  });
+
+  it('unrelated background speech never becomes a command: "can you turn up the music"', () => {
+    expect(parseVoiceCommand("can you turn up the music").command).toBeNull();
+  });
+
+  it("out-of-range seat numbers are rejected, never reinterpreted as a bare card", () => {
+    expect(parseVoiceCommand("seat eight").command).toBeNull();
+    expect(parseVoiceCommand("seat zero").command).toBeNull();
+  });
+});

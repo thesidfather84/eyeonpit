@@ -105,11 +105,23 @@ export default function VoiceGuidePage() {
         a later re-bust of the same hand announces again.
       </p>
 
+      <h2>When your device mishears the first guess</h2>
+      <p>
+        Speech recognition on your phone usually offers a few possible readings of what you said, ranked by
+        confidence — the top-ranked one is not always the right one. EyeOnPit checks every reading it&apos;s given,
+        not just the first, and accepts whichever one is a clean, unambiguous command. If your device&apos;s top
+        guess was noise but a lower-ranked alternative was clearly &ldquo;dealer king,&rdquo; that&apos;s what gets
+        entered — you don&apos;t need to repeat yourself. If two different alternatives would each produce a
+        different valid command, EyeOnPit still refuses to guess between them, exactly like any other ambiguous
+        input.
+      </p>
+
       <h2>If voice isn&apos;t working</h2>
       <p>
         Nothing about EyeOnPit depends on voice working. The seat/dealer targets, the full card keypad, and
         Done/Next/Undo are always available to tap — a failed or noisy microphone never blocks recording the game.
-        See <Link href="/docs/troubleshooting">Troubleshooting</Link> for microphone and headset issues.
+        See <Link href="/docs/troubleshooting">Troubleshooting</Link> for microphone and headset issues, including
+        the Debug panel and diagnostic export for chasing a recognition problem in detail.
       </p>
     </>
   );

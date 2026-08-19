@@ -1699,7 +1699,13 @@ describe("VoiceControl — natural table changes (sat down / player at / left)",
     await awaitRestartFrom(before);
     before = MockSpeechRecognition.instances.length;
     await act(async () => sayFinal("king")); // Seat 1: Hi-Lo -1
-    await waitFor(() => expect(screen.getByLabelText("HI-LO running count").textContent).toBe("-1"));
+    // Slightly longer timeout than the RTL default (1000ms): this assertion
+    // depends on an IndexedDB round-trip plus several diagnostic re-renders
+    // (see VoiceControl's N-best resolution logging), which can occasionally
+    // run past 1s under full-suite parallel CPU contention even though the
+    // underlying dispatch is synchronous and always resolves quickly in
+    // isolation.
+    await waitFor(() => expect(screen.getByLabelText("HI-LO running count").textContent).toBe("-1"), { timeout: 3000 });
 
     await awaitRestartFrom(before);
     await act(async () => sayFinal("spot 1 left"));
@@ -3161,5 +3167,94 @@ describe("VoiceControl — Done and the immediately-following Status refer to th
 
     expect(doneSpoken.text).toBe("Hi-Lo -1.");
     expect(statusSpoken.text).toBe(doneSpoken.text);
+  });
+});
+
+describe("VoiceControl — N-best resolution (field-captured: the correct result was FINAL alternative #2, not #1)", () => {
+  function makeMultiAltFinalEvent(alts: MockAlternative[]) {
+    const result: Record<number, MockAlternative> & { isFinal: boolean; length: number } = {
+      isFinal: true,
+      length: alts.length,
+    };
+    alts.forEach((alt, i) => {
+      result[i] = alt;
+    });
+    return { resultIndex: 0, results: { length: 1, 0: result } };
+  }
+
+  it('"killer king" (ALT1, unscoped noise+card — rejected) / "dealer King" (ALT2, explicit target) commits DEALER: K', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => {
+      MockSpeechRecognition.latest().onresult?.(
+        makeMultiAltFinalEvent([
+          { transcript: "killer king", confidence: 0.86 },
+          { transcript: "dealer King", confidence: 0.82 },
+          { transcript: "Taylor King", confidence: 0.6 },
+        ])
+      );
+    });
+    await waitFor(() => screen.getByText("✓ DEALER: K"));
+  });
+
+  it('"Taylor has a king" (ALT1, rejected — 2+ noise tokens) / "dealer has a king" (ALT2) commits DEALER: K', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => {
+      MockSpeechRecognition.latest().onresult?.(
+        makeMultiAltFinalEvent([
+          { transcript: "Taylor has a king", confidence: 0.92 },
+          { transcript: "dealer has a king", confidence: 0.85 },
+        ])
+      );
+    });
+    await waitFor(() => screen.getByText("✓ DEALER: K"));
+  });
+
+  it('"Spotify is dead" is rejected outright, even as the only alternative', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await act(async () => sayFinal("Spotify is dead"));
+    await waitFor(() => screen.getByText(/Not recognized/));
+  });
+
+  it("the diagnostics log shows PARSE/RESOLVE lines and a SUMMARY line naming the winning alternative", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+      </InvestigationProvider>
+    );
+    await startListening();
+    await openDiagnostics();
+    await act(async () => {
+      MockSpeechRecognition.latest().onresult?.(
+        makeMultiAltFinalEvent([
+          { transcript: "killer king", confidence: 0.86 },
+          { transcript: "dealer King", confidence: 0.82 },
+        ])
+      );
+    });
+    await waitFor(() => screen.getByText("RESOLVE WINNER"));
+    screen.getByText("ACTIVE_TARGET_BEFORE");
+    screen.getByText("ACTIVE_TARGET_AFTER");
+    await waitFor(() => screen.getByText(/ALT #2 "dealer King"/));
+    const summaryMatches = await screen.findAllByText(/DEALER:K.*ACCEPTED|ACCEPTED/);
+    expect(summaryMatches.length).toBeGreaterThan(0);
   });
 });

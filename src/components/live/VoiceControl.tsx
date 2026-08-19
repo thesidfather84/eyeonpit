@@ -35,6 +35,24 @@ import {
 } from "@/lib/voice/spokenSummary";
 import { getLastSpokenText, onSpeechDiagnostic, onSpeechEnd, onSpeechStart, speak } from "@/lib/voice/speechOutput";
 import { parseReadOnlyQuery } from "@/lib/voice/parseReadOnlyQuery";
+import {
+  NOTE_START_PHRASES,
+  NOTE_END_PHRASE,
+  NOTE_CANCEL_PHRASE,
+  NOTE_START_WITH_CONTENT_RE,
+  PAUSE_PHRASE,
+  RESUME_PHRASE,
+  START_COUNT_PHRASE,
+  END_COUNT_PHRASE,
+  NEW_SHOE_PHRASE,
+  CONFIRM_NEW_SHOE_PHRASE,
+  END_INVESTIGATION_PHRASE,
+  CONFIRM_END_INVESTIGATION_PHRASE,
+  FULL_STATUS_PHRASE,
+} from "@/lib/voice/lifecyclePhrases";
+import { nextVoiceEventId } from "@/lib/voice/voiceEventId";
+import { resolveAlternatives } from "@/lib/voice/nBestResolver";
+import type { RejectionCode, VoiceUtteranceSummary } from "@/lib/voice/voiceDiagnosticsTypes";
 import { useSettingsStore } from "@/store/useSettingsStore";
 import type { CardEventTargetType } from "@/lib/counting-engine/types";
 import type { Investigation, Rank, Round } from "@/types/investigation";
@@ -74,13 +92,6 @@ type StatusState =
  */
 type PendingConfirmation = { kind: "new-shoe" } | { kind: "end-investigation" };
 
-/** Exact-phrase triggers for voice note dictation — deliberately as strict/exact as every other command word in this file, no fuzzy matching. */
-const NOTE_START_PHRASES = new Set(["start note", "note"]);
-const NOTE_END_PHRASE = "end note";
-const NOTE_CANCEL_PHRASE = "cancel note";
-/** Handles a single utterance that front-loads the trigger and the first words of the note together ("start note the player at seat three...") — matched on the raw transcript (not the normalized one) so the captured remainder keeps the operator's original wording/casing for a more readable saved note. */
-const NOTE_START_WITH_CONTENT_RE = /^\s*start\s+note[.,!?]?\s+(.+)$/i;
-
 /**
  * Investigation-lifecycle voice commands — Pause/Resume ("Start Count"/"End
  * Count" are natural-wording aliases for the exact same two, see below) /
@@ -97,26 +108,6 @@ const NOTE_START_WITH_CONTENT_RE = /^\s*start\s+note[.,!?]?\s+(.+)$/i;
  * milestone requires for End Investigation, applied consistently to New
  * Shoe too since it's equally consequential (resets the running count).
  */
-const PAUSE_PHRASE = "pause investigation";
-const RESUME_PHRASE = "resume investigation";
-/**
- * "Start Count" / "End Count" — natural operator wording for exactly the
- * same pause/resume machinery above, nothing more. Per explicit product
- * direction: Start Count begins/continues live card entry without
- * resetting the running count, shoe, or history (= Resume Investigation);
- * End Count stops accepting entries while preserving everything (= Pause
- * Investigation). Only "New Shoe" ever resets the running count — these
- * two phrases are deliberately just aliases dispatched through the same
- * checks below, never a second lifecycle path.
- */
-const START_COUNT_PHRASE = "start count";
-const END_COUNT_PHRASE = "end count";
-const NEW_SHOE_PHRASE = "new shoe";
-const CONFIRM_NEW_SHOE_PHRASE = "confirm new shoe";
-const END_INVESTIGATION_PHRASE = "end investigation";
-const CONFIRM_END_INVESTIGATION_PHRASE = "confirm end investigation";
-const FULL_STATUS_PHRASE = "full status";
-
 const DISPLAY_RESET_MS = 2200;
 const DUPLICATE_WINDOW_MS = 1500;
 const MAX_LOG_ENTRIES = 200;
@@ -399,6 +390,8 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
 
   const [status, setStatus] = useState<StatusState>({ kind: "idle" });
   const [log, setLog] = useState<VoiceDiagnosticEntry[]>([]);
+  /** One structured entry per FULLY-RESOLVED utterance (i.e. one that reached N-best resolution — see handleFinalResult) — a richer, machine-readable companion to the flat `log` above, used by the diagnostics panel's "latest utterance" summary and by session export. Capped like `log`; never persisted past the tab session. */
+  const [utteranceTraces, setUtteranceTraces] = useState<VoiceUtteranceSummary[]>([]);
   const [noteMode, setNoteMode] = useState(false);
   const [noteText, setNoteText] = useState("");
   /** See PendingConfirmation's own doc comment. */
@@ -426,6 +419,29 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastDispatchRef = useRef<{ key: string; at: number } | null>(null);
   const logIdRef = useRef(0);
+  /**
+   * The Voice Event ID every diagnostic line about the utterance currently
+   * in flight carries — see voiceEventId.ts's own doc comment. Minted fresh
+   * at the "started" lifecycle event (handleLifecycleEvent below), i.e. once
+   * per native recognition session, which useVoiceRecognition guarantees is
+   * at most one command (see its own doc comment on `consumedRef`) — so ID-
+   * per-session is exactly ID-per-utterance. Lazily seeded here purely so
+   * this is never blank for a diagnostic line that happens to fire before
+   * the very first session ever starts (e.g. a dealer-bust announcement on
+   * initial mount).
+   */
+  // useState's lazy initializer (not a ref read during render — see the
+  // react-hooks/refs rule) is what actually guarantees this only runs once;
+  // the ref below is then seeded from that already-stable value, so no
+  // render ever reads `.current` before it's been written.
+  const [initialVoiceEventId] = useState<string>(() => nextVoiceEventId());
+  const currentVoiceEventIdRef = useRef<string>(initialVoiceEventId);
+  /** performance.now() at the top of the CURRENT handleFinalResult call — see the TIMING diagnostic lines this drives. Reset to null once the session that produced it ends, so a stray later log line is never mislabeled with a stale elapsed time. */
+  const tFinalReceivedRef = useRef<number | null>(null);
+  /** performance.now() of the current native session's "speech-start" lifecycle event, if it has fired yet — drives speech_start_to_final_ms. */
+  const tSpeechStartRef = useRef<number | null>(null);
+  /** Set true the moment ANY final result is dispatched to handleFinalResult during the current native session; checked (and reset) on "started"/"ended" — see ASR_NO_FINAL below. */
+  const finalReceivedThisSessionRef = useRef(false);
 
   const appendLog = useCallback((label: string, detail = "") => {
     // The id must be captured into a local const *here*, not read as
@@ -442,8 +458,14 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
     // component's whole lifetime, across every start/stop session.
     logIdRef.current += 1;
     const id = logIdRef.current;
+    // Every log line is automatically stamped with whichever Voice Event ID
+    // is current at the moment it's written — see currentVoiceEventIdRef's
+    // own doc comment. Callers never pass this explicitly, so the ~30
+    // existing appendLog call sites needed zero changes to gain it.
+    const voiceEventId = currentVoiceEventIdRef.current;
+    const stampedDetail = voiceEventId ? (detail ? `${voiceEventId} · ${detail}` : voiceEventId) : detail;
     setLog((prev) => {
-      const next = [...prev, { id, time: nowLabel(), label, detail }];
+      const next = [...prev, { id, time: nowLabel(), label, detail: stampedDetail }];
       return next.length > MAX_LOG_ENTRIES ? next.slice(next.length - MAX_LOG_ENTRIES) : next;
     });
   }, []);
@@ -692,9 +714,15 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
 
   const handleFinalResult = useCallback(
     (result: VoiceResult) => {
+      finalReceivedThisSessionRef.current = true;
+      const tNow = performance.now();
+      tFinalReceivedRef.current = tNow;
       result.alternatives.forEach((alt, i) => {
         appendLog(`FINAL #${i + 1}`, `"${alt.transcript}" (confidence: ${formatConfidence(alt.confidence)})`);
       });
+      if (tSpeechStartRef.current != null) {
+        appendLog("TIMING", `speech_start_to_final_ms=${(tNow - tSpeechStartRef.current).toFixed(0)}`);
+      }
 
       const normalized = normalizeTranscript(result.transcript);
 
@@ -842,10 +870,111 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         setPendingConfirmation(null);
       }
 
-      if (normalized === PAUSE_PHRASE || normalized === END_COUNT_PHRASE) {
+      // ===== N-BEST RESOLUTION =====
+      // Every alternative the engine returned for this result is
+      // independently normalized, classified, and scored — this is what
+      // actually looks past alternatives[0], which used to be the ONLY one
+      // ever checked against the parser (see nBestResolver.ts's own doc
+      // comment for the two field-captured bugs — "killer king"/"dealer
+      // King" and "Taylor has a king"/"dealer has a king" — this closes).
+      // Scoped to the ordinary command-dispatch surface below (lifecycle
+      // phrases, table changes, read-only queries, narration, legacy
+      // single-command): note-mode dictation and a pending confirmation
+      // phrase are both already handled above, on alternatives[0] only,
+      // unchanged — both are inherently about conversation HISTORY a
+      // transcript-only classifier has no access to (see
+      // classifyVoiceTranscript.ts's own doc comment).
+      const activeTargetLabel = (t: CardTarget) => (t === "dealer" ? "DEALER" : `SEAT${t}`);
+      result.alternatives.forEach((alt, i) => {
+        appendLog(`NORMALIZE ALT #${i + 1}`, normalizeTranscript(alt.transcript) || "(blank)");
+      });
+      const resolution = resolveAlternatives(result.alternatives);
+      resolution.alternatives.forEach((trace) => {
+        const c = trace.classification;
+        appendLog(`PARSE ALT #${trace.index + 1}`, c.valid ? `VALID (${c.source}) -> ${c.summary}` : `REJECT ${c.code}: ${c.reason}`);
+      });
+      appendLog("ACTIVE_TARGET_BEFORE", activeTargetLabel(activeTarget));
+
+      if (!resolution.accepted) {
+        appendLog("RESOLVE", `NO WINNER — ${resolution.code}: ${resolution.reason}`);
+        diagnostics.info("voice", "n-best resolution rejected", {
+          transcript: result.transcript,
+          code: resolution.code,
+          reason: resolution.reason,
+        });
+        appendLog("REJECTED", `"${normalized}" — ${resolution.code}: ${resolution.reason}`);
+        appendLog(
+          "SUMMARY",
+          `${currentVoiceEventIdRef.current} | "${result.transcript}" | NO MATCH | REJECTED (${resolution.code})`
+        );
+        setUtteranceTraces((prev) => {
+          const entry: VoiceUtteranceSummary = {
+            voiceEventId: currentVoiceEventIdRef.current,
+            time: nowLabel(),
+            alternatives: result.alternatives.map((a, i) => ({ index: i, transcript: a.transcript, confidence: a.confidence })),
+            winnerIndex: null,
+            winningTranscript: null,
+            normalized,
+            outcome: "REJECTED",
+            code: resolution.code,
+            resolveReason: resolution.reason,
+            actionSummary: "NO MATCH",
+            activeTargetBefore: activeTargetLabel(activeTarget),
+          };
+          const next = [...prev, entry];
+          return next.length > MAX_LOG_ENTRIES ? next.slice(next.length - MAX_LOG_ENTRIES) : next;
+        });
+        setStatus({ kind: "unrecognized", transcript: normalized });
+        scheduleReset();
+        return;
+      }
+
+      const winner = result.alternatives[resolution.winnerIndex];
+      const winningTranscript = winner.transcript;
+      const winningNormalized = normalizeTranscript(winningTranscript);
+      appendLog("RESOLVE WINNER", `ALT #${resolution.winnerIndex + 1} "${winningTranscript}" -> ${resolution.reason}`);
+
+      /**
+       * Called exactly once, right alongside the existing terminal
+       * appendLog("ACCEPTED"/"REJECTED", ...) call for whichever branch
+       * below actually handles this utterance — logs ACTIVE_TARGET_AFTER,
+       * elapsed commit timing, and the compact human-readable SUMMARY line
+       * (section 14 of the voice reliability spec), and records the
+       * structured VoiceUtteranceSummary the diagnostics panel/export uses.
+       */
+      const finishUtterance = (outcome: "ACCEPTED" | "REJECTED" | "BLOCKED", actionSummary: string, code?: RejectionCode) => {
+        const activeTargetAfter = activeTargetLabel(activeTarget);
+        appendLog("ACTIVE_TARGET_AFTER", activeTargetAfter);
+        const finalToCommitMs = tFinalReceivedRef.current != null ? performance.now() - tFinalReceivedRef.current : undefined;
+        if (finalToCommitMs != null) appendLog("TIMING", `final_to_commit_ms=${finalToCommitMs.toFixed(0)}`);
+        const altNote = resolution.winnerIndex !== 0 ? ` | ALT${resolution.winnerIndex + 1} "${winningTranscript}"` : "";
+        appendLog("SUMMARY", `${currentVoiceEventIdRef.current} | "${result.transcript}"${altNote} | ${actionSummary} | ${outcome}${code ? ` (${code})` : ""}`);
+        setUtteranceTraces((prev) => {
+          const entry: VoiceUtteranceSummary = {
+            voiceEventId: currentVoiceEventIdRef.current,
+            time: nowLabel(),
+            alternatives: result.alternatives.map((a, i) => ({ index: i, transcript: a.transcript, confidence: a.confidence })),
+            winnerIndex: resolution.winnerIndex,
+            winningTranscript,
+            normalized: winningNormalized,
+            outcome,
+            code,
+            resolveReason: resolution.reason,
+            actionSummary,
+            activeTargetBefore: activeTargetLabel(activeTarget),
+            activeTargetAfter,
+            finalToCommitMs,
+          };
+          const next = [...prev, entry];
+          return next.length > MAX_LOG_ENTRIES ? next.slice(next.length - MAX_LOG_ENTRIES) : next;
+        });
+      };
+
+      if (winningNormalized === PAUSE_PHRASE || winningNormalized === END_COUNT_PHRASE) {
         if (investigation.status !== "active") {
-          appendLog("REJECTED", `"${normalized}" — already paused or not active`);
-          setStatus({ kind: "disabled", transcript: normalized, reason: "Already paused, or the investigation isn't active" });
+          appendLog("REJECTED", `"${winningNormalized}" — already paused or not active`);
+          setStatus({ kind: "disabled", transcript: winningNormalized, reason: "Already paused, or the investigation isn't active" });
+          finishUtterance("REJECTED", "Pause investigation", "CONTROL_DISABLED");
           scheduleReset();
           return;
         }
@@ -853,13 +982,15 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         appendLog("ACCEPTED", "Investigation paused");
         setStatus({ kind: "accepted", label: "Paused" });
         if (voiceAudioFeedback) speak("Investigation paused.");
+        finishUtterance("ACCEPTED", "Paused");
         scheduleReset();
         return;
       }
-      if (normalized === RESUME_PHRASE || normalized === START_COUNT_PHRASE) {
+      if (winningNormalized === RESUME_PHRASE || winningNormalized === START_COUNT_PHRASE) {
         if (investigation.status !== "paused") {
-          appendLog("REJECTED", `"${normalized}" — not currently paused`);
-          setStatus({ kind: "disabled", transcript: normalized, reason: "Not currently paused" });
+          appendLog("REJECTED", `"${winningNormalized}" — not currently paused`);
+          setStatus({ kind: "disabled", transcript: winningNormalized, reason: "Not currently paused" });
+          finishUtterance("REJECTED", "Resume investigation", "CONTROL_DISABLED");
           scheduleReset();
           return;
         }
@@ -867,10 +998,11 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         appendLog("ACCEPTED", "Investigation resumed");
         setStatus({ kind: "accepted", label: "Resumed" });
         if (voiceAudioFeedback) speak("Investigation resumed.");
+        finishUtterance("ACCEPTED", "Resumed");
         scheduleReset();
         return;
       }
-      if (normalized === NEW_SHOE_PHRASE) {
+      if (winningNormalized === NEW_SHOE_PHRASE) {
         const shoeHasCards = eventsInShoe(cardEvents, currentRound.shoeNumber).length > 0;
         if (!shoeHasCards) {
           // Nothing recorded in this shoe yet — no evidence to lose, so no
@@ -887,6 +1019,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
             appendLog("ACCEPTED", text);
             setStatus({ kind: "accepted", label: text });
             if (voiceAudioFeedback) speak(text);
+            finishUtterance("ACCEPTED", text);
             scheduleReset();
           })();
           return;
@@ -909,9 +1042,10 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
           // would be guessing at something evidentiary. Explain briefly
           // and defer to the manual New Shoe control instead.
           const reason = "The current round isn't complete — finish the hand first, or use the New Shoe button";
-          appendLog("REJECTED", `"${normalized}" — ${reason}`);
-          setStatus({ kind: "disabled", transcript: normalized, reason });
+          appendLog("REJECTED", `"${winningNormalized}" — ${reason}`);
+          setStatus({ kind: "disabled", transcript: winningNormalized, reason });
           if (voiceAudioFeedback) speak("New shoe unavailable. The current round isn't complete.");
+          finishUtterance("REJECTED", "New shoe", "CONTROL_DISABLED");
           scheduleReset();
           return;
         }
@@ -920,19 +1054,21 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         appendLog("ACCEPTED", text);
         setStatus({ kind: "accepted", label: text });
         if (voiceAudioFeedback) speak(text);
+        finishUtterance("ACCEPTED", text);
         scheduleReset();
         return;
       }
-      if (normalized === END_INVESTIGATION_PHRASE) {
+      if (winningNormalized === END_INVESTIGATION_PHRASE) {
         setPendingConfirmation({ kind: "end-investigation" });
         const text = 'End investigation? Say "confirm end investigation" to proceed.';
         appendLog("ACCEPTED", text);
         setStatus({ kind: "accepted", label: text });
         if (voiceAudioFeedback) speak(text);
+        finishUtterance("ACCEPTED", text);
         scheduleReset();
         return;
       }
-      if (normalized === FULL_STATUS_PHRASE) {
+      if (winningNormalized === FULL_STATUS_PHRASE) {
         // Read-only, same guarantee as "status"/"count" — always the "all"
         // content level regardless of the operator's configured
         // floorSpokenCountContent setting, since asking for it explicitly
@@ -941,6 +1077,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         appendLog("ACCEPTED", text);
         setStatus({ kind: "accepted", label: text });
         if (voiceAudioFeedback) speak(text);
+        finishUtterance("ACCEPTED", text);
         scheduleReset();
         return;
       }
@@ -953,7 +1090,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       // trailing "left" as a stray word next to a correctly-recognized
       // seat) and nothing to parseVoiceCommand either. See
       // parseTableChangeCommand.ts for the exact grammars recognized.
-      const tableChange = parseTableChangeCommand(result.transcript);
+      const tableChange = parseTableChangeCommand(winningTranscript);
       if (tableChange) {
         if (tableChange.kind === "seat-joins") {
           void (async () => {
@@ -968,6 +1105,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
             appendLog("ACCEPTED", text);
             setStatus({ kind: "accepted", label: text });
             if (voiceAudioFeedback) speak(text);
+            finishUtterance("ACCEPTED", text);
             scheduleReset();
           })();
           return;
@@ -975,8 +1113,9 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         // seat-leaves
         if (!investigation.occupiedSeats.includes(tableChange.seat)) {
           const reason = `Seat ${tableChange.seat} is already empty`;
-          appendLog("REJECTED", `"${normalized}" — ${reason}`);
-          setStatus({ kind: "disabled", transcript: normalized, reason });
+          appendLog("REJECTED", `"${winningNormalized}" — ${reason}`);
+          setStatus({ kind: "disabled", transcript: winningNormalized, reason });
+          finishUtterance("REJECTED", `Seat ${tableChange.seat} left`, "CONTROL_DISABLED");
           scheduleReset();
           return;
         }
@@ -994,6 +1133,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
           appendLog("ACCEPTED", text);
           setStatus({ kind: "accepted", label: text });
           if (voiceAudioFeedback) speak(text);
+          finishUtterance("ACCEPTED", text);
           scheduleReset();
         })();
         return;
@@ -1012,7 +1152,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       // Status" above remains the one deliberate "give me everything
       // regardless of the setting" phrase, so there is exactly one way to
       // ask for that, not two.
-      const readOnlyQuery = parseReadOnlyQuery(normalized);
+      const readOnlyQuery = parseReadOnlyQuery(winningNormalized);
       if (readOnlyQuery) {
         if (readOnlyQuery.kind === "repeat") {
           // Audio replay ONLY — never a re-execution of whatever command
@@ -1026,6 +1166,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
           appendLog("ACCEPTED", `REPEAT: "${text}"`);
           setStatus({ kind: "accepted", label: text });
           if (voiceAudioFeedback && previous) speak(text);
+          finishUtterance("ACCEPTED", `REPEAT: ${text}`);
           scheduleReset();
           return;
         }
@@ -1046,6 +1187,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
           appendLog("ACCEPTED", text);
           setStatus({ kind: "accepted", label: text });
           if (voiceAudioFeedback && spoken) speak(spoken);
+          finishUtterance("ACCEPTED", text);
           scheduleReset();
           return;
         }
@@ -1076,6 +1218,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         appendLog("ACCEPTED", text);
         setStatus({ kind: "accepted", label: text });
         if (voiceAudioFeedback) speak(text);
+        finishUtterance("ACCEPTED", text);
         scheduleReset();
         return;
       }
@@ -1088,12 +1231,19 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       // before this feature existed. "reject" means narration recognized
       // SOME structured content but the utterance as a whole is unsafe —
       // that is final; it must never also be offered to the single-command
-      // parser for a second opinion.
-      const narration = parseNarration(result.transcript);
+      // parser for a second opinion. In practice this branch is now a
+      // defensive no-op for any transcript that already reached here: the
+      // N-best resolver above only ever picks a winner whose own
+      // classification was VALID, and classifyVoiceTranscript.ts's
+      // narration check is the exact same parseNarration call — kept as a
+      // second, independent check anyway (belt-and-suspenders, matching
+      // this file's own established style) rather than trusted blindly.
+      const narration = parseNarration(winningTranscript);
       if (narration.kind === "reject") {
-        diagnostics.info("voice", "narration rejected — ambiguous or unsafe", { transcript: normalized });
-        appendLog("REJECTED", `"${normalized}" — narration rejected (ambiguous or unsafe)`);
-        setStatus({ kind: "unrecognized", transcript: normalized });
+        diagnostics.info("voice", "narration rejected — ambiguous or unsafe", { transcript: winningNormalized });
+        appendLog("REJECTED", `"${winningNormalized}" — narration rejected (ambiguous or unsafe)`);
+        setStatus({ kind: "unrecognized", transcript: winningNormalized });
+        finishUtterance("REJECTED", "narration", "INCOMPLETE_NARRATION");
         scheduleReset();
         return;
       }
@@ -1106,32 +1256,35 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         // useVoiceRecognition invokes this callback fire-and-forget either
         // way.
         void (async () => {
-          const result = await commitNarration(narration.ops);
-          if (result.kind === "blocked") {
+          const commitResult = await commitNarration(narration.ops);
+          if (commitResult.kind === "blocked") {
             diagnostics.info("voice", "narration blocked — preflight validation failed, zero events committed", {
-              transcript: normalized,
-              reason: result.reason,
+              transcript: winningNormalized,
+              reason: commitResult.reason,
             });
-            appendLog("REJECTED", `"${normalized}" — ${result.reason}`);
-            setStatus({ kind: "disabled", transcript: normalized, reason: result.reason });
+            appendLog("REJECTED", `"${winningNormalized}" — ${commitResult.reason}`);
+            setStatus({ kind: "disabled", transcript: winningNormalized, reason: commitResult.reason });
+            finishUtterance("BLOCKED", "narration", "CONTROL_DISABLED");
             scheduleReset();
             return;
           }
-          diagnostics.info("voice", "narration accepted", { transcript: normalized, committed: result.committedCount });
-          appendLog("ACCEPTED", result.label);
-          setStatus({ kind: "accepted", label: result.label });
-          if (voiceAudioFeedback) speak(result.label);
+          diagnostics.info("voice", "narration accepted", { transcript: winningNormalized, committed: commitResult.committedCount });
+          appendLog("ACCEPTED", commitResult.label);
+          setStatus({ kind: "accepted", label: commitResult.label });
+          if (voiceAudioFeedback) speak(commitResult.label);
+          finishUtterance("ACCEPTED", commitResult.label);
           scheduleReset();
         })();
         return;
       }
 
-      const parsed = parseVoiceCommand(result.transcript);
+      const parsed = parseVoiceCommand(winningTranscript);
 
       if (!parsed.command) {
-        diagnostics.info("voice", "rejected — unrecognized speech", { transcript: normalized });
-        appendLog("REJECTED", `"${normalized}" — no matching command`);
-        setStatus({ kind: "unrecognized", transcript: normalized });
+        diagnostics.info("voice", "rejected — unrecognized speech", { transcript: winningNormalized });
+        appendLog("REJECTED", `"${winningNormalized}" — no matching command`);
+        setStatus({ kind: "unrecognized", transcript: winningNormalized });
+        finishUtterance("REJECTED", "unknown", "UNKNOWN_COMMAND");
         scheduleReset();
         return;
       }
@@ -1143,18 +1296,20 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         // recognized": that mislabel is exactly what made a correctly-
         // heard "king" look like recognition itself had failed.
         diagnostics.info("voice", "rejected — control currently disabled", {
-          transcript: normalized,
+          transcript: winningNormalized,
           command: parsed.command,
         });
-        appendLog("REJECTED", `"${normalized}" — recognized, but that control is currently disabled`);
-        setStatus({ kind: "disabled", transcript: normalized });
+        appendLog("REJECTED", `"${winningNormalized}" — recognized, but that control is currently disabled`);
+        setStatus({ kind: "disabled", transcript: winningNormalized });
+        finishUtterance("REJECTED", parsed.command.kind, "CONTROL_DISABLED");
         scheduleReset();
         return;
       }
 
-      diagnostics.info("voice", "accepted", { transcript: normalized, command: parsed.command });
+      diagnostics.info("voice", "accepted", { transcript: winningNormalized, command: parsed.command });
       appendLog("ACCEPTED", label);
       setStatus({ kind: "accepted", label });
+      finishUtterance("ACCEPTED", label);
       scheduleReset();
     },
     [
@@ -1176,6 +1331,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       refresh,
       occupySeat,
       markSeatEmpty,
+      activeTarget,
     ]
   );
 
@@ -1215,7 +1371,27 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
 
   const handleLifecycleEvent = useCallback(
     (event: VoiceLifecycleEvent) => {
+      // "started" begins a brand-new native session — mint a fresh Voice
+      // Event ID right here, BEFORE logging it, so the STARTED line itself
+      // (and everything else about this utterance, through commit/TTS) all
+      // carry the same ID. See currentVoiceEventIdRef's own doc comment.
+      if (event === "started") {
+        currentVoiceEventIdRef.current = nextVoiceEventId();
+        finalReceivedThisSessionRef.current = false;
+        tSpeechStartRef.current = null;
+      }
+      if (event === "speech-start") tSpeechStartRef.current = performance.now();
       appendLog(LIFECYCLE_LABEL[event]);
+      if (event === "ended" && !finalReceivedThisSessionRef.current) {
+        // A native session ended without ever producing a final result —
+        // e.g. the operator trailed off, or the 8s timeout in
+        // useVoiceRecognition fired first. Not necessarily an error (see
+        // RejectionCode's own doc comment on RECOGNITION_ENDED_UNEXPECTEDLY
+        // vs. ASR_NO_FINAL), but worth a dedicated, greppable line: this is
+        // exactly the "delayed/missing final" stall class section 5/11 of
+        // the voice reliability spec calls out.
+        appendLog("ASR_NO_FINAL", "session ended with no final result");
+      }
     },
     [appendLog]
   );
@@ -1375,7 +1551,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
 
   return (
     <div className="fixed bottom-4 right-4 z-20 flex flex-col items-end gap-2">
-      {diagnosticsOpen && <VoiceDiagnosticsPanel entries={log} />}
+      {diagnosticsOpen && <VoiceDiagnosticsPanel entries={log} utterances={utteranceTraces} />}
 
       {status.kind !== "idle" && (
         <div role="status" className="max-w-[220px] rounded-xl border border-border bg-surface px-3 py-2 text-xs shadow-lg">

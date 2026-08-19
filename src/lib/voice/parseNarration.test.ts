@@ -633,3 +633,52 @@ describe("EyeOnPit 1.3 — unrelated conversation and ordinary observation still
     expect(parseNarration(transcript).kind).toBe("reject");
   });
 });
+
+describe('voice reliability spec §7/§16 — "start" ASR artifact for "spot" at the narration layer', () => {
+  it('"start 3 as a 7" (a single card under one target) resolves to the same trivial 2-op shape "spot 3 as a 7" always has, so narration correctly defers — see parseVoiceCommand.test.ts for the legacy-layer assertion that actually enters the card', () => {
+    expect(parseNarration("start 3 as a 7").kind).toBe("no-opinion");
+  });
+});
+
+describe("voice reliability spec §16 — additional multi-event and active-target regression variants", () => {
+  it('"seat one has a king and a queen" -> two cards under one target, spoken order preserved', () => {
+    const result = parseNarration("seat one has a king and a queen");
+    expect(result.kind).toBe("ops");
+    if (result.kind === "ops") {
+      expect(result.ops).toEqual([
+        { kind: "selectTarget", target: { kind: "seat", seat: 1 } },
+        { kind: "card", rank: "10", target: { kind: "seat", seat: 1 }, displayRank: "K" },
+        { kind: "card", rank: "10", target: { kind: "seat", seat: 1 }, displayRank: "Q" },
+      ]);
+    }
+  });
+
+  it('"seat two, seat five has a king, seat five has a seven" never silently truncates — every recognized op survives (real transcript never dictates seat 2 alone with no card; included here for the "target with no card yet" shape)', () => {
+    const result = parseNarration("seat two seat five has a king seat five has a seven");
+    expect(result.kind).toBe("ops");
+    if (result.kind === "ops") {
+      expect(result.ops.filter((op) => op.kind === "card")).toHaveLength(2);
+    }
+  });
+
+  it('fast/compressed speech: "dealer5" style digit-run after an established target still resolves per-token, not as a single multi-digit card', () => {
+    // "dealer" is a whole word (not a digit run), so this exercises the
+    // ordinary target+card path, not decomposeNumericStream — included as a
+    // fast-speech-adjacent sanity check that concatenation elsewhere in the
+    // grammar hasn't regressed.
+    const result = parseNarration("dealer 5");
+    expect(result.kind).toBe("no-opinion"); // trivial legacy-equivalent shape — see isTrivialLegacyEquivalent
+  });
+
+  it('filler words scattered through an otherwise-clean multi-card utterance are swallowed for free: "dealer has a king and an ace"', () => {
+    const result = parseNarration("dealer has a king and an ace");
+    expect(result.kind).toBe("ops");
+    if (result.kind === "ops") {
+      expect(result.ops).toEqual([
+        { kind: "selectTarget", target: { kind: "dealer" } },
+        { kind: "card", rank: "10", target: { kind: "dealer" }, displayRank: "K" },
+        { kind: "card", rank: "A", target: { kind: "dealer" } },
+      ]);
+    }
+  });
+});

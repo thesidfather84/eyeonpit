@@ -13,6 +13,42 @@ export default function ReleaseNotesPage() {
       <DocsPageHeader title="Release Notes" subtitle="What changed, version by version." />
 
       <div className="mt-2">
+        <ReleaseEntry version="1.4.2" date="2026-08-18" title="Voice Diagnostics &amp; Multi-Alternative Recognition">
+          <p>
+            A reliability-focused release: EyeOnPit now checks every alternative your device&apos;s speech recognizer
+            offers, not just its first guess, and gives you a much deeper look at exactly what happened when a
+            command is accepted or rejected.
+          </p>
+          <ul>
+            <li>
+              <strong>Multiple interpretations, checked safely.</strong> Speech recognizers often return several
+              possible readings of what you said, ranked by confidence — but the top-ranked one is not always
+              correct. EyeOnPit now evaluates every alternative it&apos;s given and accepts whichever one is a clean,
+              unambiguous command, rather than only ever looking at the first. If two alternatives would produce
+              genuinely different commands, EyeOnPit still refuses to guess between them, exactly as before.
+            </li>
+            <li>
+              <strong>Richer Debug panel.</strong> The existing &ldquo;Debug&rdquo; toggle on the live screen now
+              shows a detailed breakdown of the most recent thing you said — every alternative considered, which one
+              was used and why, the active target before and after, and how long each step took.
+            </li>
+            <li>
+              <strong>Export JSON.</strong> A new button next to &ldquo;Copy Voice Log&rdquo; in the Debug panel
+              exports the full diagnostic session as structured JSON — useful for sharing a detailed report of a
+              recognition issue for review.
+            </li>
+            <li>
+              <strong>&ldquo;start 3 as a 7&rdquo; and similar.</strong> A recognition artifact where &ldquo;spot&rdquo;
+              is misheard as &ldquo;start&rdquo; immediately before a seat number is now recognized correctly.
+            </li>
+            <li>Every recognition event is now tagged with a unique ID, and a session that ends without ever producing a usable result is now explicitly logged rather than failing silently.</li>
+          </ul>
+          <p className="!mt-4 text-xs">
+            45 new automated tests added. Full suite: 826 passed, 1 pre-existing skip. Counting engine, count rules,
+            and the recognition restart/lifecycle logic were not touched in this release.
+          </p>
+        </ReleaseEntry>
+
         <ReleaseEntry version="1.4" date="2026-08-12" title="Public Website &amp; Documentation">
           <ul>
             <li>Added the public EyeOnPit marketing website at the site root.</li>

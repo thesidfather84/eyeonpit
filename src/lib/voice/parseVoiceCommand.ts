@@ -180,7 +180,7 @@ export function containsUncertaintyLanguage(tokens: string[]): boolean {
 }
 
 /**
- * Narrow, deterministic normalization for two specific, real captured ASR
+ * Narrow, deterministic normalization for specific, real captured ASR
  * artifacts — never broadened into general fuzzy matching, per explicit
  * product direction ("Seat/player/spot ambiguity should fail closed when
  * the target cannot be determined confidently"):
@@ -196,6 +196,15 @@ export function containsUncertaintyLanguage(tokens: string[]): boolean {
  *      seatFromCToken). Both tokens are replaced together with
  *      "player <n>", never just the first, so a bare "r2" NOT preceded by
  *      "play" is left alone (too ambiguous on its own to ever guess).
+ *   3. "start 3 as a 7" — "start" recognized in place of "spot", under the
+ *      EXACT same guard as "play" above: only when the very next token is
+ *      unambiguously a seat number (1-7). This is what keeps "start note"
+ *      and "start count" (both real, unrelated command phrases — see
+ *      lifecyclePhrases.ts) from ever being touched: neither is followed
+ *      by a seat number, so this substitution never fires for them. Those
+ *      two phrases are matched on the transcript BEFORE
+ *      normalizeAsrSeatArtifacts is even invoked (see VoiceControl's
+ *      handleFinalResult), so there is no ordering risk either way.
  *
  * Applied once, at the string level, immediately after normalizeTranscript
  * and before any other parsing — both parseVoiceCommand and parseNarration
@@ -227,6 +236,11 @@ export function normalizeAsrSeatArtifacts(normalized: string): string {
           continue;
         }
       }
+    }
+
+    if (token === "start" && next != null && SEAT_NUMBER_BY_WORD[next] != null) {
+      result.push("spot");
+      continue;
     }
 
     result.push(token);

@@ -37,9 +37,32 @@ export default function TroubleshootingPage() {
       <h2>Voice heard incorrectly</h2>
       <p>
         If EyeOnPit didn&apos;t understand what you said, it shows &ldquo;Not recognized&rdquo; rather than guessing
-        — nothing is recorded. If a phrase keeps getting missed, check the Debug panel on the live screen (the small
-        &ldquo;Debug&rdquo; toggle) to see exactly what was transcribed, and try the phrasing in the{" "}
-        <Link href="/docs/voice">Voice Guide</Link>.
+        — nothing is recorded. Your device&apos;s speech recognizer usually offers several possible readings of what
+        you said; EyeOnPit checks all of them, not just the first, so a noisy top guess doesn&apos;t block a clean
+        lower-ranked one from being used. If a phrase keeps getting missed, check the Debug panel on the live screen
+        (the small &ldquo;Debug&rdquo; toggle) and try the phrasing in the <Link href="/docs/voice">Voice Guide</Link>.
+      </p>
+
+      <h3>Reading the Debug panel</h3>
+      <p>Opening Debug shows two things:</p>
+      <ul>
+        <li>
+          <strong>Latest utterance detail</strong> — the most recent thing EyeOnPit heard: every alternative reading
+          your device offered with its confidence, which one was actually used (marked with an arrow) and why, the
+          active target before and after, how long it took, and — if rejected — the specific reason.
+        </li>
+        <li>
+          <strong>The full session log</strong> — every recognition event in order (listening started/stopped,
+          each alternative heard, normalization, the decision made, anything spoken back), each tagged with a
+          short ID (e.g. <code>V-000042</code>) so every line about the same thing you said is easy to pick out.
+        </li>
+      </ul>
+      <p>
+        Two buttons let you get that information off the phone: <strong>Copy Voice Log</strong> copies the plain-text
+        session log, and <strong>Export JSON</strong> copies a complete structured report — every alternative
+        considered, the decision and reasoning for each utterance, and timing — suitable for pasting into a bug
+        report or sharing with whoever is investigating a recognition issue. Neither includes any card, count, or
+        investigation data; both are voice-pipeline debugging information only.
       </p>
 
       <h2>Command rejected / control disabled</h2>

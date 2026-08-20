@@ -1,51 +1,81 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlaskConical, Mic, Square, SkipForward, ArrowRight, Download, Copy } from "lucide-react";
-import { createSherpaOnnxProvider } from "@/lib/voice/sherpaOnnxProvider";
+import { FlaskConical, Mic, Square, SkipForward, ArrowRight, Download, Copy, Check, X } from "lucide-react";
+import { createSherpaOnnxProvider, resolveDefaultAssetBaseUrl } from "@/lib/voice/sherpaOnnxProvider";
 import { createBrowserWebSpeechProvider } from "@/lib/voice/browserWebSpeechProvider";
 import { buildHotwordList } from "@/lib/voice/casinoVoiceContext";
+import { classifyVoiceTranscript } from "@/lib/voice/classifyVoiceTranscript";
 import type { SpeechProvider, SpeechProviderResult } from "@/lib/voice/speechProvider";
 
 /**
- * SHERPA REAL MIC FIELD TEST — ASR EVALUATION ONLY.
+ * SHERPA REAL MIC FIELD TEST — ASR + SAFETY-PIPELINE EVALUATION, LAB ONLY.
  *
- * This page exists to answer exactly one question: does sherpa-onnx
- * recognize a real operator's real speech better than Chrome's built-in
- * Web Speech engine. It is NOT a preview of a future feature and it NEVER
- * writes a CardEvent — this file imports nothing from the CardEvent
- * ledger, the counting engine, narration parsing, or normalization. Every
- * transcript shown here is the provider's own raw output, unmodified.
- * Nothing recognized on this page is safety-validated, narration-parsed,
- * or committed anywhere — see docs/EYEONPIT_VOICE_ARCHITECTURE.md §4 for
- * the safety boundary this page deliberately stays on the near side of.
+ * This page never creates a CardEvent and is not connected to any
+ * investigation — this file imports nothing from the CardEvent ledger, the
+ * counting engine, or `InvestigationContext`. It DOES call EyeOnPit's real,
+ * unmodified, read-only `classifyVoiceTranscript` on each raw transcript
+ * purely to DISPLAY what the existing safety pipeline would decide
+ * (accepted/rejected, would-a-CardEvent-be-produced) — that classification
+ * result is shown to the operator and nothing else; it is never dispatched,
+ * committed, or written anywhere. See docs/EYEONPIT_VOICE_ARCHITECTURE.md
+ * §4 for the safety boundary this page stays on the near side of. This is
+ * a deliberate, narrow scope change from this page's first version (which
+ * showed raw ASR only) — added 2026-08-20 specifically so ASR quality and
+ * parser/safety-pipeline behavior can be told apart, per explicit
+ * instruction.
  *
- * SEGMENTATION, 2026-08-19 ("SHERPA MIC HARNESS BUG" fix): the first real
- * mic session used a single continuous provider session for the whole
- * script, relying on automatic silence/endpoint detection to split it into
- * per-phrase results — that detection did not fire reliably in a real
- * session, producing 2 runaway transcripts each containing many
- * concatenated phrases instead of one final per utterance. This page now
- * drives segmentation explicitly: START PHRASE begins a brand-new provider
- * session (a fresh recognizer/stream for Sherpa, a fresh native
- * SpeechRecognition instance for Chrome — see sherpaOnnxProvider.ts's own
- * doc comment on why this is now cheap), END PHRASE stops it and
- * deterministically flushes whatever was decoded so far, and no
- * decoder/session state is ever carried into the next phrase. NEXT PHRASE
- * is disabled until the current one is finalized or explicitly skipped.
+ * SEGMENTATION, 2026-08-19 ("SHERPA MIC HARNESS BUG" fix): every phrase is
+ * its own clean recognition segment — START PHRASE begins a brand-new
+ * provider session, END PHRASE stops it and deterministically flushes
+ * whatever was decoded, and no decoder/session state carries into the next
+ * phrase. See sherpaOnnxProvider.ts's own doc comment for why repeated
+ * start/stop cycles are cheap (the WASM/model load is cached at module
+ * scope, only the recognizer+stream reset per phrase).
  *
- * Reachable only behind the existing /lab passcode gate
- * (src/app/lab/(protected)/layout.tsx) — the same separation every other
- * EXPERIMENTAL tool in this Lab already uses to stay out of normal
- * operators' hands. See the SherpaOnnxProvider's own ASSET DEPLOYMENT doc
- * comment for the one manual step required before Sherpa will do anything
- * here: the ~205MB WASM/model bundle must be extracted into
- * `public/sherpa-onnx-lab/` locally (gitignored, never committed).
+ * A/B/C DEALER COMPARISON, 2026-08-20: three selectable Sherpa
+ * configurations, same phrases/mic conditions, so real accuracy can be
+ * compared instead of guessed at:
+ *   A — hotwords OFF entirely.
+ *   B — CURRENT shipped configuration (hotwords ON, but with the exact
+ *       `modelingUnit`/casing every prior round actually shipped —
+ *       CONFIRMED WRONG for this model, kept as "B" deliberately so the
+ *       comparison measures the real regression, not a strawman).
+ *   C — TUNED configuration from the 2026-08-20 investigation: real
+ *       `bpe.vocab` (generated from this exact model's own training
+ *       `bpe.model`, not guessed), `modelingUnit: "bpe"`, hotword text
+ *       UPPERCASED to match this model's training data. Construction and
+ *       non-regression were verified in a real Chrome tab; real-mic
+ *       accuracy has NOT — that's what this tooling is for. See
+ *       `SHERPA_DEALER_HOTWORD_INVESTIGATION` in `sherpaOnnxProvider.ts`
+ *       for the full, cited root-cause detail.
+ *
+ * Reachable only behind the existing /lab passcode gate. See
+ * SherpaOnnxProvider's own ASSET DEPLOYMENT doc comment for what Sherpa
+ * needs before it can do anything here: the WASM/model bundle AND the
+ * generated `bpe.vocab`, reachable at `ASSET_BASE_URL` below — locally,
+ * the gitignored `public/sherpa-onnx-lab/` path (never committed); in any
+ * other environment, wherever `NEXT_PUBLIC_SHERPA_ASSET_BASE_URL` points.
+ * 2026-08-20: a real production deployment with that env var unset (so
+ * `ASSET_BASE_URL` fell back to the local-only path, which doesn't exist
+ * on Vercel) produced `onError("assets-not-found: ...")` on every attempt
+ * — expected, correct, fail-closed behavior given no assets were ever
+ * provisioned for that deployment, not a bug in this page or the
+ * provider.
  */
 
-const SCRIPT_PHRASES = [
-  "Dealer has a five.",
-  "Dealer has a king and a five.",
+/** The exact Dealer stress phrases from the 2026-08-20 investigation brief — run each under all three configurations. */
+const DEALER_STRESS_PHRASES = [
+  "Dealer",
+  "Dealer has a five",
+  "Dealer has a king",
+  "Dealer showing ten",
+  "Dealer has an ace",
+  "Dealer has a king and a five",
+] as const;
+
+/** Representative Player/Spot phrases — so a Dealer-focused config change can't hide a regression elsewhere. */
+const PLAYER_PHRASES = [
   "Player one has a five and a three.",
   "Player three hits, gets a four.",
   "Player three hits a four.",
@@ -59,15 +89,15 @@ const SCRIPT_PHRASES = [
   "Double.",
   "Insurance.",
   "Seven.",
+] as const;
+
+/** Ordinary sentences that are NOT blackjack commands — checks whether hotword biasing hallucinates casino vocabulary on unrelated speech. */
+const NOISE_PHRASES = [
   "Spotify is dead.",
   "Play Drake music.",
   "It's 3:55.",
   "I have one eighth left.",
   "Taylor has a king and a five.",
-] as const;
-
-/** Ordinary sentences that are NOT blackjack commands — included per explicit instruction, to check whether hotword biasing causes hallucinated casino vocabulary on speech that has nothing to do with it. */
-const NOISE_PHRASES = [
   "What time does the buffet close.",
   "Can you send security to table twelve.",
   "I'll have a large coffee, no sugar.",
@@ -75,24 +105,52 @@ const NOISE_PHRASES = [
   "My phone is at eight percent.",
 ] as const;
 
-/** Repeated bare/short "Dealer" probes, per the real finding that "Dealer" was misheard as "KILLER"/"TILLER" — run these last, with hotwords toggled both ways, before touching any recognition logic for it. */
-const DEALER_PROBE_PHRASES = ["Dealer", "Dealer has a five", "Dealer has a king", "The dealer has a five", "Dealer showing ten"] as const;
-
-const ALL_PHRASES = [...SCRIPT_PHRASES, ...NOISE_PHRASES, ...DEALER_PROBE_PHRASES];
+const ALL_PHRASES = [...DEALER_STRESS_PHRASES, ...PLAYER_PHRASES, ...NOISE_PHRASES];
 
 type ProviderChoice = "sherpa-onnx" | "browser-web-speech";
+type AbConfig = "A" | "B" | "C";
 /** Provider-connection-level status — separate from PhraseState, which tracks the CURRENT phrase's own start/end cycle. */
 type ProviderStatus = "idle" | "loading" | "listening" | "error" | "stopped";
 type PhraseState = "idle" | "listening" | "done" | "skipped";
+type Correctness = "unmarked" | "correct" | "incorrect";
+
+// Derived from the SAME resolution logic sherpaOnnxProvider.ts's own
+// assetBaseUrl default uses (2026-08-20 "assets-not-found" production
+// incident fix) — so this page and the provider can never drift onto two
+// different asset hosts. Overridable in any environment via
+// NEXT_PUBLIC_SHERPA_ASSET_BASE_URL; falls back to the gitignored local
+// dev path, unchanged from every prior round.
+// Trailing-slash-normalized the same way createSherpaOnnxProvider's own
+// assetBaseUrl handling does internally, so an env var set without one
+// (e.g. "https://blob.example/sherpa") still resolves correctly here.
+// `process.env.NEXT_PUBLIC_SHERPA_ASSET_BASE_URL` must appear as this exact
+// literal expression — see sherpaOnnxProvider.ts's own DEFAULT_ASSET_BASE_URL
+// comment for why passing the whole `process.env` object silently breaks
+// Next.js's build-time inlining (confirmed the hard way this round: local
+// verification kept hitting `/sherpa-onnx-lab/` instead of the configured
+// Blob URL until this was fixed).
+const ASSET_BASE_URL = resolveDefaultAssetBaseUrl({
+  NEXT_PUBLIC_SHERPA_ASSET_BASE_URL: process.env.NEXT_PUBLIC_SHERPA_ASSET_BASE_URL,
+}).replace(/\/?$/, "/");
+const BPE_VOCAB_URL = `${ASSET_BASE_URL}bpe.vocab`;
 
 interface InterimSnapshot {
   atMs: number;
   text: string;
 }
 
+interface ClassificationSummary {
+  accepted: boolean;
+  wouldProduceCardEvent: boolean;
+  summary: string;
+  rejectReason: string | null;
+}
+
 interface UtteranceRecord {
   index: number;
   recordedAt: string;
+  provider: ProviderChoice;
+  abConfig: AbConfig | null;
   expectedPhrase: string | null;
   interims: InterimSnapshot[];
   finalText: string | null;
@@ -101,11 +159,23 @@ interface UtteranceRecord {
   finalMs: number | null;
   error: string | null;
   skipped: boolean;
+  classification: ClassificationSummary | null;
+  correctness: Correctness;
+}
+
+/** Read-only — classifies a raw transcript through EyeOnPit's real, unmodified pipeline purely for display. Never dispatches, never writes a CardEvent. actionKey's "C:" prefix marks a card step, exactly as classifyVoiceTranscript.ts's own canonicalization doc comment describes. */
+function classifyForDisplay(rawTranscript: string): ClassificationSummary {
+  const result = classifyVoiceTranscript(rawTranscript, true, true);
+  if (!result.valid) {
+    return { accepted: false, wouldProduceCardEvent: false, summary: result.code, rejectReason: result.reason };
+  }
+  const wouldProduceCardEvent = result.actionKey.split("|").some((step) => step.startsWith("C:"));
+  return { accepted: true, wouldProduceCardEvent, summary: result.summary, rejectReason: null };
 }
 
 export default function SherpaVoiceTestPage() {
   const [providerChoice, setProviderChoice] = useState<ProviderChoice>("sherpa-onnx");
-  const [hotwordsEnabled, setHotwordsEnabled] = useState(true);
+  const [abConfig, setAbConfig] = useState<AbConfig>("B");
   const [status, setStatus] = useState<ProviderStatus>("idle");
   const [phraseState, setPhraseState] = useState<PhraseState>("idle");
   const [lastError, setLastError] = useState<string | null>(null);
@@ -124,18 +194,24 @@ export default function SherpaVoiceTestPage() {
   const pendingRecordRef = useRef<UtteranceRecord | null>(null);
   const recordIndexRef = useRef(0);
   const phraseIndexRef = useRef(phraseIndex);
+  const providerChoiceRef = useRef(providerChoice);
+  const abConfigRef = useRef(abConfig);
 
   const hotwordList = useMemo(() => buildHotwordList({ terminology: "spot" }), []);
 
   useEffect(() => {
     phraseIndexRef.current = phraseIndex;
   }, [phraseIndex]);
+  useEffect(() => {
+    providerChoiceRef.current = providerChoice;
+  }, [providerChoice]);
+  useEffect(() => {
+    abConfigRef.current = abConfig;
+  }, [abConfig]);
 
   // Reset the per-phrase cycle whenever the operator moves to a different
-  // script line — never carries a live/finalized phrase's state forward.
-  // Adjusted during render (React's own recommended pattern for "reset
-  // state when a value changes") rather than in an effect, so there is no
-  // extra render pass and no risk of an effect running with stale state.
+  // script line — adjusted during render (React's own recommended pattern
+  // for "reset state when a value changes") rather than in an effect.
   const [phraseStateResetFor, setPhraseStateResetFor] = useState(phraseIndex);
   if (phraseStateResetFor !== phraseIndex) {
     setPhraseStateResetFor(phraseIndex);
@@ -168,6 +244,8 @@ export default function SherpaVoiceTestPage() {
     const rec: UtteranceRecord = {
       index: recordIndexRef.current++,
       recordedAt: new Date().toISOString(),
+      provider: providerChoiceRef.current,
+      abConfig: providerChoiceRef.current === "sherpa-onnx" ? abConfigRef.current : null,
       expectedPhrase: phraseIndexRef.current >= 0 && phraseIndexRef.current < ALL_PHRASES.length ? ALL_PHRASES[phraseIndexRef.current] : null,
       interims: [],
       finalText: null,
@@ -176,6 +254,8 @@ export default function SherpaVoiceTestPage() {
       finalMs: null,
       error: null,
       skipped: false,
+      classification: null,
+      correctness: "unmarked",
     };
     pendingRecordRef.current = rec;
     return rec;
@@ -200,6 +280,7 @@ export default function SherpaVoiceTestPage() {
     rec.finalText = result.transcript;
     rec.confidence = result.confidence;
     rec.finalMs = Math.round(now - utteranceT0Ref.current);
+    rec.classification = classifyForDisplay(result.transcript);
     setLiveFinal(result.transcript);
     setLastCompletedRecord(rec);
     setRecords((prev) => [...prev, rec]);
@@ -226,7 +307,7 @@ export default function SherpaVoiceTestPage() {
     utteranceT0Ref.current = null;
   }, []);
 
-  /** Always builds a brand-new provider instance — never reuses one across phrases, so no provider-level state can carry over either. Cheap for Sherpa: the expensive WASM/model load is cached at module scope (see sherpaOnnxProvider.ts), only the recognizer+stream are actually new. */
+  /** Always builds a brand-new provider instance — never reuses one across phrases, so no provider-level state can carry over either. Cheap for Sherpa: the expensive WASM/model load is cached at module scope, only the recognizer+stream are actually new (see sherpaOnnxProvider.ts). Configuration A/B/C selects real, different sherpa options — see this page's own top-of-file doc comment. */
   const buildProvider = useCallback((): SpeechProvider => {
     const commonOptions = {
       onInterimResult: handleInterim,
@@ -242,14 +323,27 @@ export default function SherpaVoiceTestPage() {
         utteranceT0Ref.current = performance.now();
       },
     };
-    return providerChoice === "sherpa-onnx"
-      ? createSherpaOnnxProvider({
-          ...commonOptions,
-          assetBaseUrl: "/sherpa-onnx-lab/",
-          hotwords: hotwordsEnabled ? hotwordList : undefined,
-        })
-      : createBrowserWebSpeechProvider(commonOptions);
-  }, [providerChoice, hotwordsEnabled, hotwordList, handleInterim, handleFinal, handleError]);
+    if (providerChoice !== "sherpa-onnx") {
+      return createBrowserWebSpeechProvider(commonOptions);
+    }
+    if (abConfig === "A") {
+      return createSherpaOnnxProvider({ ...commonOptions, assetBaseUrl: ASSET_BASE_URL, hotwords: undefined });
+    }
+    if (abConfig === "C") {
+      return createSherpaOnnxProvider({
+        ...commonOptions,
+        assetBaseUrl: ASSET_BASE_URL,
+        hotwords: hotwordList,
+        modelingUnit: "bpe",
+        bpeVocabUrl: BPE_VOCAB_URL,
+        hotwordCasing: "upper",
+      });
+    }
+    // B — exactly what every prior round shipped: hotwords on, default
+    // modelingUnit/casing (both CONFIRMED wrong for this model, kept
+    // exactly as-is so the A/B/C comparison measures the real regression).
+    return createSherpaOnnxProvider({ ...commonOptions, assetBaseUrl: ASSET_BASE_URL, hotwords: hotwordList });
+  }, [providerChoice, abConfig, hotwordList, handleInterim, handleFinal, handleError]);
 
   const startPhrase = useCallback(() => {
     if (phraseState === "listening") return;
@@ -295,21 +389,53 @@ export default function SherpaVoiceTestPage() {
     setPhraseIndex((i) => Math.min(ALL_PHRASES.length - 1, i + 1));
   }, [phraseState]);
 
+  const restartPhraseList = useCallback(() => {
+    setPhraseIndex(0);
+  }, []);
+
+  function markCorrectness(index: number, correctness: Correctness) {
+    setRecords((prev) => prev.map((r) => (r.index === index ? { ...r, correctness } : r)));
+  }
+
+  const aggregatesByConfig = useMemo(() => {
+    const groups: Record<string, UtteranceRecord[]> = {};
+    for (const r of records) {
+      const key = r.provider === "sherpa-onnx" ? `sherpa-${r.abConfig ?? "?"}` : "chrome";
+      (groups[key] ??= []).push(r);
+    }
+    return Object.entries(groups).map(([key, recs]) => {
+      const total = recs.length;
+      const accepted = recs.filter((r) => r.classification?.accepted).length;
+      const wouldProduceCardEvent = recs.filter((r) => r.classification?.wouldProduceCardEvent).length;
+      const marked = recs.filter((r) => r.correctness !== "unmarked").length;
+      const correct = recs.filter((r) => r.correctness === "correct").length;
+      return {
+        key,
+        total,
+        acceptedRate: total ? accepted / total : 0,
+        cardEventRate: total ? wouldProduceCardEvent / total : 0,
+        correctRate: marked ? correct / marked : null,
+        marked,
+      };
+    });
+  }, [records]);
+
   const exportJson = useMemo(
     () =>
       JSON.stringify(
         {
           exportedAt: new Date().toISOString(),
           provider: providerChoice,
-          hotwordsEnabled,
+          abConfig,
           hotwordCount: hotwordList.length,
           modelLoadMs,
+          aggregatesByConfig,
           records,
         },
         null,
         2
       ),
-    [providerChoice, hotwordsEnabled, hotwordList.length, modelLoadMs, records]
+    [providerChoice, abConfig, hotwordList.length, modelLoadMs, aggregatesByConfig, records]
   );
 
   function downloadJson() {
@@ -317,7 +443,7 @@ export default function SherpaVoiceTestPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `sherpa-mic-test-${providerChoice}-${Date.now()}.json`;
+    a.download = `sherpa-dealer-ab-test-${Date.now()}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -329,25 +455,24 @@ export default function SherpaVoiceTestPage() {
   }
 
   const currentPhrase = phraseIndex >= 0 && phraseIndex < ALL_PHRASES.length ? ALL_PHRASES[phraseIndex] : null;
-  const isNoisePhrase = phraseIndex >= SCRIPT_PHRASES.length && phraseIndex < SCRIPT_PHRASES.length + NOISE_PHRASES.length;
-  const isDealerProbe = phraseIndex >= SCRIPT_PHRASES.length + NOISE_PHRASES.length;
+  const isDealerStress = phraseIndex < DEALER_STRESS_PHRASES.length;
+  const isNoisePhrase = phraseIndex >= DEALER_STRESS_PHRASES.length + PLAYER_PHRASES.length;
 
   return (
     <div className="flex flex-col gap-4 pb-8">
       <div className="flex items-center gap-2">
         <FlaskConical className="h-5 w-5 text-accent" aria-hidden />
-        <h1 className="text-lg font-bold text-foreground">Sherpa Real Mic Field Test</h1>
+        <h1 className="text-lg font-bold text-foreground">Sherpa Dealer A/B/C Field Test</h1>
       </div>
       <p className="rounded-md border border-pending/40 bg-pending/10 p-2 text-xs font-medium text-pending">
-        ASR EVALUATION ONLY. This page never creates a CardEvent, never runs EyeOnPit normalization or narration
-        parsing, and is not connected to any investigation. It shows exactly what the selected speech engine itself
-        heard, raw. Each phrase is its own clean recognition segment — see this page&apos;s own SEGMENTATION doc
-        comment.
+        LAB DIAGNOSTIC. This page never creates a CardEvent and is not connected to any investigation. It shows raw
+        ASR output AND EyeOnPit&apos;s real, unmodified, read-only classification of that text — display only, never
+        dispatched or committed anywhere.
       </p>
 
-      {/* Provider selection */}
+      {/* Provider + configuration selection */}
       <section className="rounded-xl border border-border bg-surface p-3">
-        <h2 className="mb-2 text-sm font-bold text-foreground">1. Select provider</h2>
+        <h2 className="mb-2 text-sm font-bold text-foreground">1. Select provider and configuration</h2>
         <div className="flex gap-2">
           <button
             type="button"
@@ -370,26 +495,51 @@ export default function SherpaVoiceTestPage() {
             Chrome Web Speech (baseline)
           </button>
         </div>
-        <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={hotwordsEnabled}
-            onChange={(e) => setHotwordsEnabled(e.target.checked)}
-            disabled={providerChoice !== "sherpa-onnx" || phraseState === "listening"}
-          />
-          Enable EyeOnPit casino hotwords ({hotwordList.length} phrases, Sherpa only)
-        </label>
+
+        {providerChoice === "sherpa-onnx" && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(["A", "B", "C"] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setAbConfig(c)}
+                disabled={phraseState === "listening"}
+                className={`tap-target rounded-lg border px-3 text-sm font-semibold ${
+                  abConfig === c ? "border-accent bg-accent text-accent-foreground" : "border-border text-foreground"
+                } disabled:opacity-60`}
+              >
+                {c === "A" && "A — Hotwords OFF"}
+                {c === "B" && "B — Current (shipped)"}
+                {c === "C" && "C — Tuned (bpe + uppercase)"}
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="mt-2 text-xs text-muted-foreground">
+          {providerChoice !== "sherpa-onnx"
+            ? "Chrome baseline — A/B/C only applies to Sherpa."
+            : abConfig === "A"
+              ? "No hotwords file at all."
+              : abConfig === "B"
+                ? 'Hotwords ON, modelingUnit="cjkchar" (default) — the exact configuration every prior round shipped. CONFIRMED wrong for this model.'
+                : 'Hotwords ON, modelingUnit="bpe" + real bpe.vocab + UPPERCASE phrase text — the 2026-08-20 investigation\'s corrected configuration.'}
+        </p>
       </section>
 
       {/* Script + per-phrase controls */}
       <section className="rounded-xl border border-border bg-surface p-3">
-        <h2 className="mb-2 text-sm font-bold text-foreground">
-          2. Phrase {phraseIndex + 1} of {ALL_PHRASES.length}
-        </h2>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-bold text-foreground">
+            2. Phrase {phraseIndex + 1} of {ALL_PHRASES.length}
+          </h2>
+          <button type="button" onClick={restartPhraseList} className="text-xs font-semibold text-accent hover:underline">
+            Restart list from phrase 1
+          </button>
+        </div>
         <p className="rounded-md border border-accent/40 bg-accent/10 p-3 text-base font-semibold text-foreground">
           EXPECTED: {currentPhrase}
+          {isDealerStress && <span className="ml-2 rounded-full bg-surface-raised px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">DEALER STRESS</span>}
           {isNoisePhrase && <span className="ml-2 rounded-full bg-surface-raised px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">NOISE / NOT A COMMAND</span>}
-          {isDealerProbe && <span className="ml-2 rounded-full bg-surface-raised px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">DEALER PROBE</span>}
         </p>
 
         <div className="mt-3 flex flex-wrap gap-2">
@@ -442,17 +592,13 @@ export default function SherpaVoiceTestPage() {
         <h2 className="mb-2 text-sm font-bold text-foreground">Provider status</h2>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
           <dt className="text-muted-foreground">Provider</dt>
-          <dd className="text-foreground">{providerChoice}</dd>
+          <dd className="text-foreground">{providerChoice}{providerChoice === "sherpa-onnx" ? ` — config ${abConfig}` : ""}</dd>
           <dt className="text-muted-foreground">Status</dt>
           <dd className={status === "error" ? "font-semibold text-destructive" : status === "listening" ? "font-semibold text-status-green" : "text-foreground"}>
             {status}
           </dd>
           <dt className="text-muted-foreground">Last error</dt>
           <dd className="text-destructive">{lastError ?? "—"}</dd>
-          <dt className="text-muted-foreground">Hotword/context status</dt>
-          <dd className="text-foreground">
-            {providerChoice === "sherpa-onnx" ? (hotwordsEnabled ? `ENABLED — ${hotwordList.length} phrases` : "DISABLED") : "N/A (Chrome has no hotword API)"}
-          </dd>
           <dt className="text-muted-foreground">Model/session load time</dt>
           <dd className="text-foreground">{modelLoadMs !== null ? `${modelLoadMs} ms` : "—"}</dd>
           <dt className="text-muted-foreground">Approx. JS heap (Chrome-only)</dt>
@@ -462,9 +608,9 @@ export default function SherpaVoiceTestPage() {
         </dl>
       </section>
 
-      {/* Live transcript */}
+      {/* Live transcript + classification */}
       <section className="rounded-xl border border-border bg-surface p-3">
-        <h2 className="mb-2 text-sm font-bold text-foreground">Raw transcript (unmodified, pre-normalization)</h2>
+        <h2 className="mb-2 text-sm font-bold text-foreground">Raw transcript + classification (display only, never dispatched)</h2>
         <div className="mb-2">
           <div className="text-xs font-semibold text-muted-foreground">INTERIM (live)</div>
           <p className="min-h-6 rounded-md bg-surface-raised p-2 text-sm text-muted-foreground">{liveInterim || "—"}</p>
@@ -479,6 +625,49 @@ export default function SherpaVoiceTestPage() {
             <dd className="text-foreground">{lastCompletedRecord.firstInterimMs !== null ? `${lastCompletedRecord.firstInterimMs} ms` : "—"}</dd>
             <dt className="text-muted-foreground">Final latency</dt>
             <dd className="text-foreground">{lastCompletedRecord.finalMs !== null ? `${lastCompletedRecord.finalMs} ms` : "—"}</dd>
+            <dt className="text-muted-foreground">Accepted by classifier</dt>
+            <dd className={lastCompletedRecord.classification?.accepted ? "font-semibold text-status-green" : "text-foreground"}>
+              {lastCompletedRecord.classification ? (lastCompletedRecord.classification.accepted ? "ACCEPTED" : "REJECTED") : "—"}
+            </dd>
+            <dt className="text-muted-foreground">Would produce a CardEvent</dt>
+            <dd className={lastCompletedRecord.classification?.wouldProduceCardEvent ? "font-semibold text-status-orange" : "text-foreground"}>
+              {lastCompletedRecord.classification ? (lastCompletedRecord.classification.wouldProduceCardEvent ? "YES" : "no") : "—"}
+            </dd>
+            <dt className="text-muted-foreground">Classifier summary</dt>
+            <dd className="text-foreground">{lastCompletedRecord.classification?.summary ?? "—"}</dd>
+          </div>
+        )}
+      </section>
+
+      {/* Aggregate accuracy per configuration */}
+      <section className="rounded-xl border border-border bg-surface p-3">
+        <h2 className="mb-2 text-sm font-bold text-foreground">3. Aggregate accuracy by configuration</h2>
+        {aggregatesByConfig.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No phrases recorded yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="text-muted-foreground">
+                  <th className="pr-3">Configuration</th>
+                  <th className="pr-3">Phrases</th>
+                  <th className="pr-3">Accepted rate</th>
+                  <th className="pr-3">Would produce CardEvent rate</th>
+                  <th className="pr-3">Marked correct (of marked)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {aggregatesByConfig.map((a) => (
+                  <tr key={a.key} className="border-t border-border">
+                    <td className="pr-3 font-semibold text-foreground">{a.key}</td>
+                    <td className="pr-3 text-foreground">{a.total}</td>
+                    <td className="pr-3 text-foreground">{(a.acceptedRate * 100).toFixed(0)}%</td>
+                    <td className="pr-3 text-foreground">{(a.cardEventRate * 100).toFixed(0)}%</td>
+                    <td className="pr-3 text-foreground">{a.correctRate !== null ? `${(a.correctRate * 100).toFixed(0)}% (${a.marked})` : `— (0)`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
@@ -486,7 +675,7 @@ export default function SherpaVoiceTestPage() {
       {/* Results log */}
       <section className="rounded-xl border border-border bg-surface p-3">
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-bold text-foreground">3. Captured results ({records.length})</h2>
+          <h2 className="text-sm font-bold text-foreground">4. Captured results ({records.length})</h2>
           <div className="flex gap-2">
             <button type="button" onClick={copyJson} className="tap-target flex items-center gap-1 rounded-lg border border-border px-2 text-xs font-semibold text-foreground">
               <Copy className="h-3 w-3" aria-hidden /> Copy JSON
@@ -501,22 +690,51 @@ export default function SherpaVoiceTestPage() {
             <thead>
               <tr className="text-muted-foreground">
                 <th className="pr-2">#</th>
+                <th className="pr-2">Config</th>
                 <th className="pr-2">Expected</th>
-                <th className="pr-2">Final (raw)</th>
-                <th className="pr-2">1st interim</th>
-                <th className="pr-2">Final latency</th>
-                <th className="pr-2">Error</th>
+                <th className="pr-2">Raw final</th>
+                <th className="pr-2">Classified</th>
+                <th className="pr-2">Accepted</th>
+                <th className="pr-2">CardEvent?</th>
+                <th className="pr-2">Latency</th>
+                <th className="pr-2">Correct?</th>
               </tr>
             </thead>
             <tbody>
               {records.map((r) => (
                 <tr key={r.index} className="border-t border-border">
                   <td className="pr-2 text-foreground">{r.index + 1}</td>
+                  <td className="pr-2 text-muted-foreground">{r.provider === "sherpa-onnx" ? r.abConfig : "chrome"}</td>
                   <td className="pr-2 text-muted-foreground">{r.expectedPhrase ?? "—"}</td>
                   <td className="pr-2 font-medium text-foreground">{r.finalText ?? "—"}</td>
-                  <td className="pr-2 text-foreground">{r.firstInterimMs !== null ? `${r.firstInterimMs}ms` : "—"}</td>
+                  <td className="pr-2 text-foreground">{r.classification?.summary ?? "—"}</td>
+                  <td className={r.classification?.accepted ? "pr-2 font-semibold text-status-green" : "pr-2 text-foreground"}>
+                    {r.classification ? (r.classification.accepted ? "yes" : "no") : "—"}
+                  </td>
+                  <td className={r.classification?.wouldProduceCardEvent ? "pr-2 font-semibold text-status-orange" : "pr-2 text-foreground"}>
+                    {r.classification ? (r.classification.wouldProduceCardEvent ? "YES" : "no") : "—"}
+                  </td>
                   <td className="pr-2 text-foreground">{r.finalMs !== null ? `${r.finalMs}ms` : "—"}</td>
-                  <td className="pr-2 text-destructive">{r.error ?? "—"}</td>
+                  <td className="pr-2">
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => markCorrectness(r.index, "correct")}
+                        aria-label="Mark correct"
+                        className={`rounded p-0.5 ${r.correctness === "correct" ? "bg-status-green text-white" : "border border-border text-muted-foreground"}`}
+                      >
+                        <Check className="h-3 w-3" aria-hidden />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => markCorrectness(r.index, "incorrect")}
+                        aria-label="Mark incorrect"
+                        className={`rounded p-0.5 ${r.correctness === "incorrect" ? "bg-destructive text-white" : "border border-border text-muted-foreground"}`}
+                      >
+                        <X className="h-3 w-3" aria-hidden />
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

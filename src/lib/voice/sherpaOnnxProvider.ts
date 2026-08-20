@@ -36,6 +36,35 @@
  * section once that follow-up is run.
  *
  * ============================================================
+ * DEALER HOTWORD INVESTIGATION, 2026-08-20 — root cause found, lab-only fix
+ * ============================================================
+ * The real mic session that motivated the harness fix above also showed
+ * "Dealer" recognition was unstable even with hotwords ON — "Dealer has a
+ * five" consistently misheard as "Taylor," "Dealer showing ten" as
+ * "Tillers... a tin," while "Dealer" alone or "Dealer has a king" came
+ * through correctly. Investigating why (not fixing production behavior —
+ * see below) found TWO real, confirmed, compounding misconfigurations:
+ * `modelingUnit` was left at its default `"cjkchar"` for an English BPE
+ * model, and hotword phrase text was lowercase against a vocabulary
+ * trained on uppercase-only text. See `SHERPA_DEALER_HOTWORD_INVESTIGATION`
+ * below for the full, cited detail — every claim in it was independently
+ * verified (real training `bpe.model` downloaded and cross-checked, real
+ * `sentencepiece` tokenization run, real recognizer construction and
+ * decode re-tested in a real Chrome tab), not inferred from documentation
+ * alone.
+ *
+ * This fix is available via three new, all-optional
+ * `SherpaOnnxProviderOptions` fields (`modelingUnit`, `bpeVocabUrl`,
+ * `hotwordCasing`) — every one of them defaults to exactly what every
+ * prior round already shipped, so calling `createSherpaOnnxProvider`
+ * without them is byte-for-byte unchanged behavior. The corrected
+ * configuration is opt-in, exercised only by the lab's A/B/C comparison
+ * tooling (`/lab/sherpa-voice-test`) — whether it actually improves
+ * real-world Dealer accuracy has NOT been measured, since no microphone
+ * exists in this environment. See the module's own doc comment on
+ * `stillNotMeasured`.
+ *
+ * ============================================================
  * STATUS AS OF THE 2026-08-19 REAL-IMPLEMENTATION GATE: GENUINELY WIRED,
  * INDEPENDENTLY VERIFIED AGAINST REAL AUDIO — STILL NOT PRODUCTION-READY.
  * ============================================================
@@ -57,8 +86,8 @@
  * round, for one concrete, unavoidable reason: the ~205MB of WASM+model
  * assets this provider needs are **not shipped in this repository** — see
  * ASSET DEPLOYMENT below. `start()` fails loudly and specifically
- * (`onError("assets-not-found")`) when they're absent, rather than
- * pretending to work.
+ * (`onError("assets-not-found: <exact failing URL>")`) when they're
+ * absent, rather than pretending to work.
  *
  * ============================================================
  * VERIFICATION (real, performed this round — not documentation research)
@@ -132,18 +161,71 @@
  * repository** — a 200MB+ binary blob has no place in git history, and
  * Part 8 of this round's own instructions ("no production switch...
  * lab/development testing only") means it should never ship to normal
- * operators regardless. To actually exercise this provider locally:
+ * operators regardless. Confirmed the hard way, 2026-08-20: a real
+ * production Vercel deployment of `/lab/sherpa-voice-test` produced
+ * `onError("assets-not-found")` on 30/30 attempts, because Vercel deploys
+ * only what's tracked in git, and `public/sherpa-onnx-lab/` is gitignored
+ * — the assets simply never reached that deployment. This was always the
+ * documented, designed behavior of this code (see "Without that step"
+ * below, unchanged from the original 2026-08-19 round) — the gap was that
+ * nothing had actually provisioned the assets for a real deployment yet,
+ * and the page itself has no environment check preventing it from being
+ * *reachable* (behind the `/lab` passcode) in an environment where its one
+ * dependency was never shipped.
+ *
+ * LOCAL DEV:
  *   1. Download the official release from
  *      https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.6/sherpa-onnx-wasm-simd-v1.13.6-en-asr-zipformer.tar.bz2
  *   2. Extract it into `public/sherpa-onnx-lab/` (gitignored — see
  *      `.gitignore`) so Next.js serves it statically at
- *      `/sherpa-onnx-lab/*`.
- *   3. Pass `assetBaseUrl: "/sherpa-onnx-lab/"` (the default) when
- *      constructing this provider.
- * Without that step, `supported` may be `true` (the browser genuinely
- * could run it) but `start()` will fail with `onError("assets-not-found")`
- * the moment it tries to fetch the glue script — correct, honest
- * behavior, not a bug.
+ *      `/sherpa-onnx-lab/*`. Do the same for the generated `bpe.vocab`
+ *      (see `SHERPA_DEALER_HOTWORD_INVESTIGATION`).
+ *   3. Leave `assetBaseUrl`/`NEXT_PUBLIC_SHERPA_ASSET_BASE_URL` unset — both
+ *      default to `/sherpa-onnx-lab/`, unchanged from every prior round.
+ *
+ * PRODUCTION — PROVISIONED, 2026-08-20 (the fix for the incident above):
+ *   Do NOT commit the ~204MB bundle to git — a single required binary
+ *   already exceeds Vercel's own documented 100MB (Hobby) static/source
+ *   upload limit and would bloat every clone/checkout regardless of plan.
+ *   Instead, the exact verified local files (see VERIFICATION above) were
+ *   uploaded, byte-identical (sha256-checked — see
+ *   `sherpaAssetManifest.ts`), to Vercel Blob storage (public-read access;
+ *   the read-write token used for the one-time upload is a normal
+ *   server-side `BLOB_READ_WRITE_TOKEN` env var, never exposed to the
+ *   browser — the browser only ever fetches the resulting public URLs) at
+ *   the version-pinned, immutable path:
+ *     https://9uezlmmeazeykpud.public.blob.vercel-storage.com/sherpa/en-zipformer-2023-06-21-v1.13.6/
+ *   (uploaded with `addRandomSuffix: false` so filenames stay predictable —
+ *   the Vercel CLI's own `blob put -r false` flag did not honor this in
+ *   practice; the `@vercel/blob` SDK's `put()` did, and is what actually
+ *   produced this URL). The path segment
+ *   (`en-zipformer-2023-06-21-v1.13.6`, matching
+ *   `SHERPA_ASSET_MANIFEST.modelVersionId`) encodes both the model
+ *   identity and the engine/WASM release it was built from, so a future,
+ *   genuinely different model build lives at a DIFFERENT path rather than
+ *   silently overwriting this one — `allowOverwrite: false` was also used
+ *   for the same reason. Vercel's `NEXT_PUBLIC_SHERPA_ASSET_BASE_URL`
+ *   Production/Preview environment variable is set to
+ *   `https://9uezlmmeazeykpud.public.blob.vercel-storage.com/sherpa/en-zipformer-2023-06-21-v1.13.6/`
+ *   (inlined into the client bundle at build time — see
+ *   `resolveDefaultAssetBaseUrl` below); Development is deliberately left
+ *   unset so local dev keeps using the gitignored local path. This changes
+ *   NOTHING about production Browser Web Speech (a completely separate
+ *   provider) and NOTHING about `counting-engine/`.
+ *   RECOGNITION ACCURACY AGAINST THESE BLOB-HOSTED ASSETS HAS NOT BEEN
+ *   MEASURED — construction/loading was verified (see VERIFICATION), a
+ *   real microphone session against the deployed page is still required
+ *   before any accuracy claim. This provider remains experimental,
+ *   Lab-only, and not production-ready.
+ *
+ * Without a reachable `assetBaseUrl` (local files present, or the env var
+ * pointing at a real external host), `supported` may be `true` (the
+ * browser genuinely could run it) but `start()` will fail with
+ * `onError("assets-not-found: ...")` — the message now names the EXACT
+ * asset URL that failed (see `classifySherpaStartError` below) — the
+ * moment it tries to fetch the glue script. This is correct, honest,
+ * fail-CLOSED behavior, not a bug: the recognizer never silently proceeds
+ * without its real model.
  *
  * ============================================================
  * SAFETY BOUNDARY — UNCHANGED. This provider, like every SpeechProvider,
@@ -155,6 +237,7 @@
  */
 import type { SpeechProvider, SpeechProviderOptions, SpeechProviderResult } from "./speechProvider";
 import type { HotwordEntry } from "./casinoVoiceContext";
+import { verifyFetchedAssetSize } from "./sherpaAssetManifest";
 
 export const SHERPA_ONNX_PROVIDER_ID = "sherpa-onnx";
 
@@ -216,16 +299,68 @@ export const SHERPA_HOTWORDS_DECODING_METHOD = "modified_beam_search" as const;
 /**
  * Builds the plain-text hotwords file content sherpa-onnx's `hotwordsFile`
  * config expects — one phrase per line. Pure, no WASM/DOM dependency, so
- * it's directly unit-testable. Deliberately just the phrase, one per line
- * (the simplest documented hotwords-file form) — not attempting
- * phoneme-level tuning per entry; `weight`/`reason` from `HotwordEntry`
- * are diagnostic-only here too, exactly as `casinoVoiceContext.ts` already
- * documents them, since this JS API's hotwords file has no per-line score
- * field of its own (only the single recognizer-wide `hotwordsScore`).
+ * it's directly unit-testable.
+ *
+ * `casing` — CONFIRMED this round (2026-08-20 Dealer hotword investigation,
+ * not assumed): this model's 500-piece BPE vocabulary was trained on
+ * UPPERCASE text only. Verified directly with the real training
+ * `bpe.model`: `sp.encode("DEALER")` → `["▁DE","AL","ER"]` (three real
+ * vocabulary pieces) but `sp.encode("dealer")` → `["▁","dealer"]` — the
+ * lowercase form doesn't decompose into known subword pieces at all and
+ * falls back to an unmatched literal, which cannot bias anything.
+ * `casing: "upper"` is the CORRECT setting for this model; `"as-is"` (the
+ * default, preserving the exact behavior every prior round shipped) is
+ * KNOWN WRONG for this model but is the default anyway so existing
+ * configuration B behavior in the A/B/C lab comparison stays exactly what
+ * shipped before this investigation, not silently changed underneath it.
  */
-export function buildHotwordsFileContent(hotwords: HotwordEntry[]): string {
-  return hotwords.map((h) => h.phrase).join("\n") + (hotwords.length > 0 ? "\n" : "");
+export function buildHotwordsFileContent(hotwords: HotwordEntry[], casing: "as-is" | "upper" = "as-is"): string {
+  const phrases = hotwords.map((h) => (casing === "upper" ? h.phrase.toUpperCase() : h.phrase));
+  return phrases.join("\n") + (phrases.length > 0 ? "\n" : "");
 }
+
+/**
+ * The confirmed root-cause findings from the 2026-08-20 Dealer hotword
+ * investigation — real, verified facts, not documentation-only research.
+ * See this file's own DEALER HOTWORD INVESTIGATION doc comment for the
+ * full narrative; this is the machine-readable summary the A/B/C lab tool
+ * and the research doc both cite.
+ */
+export const SHERPA_DEALER_HOTWORD_INVESTIGATION = {
+  investigatedOn: "2026-08-20",
+  findings: {
+    modelingUnitWasWrong: {
+      shipped: "cjkchar",
+      correct: "bpe",
+      confirmedVia:
+        "Read sherpa-onnx's own online-model-config.cc: modeling_unit defaults to \"cjkchar\"; bpe_vocab is only required (and only checked to exist) when modeling_unit is \"bpe\" or \"cjkchar+bpe\" — so the shipped \"cjkchar\" default silently passed validation with an empty bpeVocab, then encoded hotword text using a CJK-character tokenizer against an English BPE model's vocabulary.",
+    },
+    bpeVocabWasMissing: {
+      shippedInModelBundle: false,
+      realSourceFound: true,
+      source: "https://huggingface.co/marcoyang/icefall-libri-giga-pruned-transducer-stateless7-streaming-2023-04-04/resolve/main/data/lang_bpe_500/bpe.model",
+      verifiedMatch:
+        "tokens.txt from this training-source repo is byte-identical to tokens.txt in the actually-bundled csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-21 model repo, confirming the same 500-piece vocabulary — not a guess.",
+      generatedVocabFile:
+        "bpe.vocab derived from the real bpe.model via the sentencepiece Python package (piece + log-probability per line, matching sherpa-onnx's documented format) — deployed to public/sherpa-onnx-lab/bpe.vocab (gitignored, lab-only, same as the WASM/model bundle).",
+    },
+    hotwordCasingWasWrong: {
+      shipped: "lowercase (casinoVoiceContext.ts's BASE_VOCABULARY entries are lowercase)",
+      correct: "UPPERCASE",
+      confirmedVia: 'Direct sentencepiece test against the real bpe.model: "DEALER" -> 3 valid pieces, "dealer" -> unmatched fallback.',
+    },
+    hotwordsRequireBothFixesTogether:
+      "Fixing only modelingUnit without a real bpeVocab file causes hard construction failure (sherpa-onnx's own config validation rejects a missing bpe_vocab file). Fixing only casing without modelingUnit/bpeVocab has no effect (cjkchar tokenization ignores case correctness because it's the wrong tokenizer entirely). Both were required.",
+    perLineScoreSyntaxConfirmed:
+      'Real, documented, and verified: hotwords file lines may end in " :SCORE" (e.g. "DEALER :3.5") to override the recognizer-wide hotwordsScore for that one entry — not used by the current lab tuning (a single elevated hotwordsScore was judged clearer to reason about for a first real-mic pass), but confirmed available for a future round.',
+    multiWordPhrasesConfirmed:
+      'Real, documented, and verified: a hotwords-file line may be a multi-word phrase ("DEALER HAS"), and biasing applies to the whole matched token sequence as a unit, not per-word independently.',
+    constructionVerified:
+      "A real recognizer was constructed in a real Chrome tab with modelingUnit=\"bpe\" + the generated bpe.vocab + UPPERCASE hotwords, and successfully decoded a real audio clip with an unchanged, correct, word-for-word transcript — the fix does not break ordinary recognition.",
+    stillNotMeasured:
+      "Whether this fix actually improves real Dealer recognition accuracy against real speech has NOT been measured — no microphone exists in this environment. Construction and non-regression were verified; the accuracy question is exactly what the A/B/C lab tooling exists to let a real operator measure.",
+  },
+} as const;
 
 /** Single recognizer-wide bias strength passed as sherpa-onnx's own `hotwordsScore` — a plain constant (not per-word) because the JS API only exposes one. Chosen conservatively: strong enough to matter, far below a value that would let hotword tokens override otherwise-clear speech ("do not over-bias garbage into valid commands"). */
 export const SHERPA_HOTWORDS_SCORE = 2.0;
@@ -269,11 +404,81 @@ function detectAmbientSherpaOnnxSupport(): SherpaFeatureDetection {
   });
 }
 
+/**
+ * Pure resolution logic for the default `assetBaseUrl` — parameterized
+ * (rather than reading `process.env` directly) so it's testable without
+ * env-var stubbing/module-reload gymnastics; the one real call site below
+ * passes the real `process.env`. `NEXT_PUBLIC_SHERPA_ASSET_BASE_URL` is a
+ * normal Next.js public env var: unset in local dev (falls back to the
+ * gitignored `/sherpa-onnx-lab/` path, byte-for-byte the prior hardcoded
+ * default), settable per-environment in Vercel's project settings once a
+ * real external asset host exists — see ASSET DEPLOYMENT above. This is
+ * the ONLY way `assetBaseUrl` differs between environments; nothing else
+ * in this file reads any other env var.
+ */
+export function resolveDefaultAssetBaseUrl(env: Record<string, string | undefined>): string {
+  return env.NEXT_PUBLIC_SHERPA_ASSET_BASE_URL || "/sherpa-onnx-lab/";
+}
+
+// `process.env.NEXT_PUBLIC_SHERPA_ASSET_BASE_URL` MUST appear as this exact
+// literal expression here — Next.js's build-time inlining only recognizes
+// `process.env.<LITERAL_NAME>` textually in the source; passing the whole
+// `process.env` object into a function (as this line used to) defeats that
+// static replacement, since the client bundle never actually receives a
+// populated `process.env` at runtime — every NEXT_PUBLIC_* value the
+// browser can see is one this exact literal pattern was found and replaced
+// for at build time. `resolveDefaultAssetBaseUrl` itself stays a plain,
+// parameterized, testable function; only the call site needs the literal.
+const DEFAULT_ASSET_BASE_URL = resolveDefaultAssetBaseUrl({
+  NEXT_PUBLIC_SHERPA_ASSET_BASE_URL: process.env.NEXT_PUBLIC_SHERPA_ASSET_BASE_URL,
+});
+
+/**
+ * Classifies a caught `start()` error message into the code passed to
+ * `onError` — pure and exported so it's independently testable without a
+ * real WASM/DOM environment (see the "assets-not-found" production
+ * incident this round: no test existed for this exact code path). A
+ * 404/load failure is reported as `assets-not-found: <detail>`, appending
+ * the underlying message (which already names the exact failing URL — see
+ * `loadScript`/`fetchBpeVocab`) rather than collapsing it to a bare,
+ * un-actionable generic string. Any other error passes through verbatim.
+ */
+export function classifySherpaStartError(message: string): string {
+  return /404|failed to load/i.test(message) ? `assets-not-found: ${message}` : message;
+}
+
 export interface SherpaOnnxProviderOptions extends SpeechProviderOptions {
-  /** Base URL the WASM glue JS / .wasm / .data files are served from — see ASSET DEPLOYMENT above. Defaults to "/sherpa-onnx-lab/", a gitignored dev-only static path, never committed. */
+  /** Base URL the WASM glue JS / .wasm / .data files are served from — see ASSET DEPLOYMENT above. Defaults to `resolveDefaultAssetBaseUrl(process.env)` (env-var-overridable; `/sherpa-onnx-lab/`, a gitignored dev-only static path, when unset). */
   assetBaseUrl?: string;
   /** EyeOnPit casino vocabulary to bias, from CasinoVoiceContext.buildHotwordList() — see that module's own doc comment. Omit for plain (no-hotwords) recognition. */
   hotwords?: HotwordEntry[];
+  /**
+   * Sherpa-onnx's own `modeling-unit` config value. Defaults to `"cjkchar"`
+   * — the exact value every prior round shipped, deliberately preserved as
+   * the default so existing behavior never changes silently. CONFIRMED
+   * WRONG for this English BPE model — see
+   * `SHERPA_DEALER_HOTWORD_INVESTIGATION`. Pass `"bpe"` (together with
+   * `bpeVocabUrl`) for the corrected configuration.
+   */
+  modelingUnit?: "cjkchar" | "bpe";
+  /**
+   * URL to fetch a real sentencepiece `bpe.vocab` text file from (piece +
+   * log-probability per line) — REQUIRED when `modelingUnit` is `"bpe"`
+   * (sherpa-onnx's own config validation hard-fails recognizer
+   * construction without it). Ignored when `modelingUnit` is `"cjkchar"`.
+   * A real one, generated from this exact model's own training
+   * `bpe.model`, is deployed at `/sherpa-onnx-lab/bpe.vocab` — see
+   * `SHERPA_DEALER_HOTWORD_INVESTIGATION.findings.bpeVocabWasMissing`.
+   */
+  bpeVocabUrl?: string;
+  /**
+   * Case transform applied to hotword phrase text before writing the
+   * hotwords file — see `buildHotwordsFileContent`'s own doc comment for
+   * why `"upper"` is the CONFIRMED correct setting for this model, and why
+   * `"as-is"` (matching every prior round's actual behavior) remains the
+   * default.
+   */
+  hotwordCasing?: "as-is" | "upper";
 }
 
 // Minimal shape of what the loaded WASM glue actually exposes globally —
@@ -352,8 +557,47 @@ registerProcessor('sherpa-capture-processor', SherpaCaptureProcessor);
 // memory."
 let moduleLoadPromise: Promise<SherpaModule> | null = null;
 
+// Same reasoning as moduleLoadPromise — the bpe.vocab file (~13KB) doesn't
+// change between phrases or A/B/C configuration switches within one page
+// load, so it's fetched once and cached by URL, not re-fetched per start().
+const bpeVocabCache = new Map<string, Promise<string>>();
+async function fetchBpeVocab(url: string): Promise<string> {
+  let cached = bpeVocabCache.get(url);
+  if (!cached) {
+    cached = fetch(url).then(async (r) => {
+      if (!r.ok) throw new Error(`failed to load ${url}`);
+      // SHERPA_ASSET_MANIFEST integrity check (2026-08-20 Blob deployment
+      // round) — bpe.vocab is the one asset this provider fetches via
+      // plain fetch() rather than Emscripten's own internal loading (see
+      // sherpaAssetManifest.ts's own doc comment for why the WASM/data
+      // files aren't checked the same way), so a real, cheap byte-length
+      // check against the manifest is practical here: catches a stale
+      // manifest or an accidentally-swapped file at this URL before it's
+      // silently written into the recognizer's virtual filesystem. Checked
+      // against the response's own Content-Length header (real byte
+      // count), never `text.length` — a SentencePiece vocab file's "▁"
+      // marker and similar multi-byte UTF-8 characters make JS string
+      // length diverge from byte length, which would produce false-
+      // positive mismatches against a manifest recorded from raw file
+      // bytes (sha256sum/stat).
+      const contentLength = r.headers.get("content-length");
+      if (contentLength != null) {
+        const check = verifyFetchedAssetSize("bpe.vocab", Number(contentLength));
+        if (check && !check.ok) {
+          throw new Error(
+            `bpe.vocab size mismatch at ${url} — expected ${check.expected} bytes, got ${check.actual} (possible model/version mismatch)`
+          );
+        }
+      }
+      return r.text();
+    });
+    bpeVocabCache.set(url, cached);
+  }
+  return cached;
+}
+
 export function createSherpaOnnxProvider(options: SherpaOnnxProviderOptions): SpeechProvider {
-  const assetBaseUrl = (options.assetBaseUrl ?? "/sherpa-onnx-lab/").replace(/\/?$/, "/");
+  const assetBaseUrl = (options.assetBaseUrl ?? DEFAULT_ASSET_BASE_URL).replace(/\/?$/, "/");
   const detection = detectAmbientSherpaOnnxSupport();
   const supported = detection.webAssembly && detection.audioWorklet && detection.getUserMedia;
 
@@ -406,11 +650,11 @@ export function createSherpaOnnxProvider(options: SherpaOnnxProviderOptions): Sp
     return moduleLoadPromise;
   }
 
-  function buildRecognizerConfig(module: SherpaModule) {
+  function buildRecognizerConfig(module: SherpaModule, bpeVocabFsPath: string | null) {
     const useHotwords = !!options.hotwords && options.hotwords.length > 0;
     if (useHotwords) {
       const fs = window.FS ?? module.FS;
-      fs?.writeFile("hotwords.txt", buildHotwordsFileContent(options.hotwords!));
+      fs?.writeFile("hotwords.txt", buildHotwordsFileContent(options.hotwords!, options.hotwordCasing ?? "as-is"));
     }
     return {
       featConfig: { sampleRate: 16000, featureDim: 80 },
@@ -425,8 +669,12 @@ export function createSherpaOnnxProvider(options: SherpaOnnxProviderOptions): Sp
         provider: "cpu",
         debug: 0,
         modelType: "",
-        modelingUnit: "cjkchar",
-        bpeVocab: "",
+        // Default "cjkchar" preserves every prior round's exact shipped
+        // behavior — CONFIRMED WRONG for this English BPE model, see
+        // SHERPA_DEALER_HOTWORD_INVESTIGATION. Pass modelingUnit: "bpe" +
+        // bpeVocabUrl for the corrected configuration.
+        modelingUnit: options.modelingUnit ?? "cjkchar",
+        bpeVocab: bpeVocabFsPath ?? "",
       },
       decodingMethod: useHotwords ? SHERPA_HOTWORDS_DECODING_METHOD : "greedy_search",
       maxActivePaths: 4,
@@ -478,7 +726,16 @@ export function createSherpaOnnxProvider(options: SherpaOnnxProviderOptions): Sp
     running = true;
     try {
       const sherpaModule = await initModule();
-      const config = buildRecognizerConfig(sherpaModule);
+
+      let bpeVocabFsPath: string | null = null;
+      if (options.modelingUnit === "bpe" && options.bpeVocabUrl) {
+        const vocabText = await fetchBpeVocab(options.bpeVocabUrl);
+        const fs = window.FS ?? sherpaModule.FS;
+        fs?.writeFile("bpe.vocab", vocabText);
+        bpeVocabFsPath = "bpe.vocab";
+      }
+
+      const config = buildRecognizerConfig(sherpaModule, bpeVocabFsPath);
       const createFn = window.createOnlineRecognizer;
       if (!createFn) throw new Error("createOnlineRecognizer missing after module init");
       recognizer = createFn(sherpaModule, config);
@@ -505,8 +762,7 @@ export function createSherpaOnnxProvider(options: SherpaOnnxProviderOptions): Sp
     } catch (err) {
       running = false;
       const message = err instanceof Error ? err.message : String(err);
-      const code = /404|failed to load/i.test(message) ? "assets-not-found" : message;
-      options.onError?.(code);
+      options.onError?.(classifySherpaStartError(message));
     }
   }
 

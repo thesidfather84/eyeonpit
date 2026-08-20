@@ -19,8 +19,11 @@ import {
   SHERPA_ONNX_REAL_AUDIO_VERIFICATION,
   SHERPA_HOTWORDS_DECODING_METHOD,
   SHERPA_HOTWORDS_SCORE,
+  SHERPA_DEALER_HOTWORD_INVESTIGATION,
   buildHotwordsFileContent,
   detectSherpaOnnxSupport,
+  resolveDefaultAssetBaseUrl,
+  classifySherpaStartError,
 } from "./sherpaOnnxProvider";
 import type { HotwordEntry } from "./casinoVoiceContext";
 
@@ -44,6 +47,20 @@ describe("buildHotwordsFileContent — pure, no WASM/DOM", () => {
     expect(content).not.toContain("1");
     expect(content).toBe("ace\n");
   });
+
+  it('defaults to "as-is" casing — exact prior-round behavior, unchanged unless explicitly opted in', () => {
+    const hotwords: HotwordEntry[] = [{ phrase: "dealer", weight: 10, reason: "test" }];
+    expect(buildHotwordsFileContent(hotwords)).toBe("dealer\n");
+    expect(buildHotwordsFileContent(hotwords, "as-is")).toBe("dealer\n");
+  });
+
+  it('uppercases every phrase when casing is "upper" — the CONFIRMED correct setting for this model', () => {
+    const hotwords: HotwordEntry[] = [
+      { phrase: "dealer", weight: 10, reason: "test" },
+      { phrase: "player", weight: 9, reason: "test" },
+    ];
+    expect(buildHotwordsFileContent(hotwords, "upper")).toBe("DEALER\nPLAYER\n");
+  });
 });
 
 describe("detectSherpaOnnxSupport — pure feature detection", () => {
@@ -65,6 +82,54 @@ describe("detectSherpaOnnxSupport — pure feature detection", () => {
     expect(
       detectSherpaOnnxSupport({ hasWindow: true, hasWebAssembly: true, hasAudioWorkletNode: true, hasGetUserMedia: true })
     ).toEqual({ webAssembly: true, audioWorklet: true, getUserMedia: true });
+  });
+});
+
+describe("resolveDefaultAssetBaseUrl — the 2026-08-20 \"assets-not-found\" production-incident fix", () => {
+  it("falls back to the gitignored local dev path when the env var is unset — byte-for-byte the prior hardcoded default", () => {
+    expect(resolveDefaultAssetBaseUrl({})).toBe("/sherpa-onnx-lab/");
+  });
+
+  it("falls back to the local dev path when the env var is an empty string", () => {
+    expect(resolveDefaultAssetBaseUrl({ NEXT_PUBLIC_SHERPA_ASSET_BASE_URL: "" })).toBe("/sherpa-onnx-lab/");
+  });
+
+  it("uses the env var verbatim when set — lets a real deployment point at externally-hosted assets with zero code change", () => {
+    expect(resolveDefaultAssetBaseUrl({ NEXT_PUBLIC_SHERPA_ASSET_BASE_URL: "https://blob.example.com/sherpa/v1.13.6/" })).toBe(
+      "https://blob.example.com/sherpa/v1.13.6/"
+    );
+  });
+
+  it("ignores unrelated env vars", () => {
+    expect(resolveDefaultAssetBaseUrl({ NODE_ENV: "production", VERCEL_ENV: "production" })).toBe("/sherpa-onnx-lab/");
+  });
+});
+
+describe("classifySherpaStartError — the exact-asset-URL error detail fix", () => {
+  it('classifies a loadScript 404 as "assets-not-found", naming the exact failing URL', () => {
+    const result = classifySherpaStartError("failed to load /sherpa-onnx-lab/sherpa-onnx-asr.js");
+    expect(result).toBe("assets-not-found: failed to load /sherpa-onnx-lab/sherpa-onnx-asr.js");
+  });
+
+  it('classifies a bpe.vocab fetch failure as "assets-not-found", naming that exact URL too', () => {
+    const result = classifySherpaStartError("failed to load /sherpa-onnx-lab/bpe.vocab");
+    expect(result).toBe("assets-not-found: failed to load /sherpa-onnx-lab/bpe.vocab");
+  });
+
+  it("classifies a bare 404-mentioning message the same way", () => {
+    expect(classifySherpaStartError("Request failed with status 404")).toMatch(/^assets-not-found: /);
+  });
+
+  it("passes through an unrelated error message verbatim — never mislabels a real WASM/recognizer error as a missing asset", () => {
+    expect(classifySherpaStartError("createOnlineRecognizer missing after module init")).toBe(
+      "createOnlineRecognizer missing after module init"
+    );
+  });
+
+  it("is case-insensitive on the 404/failed-to-load match", () => {
+    expect(classifySherpaStartError("FAILED TO LOAD /sherpa-onnx-lab/sherpa-onnx-wasm-main-asr.wasm")).toMatch(
+      /^assets-not-found: /
+    );
   });
 });
 
@@ -115,6 +180,32 @@ describe("createSherpaOnnxProvider — Node/vitest environment (no window)", () 
       })
     ).not.toThrow();
   });
+
+  it("accepts modelingUnit/bpeVocabUrl/hotwordCasing (the Dealer-investigation fix) without throwing at construction time", () => {
+    expect(() =>
+      createSherpaOnnxProvider({
+        onFinalResult: vi.fn(),
+        assetBaseUrl: "/sherpa-onnx-lab/",
+        hotwords: [{ phrase: "dealer", weight: 10, reason: "casino vocabulary" }],
+        modelingUnit: "bpe",
+        bpeVocabUrl: "/sherpa-onnx-lab/bpe.vocab",
+        hotwordCasing: "upper",
+      })
+    ).not.toThrow();
+  });
+
+  it("still reports onError(\"unsupported\") with the tuned options — construction-time-only fields never bypass real feature detection", () => {
+    const onError = vi.fn();
+    const provider = createSherpaOnnxProvider({
+      onFinalResult: vi.fn(),
+      onError,
+      modelingUnit: "bpe",
+      bpeVocabUrl: "/sherpa-onnx-lab/bpe.vocab",
+      hotwordCasing: "upper",
+    });
+    provider.start();
+    expect(onError).toHaveBeenCalledWith("unsupported");
+  });
 });
 
 describe("SHERPA_ONNX_PROVENANCE — real, cited, corrected this round", () => {
@@ -153,5 +244,26 @@ describe("hotwords decoding requirements — confirmed for real this round, not 
   it("hotwords score is a positive, conservative constant", () => {
     expect(SHERPA_HOTWORDS_SCORE).toBeGreaterThan(0);
     expect(SHERPA_HOTWORDS_SCORE).toBeLessThan(10);
+  });
+});
+
+describe("SHERPA_DEALER_HOTWORD_INVESTIGATION — the 2026-08-20 confirmed root-cause record", () => {
+  it("records modelingUnit was shipped wrong and bpe is confirmed correct", () => {
+    expect(SHERPA_DEALER_HOTWORD_INVESTIGATION.findings.modelingUnitWasWrong.shipped).toBe("cjkchar");
+    expect(SHERPA_DEALER_HOTWORD_INVESTIGATION.findings.modelingUnitWasWrong.correct).toBe("bpe");
+  });
+
+  it("records the model bundle does NOT ship bpe.vocab, and cites a real, verified source for it", () => {
+    expect(SHERPA_DEALER_HOTWORD_INVESTIGATION.findings.bpeVocabWasMissing.shippedInModelBundle).toBe(false);
+    expect(SHERPA_DEALER_HOTWORD_INVESTIGATION.findings.bpeVocabWasMissing.realSourceFound).toBe(true);
+    expect(SHERPA_DEALER_HOTWORD_INVESTIGATION.findings.bpeVocabWasMissing.source).toContain("bpe.model");
+  });
+
+  it("records hotword casing was shipped wrong (lowercase) and UPPERCASE is confirmed correct", () => {
+    expect(SHERPA_DEALER_HOTWORD_INVESTIGATION.findings.hotwordCasingWasWrong.correct).toBe("UPPERCASE");
+  });
+
+  it("honestly records that real-mic accuracy improvement is still not measured", () => {
+    expect(SHERPA_DEALER_HOTWORD_INVESTIGATION.findings.stillNotMeasured).toMatch(/not been measured/i);
   });
 });

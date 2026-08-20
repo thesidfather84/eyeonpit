@@ -43,9 +43,9 @@ export function canCompleteRound(investigation: Investigation, round: Round): Ro
   }
 
   for (const seatNumber of investigation.occupiedSeats) {
-    checkHand(round.seats[seatNumber], `Seat ${seatNumber}`, reasons);
+    checkHand(round.seats[seatNumber], `Spot ${seatNumber}`, reasons);
     const splitHand = round.splitHands[seatNumber];
-    if (splitHand) checkHand(splitHand, `Seat ${seatNumber} split hand`, reasons);
+    if (splitHand) checkHand(splitHand, `Spot ${seatNumber} split hand`, reasons);
   }
 
   return { canComplete: reasons.length === 0, reasons };

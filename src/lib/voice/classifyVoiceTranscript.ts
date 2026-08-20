@@ -22,9 +22,9 @@
  * Order (identical to VoiceControl, and to speech -> normalize -> ... ->
  * reject in parseReadOnlyQuery.ts's own doc comment):
  *   note-start phrase -> lifecycle phrase -> table-change -> read-only
- *   query -> narration -> legacy single-command -> UNKNOWN_COMMAND (or, only
- *   when explicitly enabled by the caller, the dealer-confusion recovery
- *   grammar below).
+ *   query -> set-active-target intent -> narration -> legacy single-command
+ *   -> UNKNOWN_COMMAND (or, only when explicitly enabled by the caller, the
+ *   dealer-confusion recovery grammar below).
  *
  * CANONICALIZATION (voice reliability spec §1 — the V-000006/V-000018
  * resolver bug): narration and the legacy single-command parser can each
@@ -65,6 +65,7 @@ import {
 import { parseNarration, type NarrationOp } from "./parseNarration";
 import { parseTableChangeCommand } from "./parseTableChangeCommand";
 import { parseReadOnlyQuery } from "./parseReadOnlyQuery";
+import { parseSetActiveTargetIntent } from "./parseSetActiveTargetIntent";
 import {
   NOTE_START_PHRASES,
   NOTE_START_WITH_CONTENT_RE,
@@ -85,6 +86,7 @@ export type ClassificationSource =
   | "lifecycle"
   | "table-change"
   | "read-only-query"
+  | "set-active-target"
   | "narration"
   | "legacy"
   | "dealer-confusion-recovery";
@@ -271,8 +273,33 @@ const DEALER_CONFUSION_TOKENS: Record<string, string> = {
 };
 
 const DEALER_RECOVERY_CONNECTORS = new Set(["has", "is", "got", "shows", "as"]);
-const DEALER_RECOVERY_FILLERS = new Set(["a", "an", "the"]);
+// "and" joins a SECOND (or third) card onto the same recovered dealer hand
+// ("Spotify has a five and a king") — kept in the same filler set as
+// "a"/"an"/"the" rather than DEALER_RECOVERY_CONNECTORS, since it never
+// starts the recovery (only the connector immediately after the confusion
+// token does that), it only ever continues one already in progress. "in"
+// (Chrome Patch round real-mic finding — "Taylor has a king IN a five")
+// is the exact same ASR mishearing of "and" already recognized for
+// ordinary narration's own HAND_CONNECTOR_WORDS, extended here to this
+// separate recovery grammar, which keeps its own filler list.
+const DEALER_RECOVERY_FILLERS = new Set(["a", "an", "the", "and", "in"]);
 
+/**
+ * PC Field Test #2 — extends the single-card recovery below (unchanged in
+ * spirit) to a whole ORDERED SEQUENCE of ranks, so "Spotify has a five and
+ * a king" recovers to DEALER 5, K — two cards, in the order spoken — not
+ * just the first. Every safety condition from the single-card version
+ * still applies unconditionally to the WHOLE transcript: the confusion
+ * token must still be the first word, immediately followed by a
+ * recognized connector, no uncertainty language anywhere, and every
+ * remaining token must be exactly a filler word or a card-rank word — a
+ * seat-prefix word, "dealer", or any other unrecognized token still aborts
+ * the ENTIRE recovery (never a partial one), exactly as before. The only
+ * change is that 2+ ranks are now a valid, unambiguous result (an ordered
+ * hand) instead of an automatic abort — there is no ambiguity in "five
+ * then king," only in which single one was meant, which no longer applies
+ * once every rank is kept, in order.
+ */
 function recoverDealerConfusionCore(rawTranscript: string): CoreClassification | null {
   const normalized = normalizeTranscript(rawTranscript);
   const tokens = normalized.split(" ").filter(Boolean);
@@ -284,30 +311,41 @@ function recoverDealerConfusionCore(rawTranscript: string): CoreClassification |
   if (!DEALER_RECOVERY_CONNECTORS.has(second)) return null;
   if (containsUncertaintyLanguage(tokens)) return null;
 
-  let rankWord: string | null = null;
-  let rankCount = 0;
+  const rankWords: string[] = [];
   for (const token of rest) {
     if (DEALER_RECOVERY_FILLERS.has(token)) continue;
     if (SEAT_PREFIX_WORDS.includes(token) || token === "dealer") return null; // an explicit OTHER target present — never guess between two targets
     if (token in RANK_WORDS) {
-      rankCount += 1;
-      rankWord = token;
+      rankWords.push(token);
       continue;
     }
     return null; // any other unrecognized token breaks the narrow required shape
   }
-  if (rankCount !== 1 || rankWord == null) return null; // zero or 2+ ranks — not unambiguous
+  if (rankWords.length === 0) return null; // zero ranks — nothing to recover
 
-  const rank = RANK_WORDS[rankWord];
-  const displayRank = FACE_CARD_DISPLAY[rankWord];
-  const steps: CanonicalStep[] = [{ kind: "card", target: "DEALER", rank, displayRank }];
+  const steps: CanonicalStep[] = rankWords.map((word) => ({
+    kind: "card" as const,
+    target: "DEALER",
+    rank: RANK_WORDS[word],
+    displayRank: FACE_CARD_DISPLAY[word],
+  }));
+  const narrationOps: NarrationOp[] = [
+    { kind: "selectTarget", target: { kind: "dealer" } },
+    ...rankWords.map((word) => ({
+      kind: "card" as const,
+      target: { kind: "dealer" as const },
+      rank: RANK_WORDS[word],
+      ...(FACE_CARD_DISPLAY[word] ? { displayRank: FACE_CARD_DISPLAY[word] as "J" | "Q" | "K" } : {}),
+    })),
+  ];
+  const [firstWord] = rankWords;
   const recoveredCommand: VoiceCommandKind = {
     kind: "card",
-    rank,
+    rank: RANK_WORDS[firstWord],
     target: { kind: "dealer" },
-    ...(displayRank ? { displayRank: displayRank as "J" | "Q" | "K" } : {}),
+    ...(FACE_CARD_DISPLAY[firstWord] ? { displayRank: FACE_CARD_DISPLAY[firstWord] as "J" | "Q" | "K" } : {}),
   };
-  return fromSteps("dealer-confusion-recovery", steps, { recoveryRuleId: ruleId, recoveredCommand });
+  return fromSteps("dealer-confusion-recovery", steps, { recoveryRuleId: ruleId, recoveredCommand, narrationOps });
 }
 
 /** Public wrapper around recoverDealerConfusionCore — attaches `appliedRules` exactly like classifyVoiceTranscript does, so a caller using this directly (nBestResolver.ts's last-resort fallback pass) still gets full diagnostics on the recovered result. */
@@ -328,7 +366,11 @@ export function tryDealerConfusionRecovery(rawTranscript: string): TranscriptCla
  * classification has already failed for every alternative in a result: it
  * is never part of this function's ordinary, default classification path.
  */
-function classifyCore(rawTranscript: string, allowDealerConfusionRecovery: boolean): CoreClassification {
+function classifyCore(
+  rawTranscript: string,
+  allowDealerConfusionRecovery: boolean,
+  allowUnscopedContinuation: boolean
+): CoreClassification {
   const normalized = normalizeTranscript(rawTranscript);
 
   if (!normalized) {
@@ -378,7 +420,18 @@ function classifyCore(rawTranscript: string, allowDealerConfusionRecovery: boole
     return { valid: true, source: "read-only-query", actionKey: key, summary: `Query: ${readOnlyQuery.kind}`, hasExplicitTarget: true };
   }
 
-  const narration = parseNarration(rawTranscript);
+  // PC Field Test #2 — "current player is spot one" / "watching spot one" /
+  // "I'm on spot one": sets the active target, creates NO CardEvent. Same
+  // bounded-grammar, exact-shape discipline as table-change/read-only-query
+  // above — see parseSetActiveTargetIntent.ts's own doc comment.
+  const setActiveTargetIntent = parseSetActiveTargetIntent(rawTranscript);
+  if (setActiveTargetIntent) {
+    return fromSteps("set-active-target", [{ kind: "select", target: targetSummary(setActiveTargetIntent.target) }], {
+      narrationOps: [{ kind: "selectTarget", target: setActiveTargetIntent.target }],
+    });
+  }
+
+  const narration = parseNarration(rawTranscript, { allowUnscopedContinuation });
   if (narration.kind === "reject") {
     const tokens = normalized.split(" ").filter(Boolean);
     if (containsUncertaintyLanguage(tokens)) {
@@ -428,7 +481,11 @@ function classifyCore(rawTranscript: string, allowDealerConfusionRecovery: boole
  * classifyCore's ~10 return statements didn't need touching to add this —
  * see CoreClassification's own doc comment.
  */
-export function classifyVoiceTranscript(rawTranscript: string, allowDealerConfusionRecovery = false): TranscriptClassification {
-  const core = classifyCore(rawTranscript, allowDealerConfusionRecovery);
+export function classifyVoiceTranscript(
+  rawTranscript: string,
+  allowDealerConfusionRecovery = false,
+  allowUnscopedContinuation = false
+): TranscriptClassification {
+  const core = classifyCore(rawTranscript, allowDealerConfusionRecovery, allowUnscopedContinuation);
   return { ...core, appliedRules: diagnoseNormalization(rawTranscript) };
 }

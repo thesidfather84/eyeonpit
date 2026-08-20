@@ -34,6 +34,15 @@ export default function TroubleshootingPage() {
         request&rdquo; — this is a browser/OS-level permission, separate from the microphone permission above.
       </p>
 
+      <h2>Which browsers support voice</h2>
+      <p>
+        Voice runs on Chrome and Edge (desktop and Android) today, with partial, version-dependent support on
+        Safari/iOS. <strong>Firefox does not ship a speech recognition engine and cannot run Voice</strong> —
+        EyeOnPit detects this cleanly and switches to manual-only entry; nothing is lost, and the rest of the
+        investigation continues normally. This is a browser limitation, not an EyeOnPit bug, and there is nothing to
+        configure to work around it on Firefox today.
+      </p>
+
       <h2>Voice heard incorrectly</h2>
       <p>
         If EyeOnPit didn&apos;t understand what you said, it shows &ldquo;Not recognized&rdquo; rather than guessing
@@ -64,6 +73,12 @@ export default function TroubleshootingPage() {
         report or sharing with whoever is investigating a recognition issue. Neither includes any card, count, or
         investigation data; both are voice-pipeline debugging information only.
       </p>
+      <p>
+        A compact summary line above the raw log shows the whole session at a glance — acceptance rate, how many
+        recognition sessions ended without ever producing a usable result, how many times a lower-ranked alternative
+        was actually the correct one, and average recognition timing. The same numbers are included in the JSON
+        export&apos;s own <code>sessionMetrics</code> section.
+      </p>
 
       <h3>Normalization and recovery lines</h3>
       <p>
@@ -77,9 +92,12 @@ export default function TroubleshootingPage() {
       <h2>Command rejected / control disabled</h2>
       <p>
         A command can be correctly recognized but still not act — for example, saying a card while the investigation
-        is paused. EyeOnPit distinguishes this from &ldquo;not recognized&rdquo;: it shows what it heard along with
-        the specific reason the action isn&apos;t available right now (e.g. &ldquo;Investigation paused &mdash;
-        resume to continue&rdquo;).
+        is paused. EyeOnPit distinguishes this from &ldquo;not recognized&rdquo;: it always shows what it heard
+        along with the SPECIFIC, truthful reason the action isn&apos;t available right now — never a generic
+        &ldquo;not available.&rdquo; For example: &ldquo;Count is already running &mdash; nothing to resume&rdquo;
+        (saying &ldquo;Start count&rdquo; when it&apos;s already running) or &ldquo;Dealer cards pending &mdash;
+        enter cards or declare a round exception&rdquo; (saying &ldquo;Next hand&rdquo; before the dealer&apos;s
+        cards are in).
       </p>
 
       <h2>Seat/player confusion</h2>

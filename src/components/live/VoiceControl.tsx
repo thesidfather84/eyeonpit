@@ -10,6 +10,7 @@ import { useVoiceRecognition, type VoiceLifecycleEvent, type VoiceResult } from 
 import { parseVoiceCommand, type VoiceCommandKind, type VoiceSeat, type VoiceTarget } from "@/lib/voice/parseVoiceCommand";
 import { parseNarration, type NarrationOp } from "@/lib/voice/parseNarration";
 import { parseTableChangeCommand } from "@/lib/voice/parseTableChangeCommand";
+import { parseSetActiveTargetIntent } from "@/lib/voice/parseSetActiveTargetIntent";
 import { formatNarrationConfirmation, type ConfirmationEntry } from "@/lib/voice/narrationConfirmation";
 import { normalizeTranscript } from "@/lib/voice/normalizeTranscript";
 import { resolveCardEntryTarget, type CardTarget } from "@/lib/utils/cardEntryResolution";
@@ -383,7 +384,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
     resume,
     startNewShoe,
   } = useInvestigationContext();
-  const { enterCard, disabled: cardDisabled, targetLabel } = useCardEntry();
+  const { enterCard, disabled: cardDisabled, locked: cardLocked, notEnabled: cardNotEnabled, targetLabel } = useCardEntry();
   const { handleDone, handleNext, handleUndo, doneDisabled, nextDisabled, undoDisabled } = useRoundControls(floorMode);
   const voiceAudioFeedback = useSettingsStore((s) => s.voiceAudioFeedback);
   const floorSpokenCountContent = useSettingsStore((s) => s.floorSpokenCountContent);
@@ -392,6 +393,14 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
   const [log, setLog] = useState<VoiceDiagnosticEntry[]>([]);
   /** One structured entry per FULLY-RESOLVED utterance (i.e. one that reached N-best resolution — see handleFinalResult) — a richer, machine-readable companion to the flat `log` above, used by the diagnostics panel's "latest utterance" summary and by session export. Capped like `log`; never persisted past the tab session. */
   const [utteranceTraces, setUtteranceTraces] = useState<VoiceUtteranceSummary[]>([]);
+  // PRIORITY 9/12 — session reliability counters (see sessionMetrics.ts).
+  // Deliberately plain React state, not refs: each only ever changes on a
+  // discrete lifecycle event (session started/ended), so a re-render on
+  // each change is cheap and is what keeps the Debug panel's live metrics
+  // display current.
+  const [sessionsStarted, setSessionsStarted] = useState(0);
+  const [sessionsWithFinal, setSessionsWithFinal] = useState(0);
+  const [asrNoFinalCount, setAsrNoFinalCount] = useState(0);
   const [noteMode, setNoteMode] = useState(false);
   const [noteText, setNoteText] = useState("");
   /** See PendingConfirmation's own doc comment. */
@@ -418,6 +427,26 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastDispatchRef = useRef<{ key: string; at: number } | null>(null);
+  /**
+   * PC Field Test #2 real mic-test finding, PRIORITY 4 — Date.now() of the
+   * most recent REJECTED/BLOCKED outcome. Used ONLY to flag (never block)
+   * a bare, unscoped single-card final that arrives shortly afterward — a
+   * real captured session showed a stray "four" committed to DEALER
+   * moments after two failed "player sat down at spot 3" attempts, almost
+   * certainly Chrome's own segmentation splitting one longer intended
+   * utterance ("...gets a four") into two native sessions. This app has no
+   * reliable way to distinguish that from a genuinely, deliberately spoken
+   * standalone card (both look identical in the transcript alone) without
+   * either risking a false rejection of a real single-word command
+   * (explicitly out of scope — bare-card continuation must keep working)
+   * or adding real latency to every single-card command (buffering/
+   * debouncing). This is the conservative middle ground: make the
+   * situation VISIBLE (a distinct log line + a summary field), change
+   * nothing about what commits. See VoiceUtteranceSummary.possibleFragment.
+   */
+  const lastRejectedAtRef = useRef<number | null>(null);
+  /** How recently a rejection must have happened for a following bare-card final to be flagged — see lastRejectedAtRef's own doc comment. Conservative and short: only catches an immediate, back-to-back retry attempt, not "the operator was rejected a while ago and later, unrelatedly, said a card." */
+  const POSSIBLE_FRAGMENT_WINDOW_MS = 3000;
   const logIdRef = useRef(0);
   /**
    * The Voice Event ID every diagnostic line about the utterance currently
@@ -485,7 +514,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
   // in both the parser's "unrecognized" case and this "disabled" case the
   // caller must treat it as "no action," just with a different message.
   const dispatch = useCallback(
-    (command: VoiceCommandKind): string | null => {
+    (command: VoiceCommandKind): { label: string; target?: CardTarget } | null => {
       switch (command.kind) {
         case "select-seat":
           // An explicit voice target naming a seat ("seat 2"/"spot 2"/
@@ -499,10 +528,10 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
           // "ACTIVE — SEAT 2" while the card pad still says "not enabled,"
           // which is the exact bug this closes.
           void occupySeat(command.seat);
-          return `Seat ${command.seat} selected`;
+          return { label: `Spot ${command.seat} selected`, target: command.seat };
         case "select-dealer":
           setActiveTarget("dealer");
-          return "Dealer selected";
+          return { label: "Dealer selected", target: "dealer" };
         case "card": {
           // "dealer king" / "seat three ace" name a target in the same
           // utterance — that target is resolved and entered on directly
@@ -548,7 +577,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
               );
             }
             setActiveTarget(cardTarget);
-            return `${resolution.targetLabel}: ${command.displayRank ?? command.rank}`;
+            return { label: `${resolution.targetLabel}: ${command.displayRank ?? command.rank}`, target: cardTarget };
           }
 
           if (cardDisabled) return null;
@@ -558,21 +587,22 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
           // "DEALER: A" — not just a generic "Card 10 entered" that gives
           // no confirmation of *where* it went. The stored rank is always
           // "10" for a face card either way; displayRank only changes this
-          // message's wording.
-          return `${targetLabel}: ${command.displayRank ?? command.rank}`;
+          // message's wording. No explicit `target` here — a bare card
+          // (no target named) never changes the active target itself.
+          return { label: `${targetLabel}: ${command.displayRank ?? command.rank}` };
         }
         case "done":
           if (doneDisabled) return null;
           handleDone();
-          return "Done";
+          return { label: "Done" };
         case "next":
           if (nextDisabled) return null;
           handleNext();
-          return "Next";
+          return { label: "Next" };
         case "undo":
           if (undoDisabled) return null;
           handleUndo();
-          return "Undo";
+          return { label: "Undo" };
         case "count": {
           // Read-only — builds off the same CardEvent ledger/CountSnapshot
           // CountSummaryPanel renders, never touches addCard/mutate. Always
@@ -581,7 +611,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
           // conflict with an in-flight mutation.
           const text = buildCountAnnouncement(investigation, cardEvents, currentRound.shoeNumber);
           if (voiceAudioFeedback) speak(text);
-          return text;
+          return { label: text };
         }
         case "status": {
           // Read-only, always available, never mutates — same guarantee as
@@ -597,7 +627,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
               : buildStatusAnnouncement(investigation, cardEvents, currentRound.shoeNumber, floorSpokenCountContent);
           const text = spoken ?? buildStatusAnnouncement(investigation, cardEvents, currentRound.shoeNumber, "hiloRc");
           if (voiceAudioFeedback && spoken) speak(spoken);
-          return text;
+          return { label: text };
         }
         default:
           return null;
@@ -627,6 +657,57 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
   );
 
   /**
+   * PC Field Test #2, PRIORITY 8 — root-caused two real CONTROL_DISABLED
+   * reports ("Start count" while already active/never paused, "Next hand"
+   * while the round wasn't complete) to a single gap: `dispatch` above
+   * always returned bare `null` for a disabled legacy command (done/next/
+   * undo/card), so the generic handler in `handleFinalResult` had nothing
+   * but "that action isn't available right now" to show — correctly
+   * disabled in every case investigated (state logic itself was already
+   * right), but with no truthful, specific explanation. This recomputes
+   * the SAME disabled state `dispatch` itself just checked, purely to
+   * describe it — never a second source of truth for whether the action is
+   * allowed (that remains doneDisabled/nextDisabled/undoDisabled/
+   * useCardEntry/resolveCardEntryTarget, exactly as before).
+   */
+  const explainControlDisabledReason = useCallback(
+    (command: VoiceCommandKind): string => {
+      if (busy) return "Busy right now — try again in a moment";
+      switch (command.kind) {
+        case "done": {
+          if (investigation.status !== "active") return "Investigation is paused — say \"resume investigation\" or \"start count\" first";
+          if (currentRound.completed) return "This hand is already done — say \"next\" to start a new one";
+          const check = canCompleteRound(investigation, currentRound);
+          return check.reasons[0] ?? "The round isn't complete yet";
+        }
+        case "next":
+          if (investigation.status !== "active") return "Investigation is paused — say \"resume investigation\" or \"start count\" first";
+          return "Next isn't available right now";
+        case "undo":
+          return "Nothing to undo yet";
+        case "card": {
+          if (command.target) {
+            const cardTarget = toCardTarget(command.target);
+            const resolution = resolveCardEntryTarget(investigation, currentRound, cardTarget, busy);
+            if (resolution.locked) return `${resolution.targetLabel} already has a result recorded — that hand is locked`;
+            if (investigation.status !== "active") return "Investigation is paused — say \"resume investigation\" or \"start count\" first";
+            if (currentRound.completed) return "This hand is already done — say \"next\" to start a new one";
+            return `${resolution.targetLabel} isn't available right now`;
+          }
+          if (cardLocked) return `${targetLabel} already has a result recorded — that hand is locked`;
+          if (cardNotEnabled) return `${targetLabel} not enabled — tap it, or say its name, first`;
+          if (investigation.status !== "active") return "Investigation is paused — say \"resume investigation\" or \"start count\" first";
+          if (currentRound.completed) return "This hand is already done — say \"next\" to start a new one";
+          return `${targetLabel} isn't available right now`;
+        }
+        default:
+          return "That action isn't available right now";
+      }
+    },
+    [investigation, currentRound, busy, cardLocked, cardNotEnabled, targetLabel]
+  );
+
+  /**
    * A validated narration commits ALL of its ops or NONE of them — never a
    * partial prefix. `preflightNarration` (below, module scope) walks the
    * whole op list FIRST, purely in memory: no addCard/completeRound/
@@ -649,11 +730,24 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
   const commitNarration = useCallback(
     async (
       ops: NarrationOp[]
-    ): Promise<{ kind: "committed"; label: string; committedCount: number } | { kind: "blocked"; reason: string }> => {
+    ): Promise<
+      | { kind: "committed"; label: string; committedCount: number; finalTarget?: CardTarget }
+      | { kind: "blocked"; reason: string }
+    > => {
       const preflight = preflightNarration(ops, investigation, currentRound, activeTarget, busy, nextDisabled, undoDisabled);
       if (!preflight.ok) return { kind: "blocked", reason: preflight.reason };
 
       const entries: ConfirmationEntry[] = [];
+      // PRIORITY 6 (mic-test finding) — `activeTarget` above is a React
+      // state value closed over from THIS render; `setActiveTarget`/
+      // `occupySeat` below only take effect on a LATER render, so reading
+      // `activeTarget` again immediately after this loop (as
+      // `finishUtterance` used to) reports the PRE-commit target, not what
+      // was actually just set — misleading diagnostics, not a real state
+      // bug (the live app state was always correct; only the log lagged).
+      // Tracked locally here instead, from the exact same steps that just
+      // ran, so the caller can log the true post-commit target.
+      let finalTarget: CardTarget | undefined;
       for (const step of preflight.steps) {
         if (step.kind === "selectTarget") {
           // Tap parity: a seat target always goes through occupySeat (it
@@ -662,6 +756,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
           // a select-only path for a seat. Dealer has no occupancy concept.
           if (step.cardTarget === "dealer") setActiveTarget("dealer");
           else await occupySeat(step.cardTarget);
+          finalTarget = step.cardTarget;
           if (step.bareOnly) entries.push({ kind: "target", target: step.voiceTarget });
           continue;
         }
@@ -672,6 +767,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
             { type: "card", message: step.eventMessage }
           );
           setActiveTarget(step.cardTarget);
+          finalTarget = step.cardTarget;
           entries.push({ kind: "card", target: step.voiceTarget, displayRank: step.displayRank });
           continue;
         }
@@ -692,7 +788,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       if (entries.length === 0) {
         return { kind: "blocked", reason: "recognized narration, but nothing in it is currently actionable" };
       }
-      return { kind: "committed", label: formatNarrationConfirmation(entries), committedCount: entries.length };
+      return { kind: "committed", label: formatNarrationConfirmation(entries), committedCount: entries.length, finalTarget };
     },
     [
       investigation,
@@ -888,7 +984,26 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       result.alternatives.forEach((alt, i) => {
         appendLog(`NORMALIZE ALT #${i + 1}`, normalizeTranscript(alt.transcript) || "(blank)");
       });
-      const resolution = resolveAlternatives(result.alternatives);
+      // allowUnscopedContinuation — PC Field Test #2 real mic-test finding,
+      // Gate #2: restricted to a live PLAYER/Spot target specifically,
+      // never the dealer. A real captured session showed "has a 5 and a
+      // 3" spoken with the DEALER active — that phrase carries no target
+      // word at all, and dealer cards are consequential enough that
+      // resolving an unscoped multi-card sequence against a merely-
+      // default-active dealer is a materially different, higher-stakes
+      // guess than doing the same against a spot the operator explicitly
+      // activated. This does NOT affect the pre-existing single-bare-card
+      // defer-to-legacy path ("five" alone, resolving against whatever's
+      // active including the dealer) — that is long-established, separate
+      // behavior this flag has never gated. Safety also still comes from
+      // parseNarration's own `sawUnscopedConnector`/`atClauseStart` gates
+      // (genuine, unambiguous connector grammar required, not just this
+      // flag) plus the ordinary commit-time resolveCardEntryTarget
+      // disabled-check below — see parseNarration.ts's own doc comment on
+      // this flag.
+      const resolution = resolveAlternatives(result.alternatives, {
+        allowUnscopedContinuation: activeTarget !== "dealer",
+      });
       resolution.alternatives.forEach((trace) => {
         const c = trace.classification;
         if (c.appliedRules.length > 0) {
@@ -952,13 +1067,58 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
        * (section 14 of the voice reliability spec), and records the
        * structured VoiceUtteranceSummary the diagnostics panel/export uses.
        */
-      const finishUtterance = (outcome: "ACCEPTED" | "REJECTED" | "BLOCKED", actionSummary: string, code?: RejectionCode) => {
-        const activeTargetAfter = activeTargetLabel(activeTarget);
+      const finishUtterance = (
+        outcome: "ACCEPTED" | "REJECTED" | "BLOCKED",
+        actionSummary: string,
+        code?: RejectionCode,
+        // PRIORITY 6 (real mic-test finding) — the actual target a commit
+        // just resolved to, when the caller can supply it (commitNarration
+        // now returns exactly this — see its own doc comment). `activeTarget`
+        // below is a React-state closure that only reflects a LATER render,
+        // so without this override, ACTIVE_TARGET_AFTER reported the
+        // PRE-commit target for any narration/recovery/target-intent commit
+        // — misleading diagnostics, not a real state bug (the live app
+        // state itself was always correct).
+        resolvedActiveTarget?: CardTarget
+      ) => {
+        const activeTargetAfter = activeTargetLabel(resolvedActiveTarget ?? activeTarget);
         appendLog("ACTIVE_TARGET_AFTER", activeTargetAfter);
         const finalToCommitMs = tFinalReceivedRef.current != null ? performance.now() - tFinalReceivedRef.current : undefined;
         if (finalToCommitMs != null) appendLog("TIMING", `final_to_commit_ms=${finalToCommitMs.toFixed(0)}`);
         const altNote = resolution.winnerIndex !== 0 ? ` | ALT${resolution.winnerIndex + 1} "${winningTranscript}"` : "";
         appendLog("SUMMARY", `${currentVoiceEventIdRef.current} | "${result.transcript}"${altNote} | ${actionSummary} | ${outcome}${code ? ` (${code})` : ""}`);
+        // PRIORITY 12 — session-metrics fields, derived entirely from the
+        // SAME `resolution`/winning classification this function already
+        // has in scope; see sessionMetrics.ts for how these aggregate.
+        const winnerClassification = resolution.alternatives[resolution.winnerIndex].classification;
+        const speechStartToFinalMs = tSpeechStartRef.current != null ? tFinalReceivedRef.current! - tSpeechStartRef.current : undefined;
+
+        // PRIORITY 4 — see lastRejectedAtRef's own doc comment. Flag, never
+        // block: a bare unscoped card (source "legacy", no explicit target)
+        // accepted shortly after a rejection is worth a human's attention,
+        // not an automatic refusal.
+        const now = Date.now();
+        const isBareUnscopedCard =
+          outcome === "ACCEPTED" &&
+          winnerClassification.valid &&
+          winnerClassification.source === "legacy" &&
+          !winnerClassification.hasExplicitTarget;
+        const possibleFragment =
+          isBareUnscopedCard &&
+          lastRejectedAtRef.current != null &&
+          now - lastRejectedAtRef.current < POSSIBLE_FRAGMENT_WINDOW_MS;
+        if (possibleFragment) {
+          appendLog(
+            "POSSIBLE_FRAGMENT",
+            `"${winningNormalized}" accepted ${now - lastRejectedAtRef.current!}ms after a rejected utterance — may be a segmentation fragment of a longer intended phrase, not a deliberate standalone card`
+          );
+        }
+        if (outcome === "REJECTED" || outcome === "BLOCKED") {
+          lastRejectedAtRef.current = now;
+        } else {
+          lastRejectedAtRef.current = null;
+        }
+
         setUtteranceTraces((prev) => {
           const entry: VoiceUtteranceSummary = {
             voiceEventId: currentVoiceEventIdRef.current,
@@ -974,6 +1134,13 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
             activeTargetBefore: activeTargetLabel(activeTarget),
             activeTargetAfter,
             finalToCommitMs,
+            speechStartToFinalMs,
+            nBestRescue: resolution.winnerIndex !== 0,
+            normalizationRuleIds: winnerClassification.appliedRules.map((r) => r.id),
+            recoveryRuleId: winnerClassification.valid ? winnerClassification.recoveryRuleId : undefined,
+            narrationOpsCount: winnerClassification.valid ? winnerClassification.narrationOps?.length : undefined,
+            hasExplicitTarget: winnerClassification.valid ? winnerClassification.hasExplicitTarget : undefined,
+            possibleFragment: possibleFragment || undefined,
           };
           const next = [...prev, entry];
           return next.length > MAX_LOG_ENTRIES ? next.slice(next.length - MAX_LOG_ENTRIES) : next;
@@ -981,42 +1148,81 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       };
 
       // CONTEXTUAL DEALER-CONFUSION RECOVERY (voice reliability spec §4 + PC
-      // headset finding) — the winning transcript still literally says
-      // "Taylor"/"Spotify", which none of the checks below (lifecycle
-      // phrases, table change, read-only query, narration, legacy) can ever
-      // parse — see classifyVoiceTranscript.ts's own doc comment on why
-      // `recoveredCommand` exists specifically to skip re-parsing
-      // winningTranscript here. Dispatched directly, through the exact same
-      // `dispatch()` every ordinary legacy card command uses, so a
-      // recovered dealer card is entered exactly like any other.
+      // headset finding, extended by PC Field Test #2 to multi-card hands —
+      // "Spotify has a five and a king" -> DEALER 5, K) — the winning
+      // transcript still literally says "Taylor"/"Spotify", which none of
+      // the checks below (lifecycle phrases, table change, read-only query,
+      // narration, legacy) can ever parse — see classifyVoiceTranscript.ts's
+      // own doc comment on why `narrationOps` exists specifically to skip
+      // re-parsing winningTranscript here. Committed through the exact same
+      // transactional `commitNarration` every ordinary multi-card narration
+      // uses, so a recovered dealer hand gets the identical atomicity
+      // guarantee AND the identical, specific CONTROL_DISABLED reason text
+      // (from preflightNarration) an ordinary narration rejection would.
       const winningClassification = resolution.alternatives[resolution.winnerIndex].classification;
-      if (winningClassification.valid && winningClassification.source === "dealer-confusion-recovery" && winningClassification.recoveredCommand) {
-        const label = dispatch(winningClassification.recoveredCommand);
-        if (label == null) {
-          diagnostics.info("voice", "dealer-confusion recovery rejected — control currently disabled", {
-            recoveryRuleId: winningClassification.recoveryRuleId,
+      if (winningClassification.valid && winningClassification.source === "dealer-confusion-recovery" && winningClassification.narrationOps) {
+        const recoveryOps = winningClassification.narrationOps;
+        const recoveryRuleId = winningClassification.recoveryRuleId;
+        void (async () => {
+          const commitResult = await commitNarration(recoveryOps);
+          if (commitResult.kind === "blocked") {
+            diagnostics.info("voice", "dealer-confusion recovery blocked — preflight validation failed", {
+              recoveryRuleId,
+              reason: commitResult.reason,
+            });
+            appendLog("REJECTED", `"${winningNormalized}" — recovered dealer command, but ${commitResult.reason}`);
+            setStatus({ kind: "disabled", transcript: winningNormalized, reason: commitResult.reason });
+            finishUtterance("BLOCKED", "dealer-confusion recovery", "CONTROL_DISABLED");
+            scheduleReset();
+            return;
+          }
+          diagnostics.info("voice", "accepted — dealer-confusion recovery", {
+            recoveryRuleId,
+            committed: commitResult.committedCount,
           });
-          appendLog("REJECTED", `"${winningNormalized}" — recovered dealer command, but that control is currently disabled`);
-          setStatus({ kind: "disabled", transcript: winningNormalized });
-          finishUtterance("REJECTED", winningClassification.summary, "CONTROL_DISABLED");
+          appendLog("ACCEPTED", commitResult.label);
+          setStatus({ kind: "accepted", label: commitResult.label });
+          if (voiceAudioFeedback) speak(commitResult.label);
+          finishUtterance("ACCEPTED", commitResult.label, undefined, commitResult.finalTarget);
           scheduleReset();
-          return;
-        }
-        diagnostics.info("voice", "accepted — dealer-confusion recovery", {
-          recoveryRuleId: winningClassification.recoveryRuleId,
-          command: winningClassification.recoveredCommand,
-        });
-        appendLog("ACCEPTED", label);
-        setStatus({ kind: "accepted", label });
-        finishUtterance("ACCEPTED", label);
-        scheduleReset();
+        })();
+        return;
+      }
+
+      // NATURAL TARGET-SETTING INTENT — "current player is spot one" /
+      // "watching spot one" / "I'm on spot one" (PC Field Test #2). Sets
+      // the active target through the exact same tap-parity `selectTarget`
+      // narration op every bare "spot one" already uses — never creates a
+      // CardEvent. Checked here (mirroring classifyVoiceTranscript.ts's own
+      // ordering — after table-change/read-only-query, before narration).
+      if (winningClassification.valid && winningClassification.source === "set-active-target" && winningClassification.narrationOps) {
+        const intentOps = winningClassification.narrationOps;
+        void (async () => {
+          const commitResult = await commitNarration(intentOps);
+          if (commitResult.kind === "blocked") {
+            appendLog("REJECTED", `"${winningNormalized}" — ${commitResult.reason}`);
+            setStatus({ kind: "disabled", transcript: winningNormalized, reason: commitResult.reason });
+            finishUtterance("BLOCKED", "set active target", "CONTROL_DISABLED");
+            scheduleReset();
+            return;
+          }
+          appendLog("ACCEPTED", commitResult.label);
+          setStatus({ kind: "accepted", label: commitResult.label });
+          finishUtterance("ACCEPTED", commitResult.label, undefined, commitResult.finalTarget);
+          scheduleReset();
+        })();
         return;
       }
 
       if (winningNormalized === PAUSE_PHRASE || winningNormalized === END_COUNT_PHRASE) {
         if (investigation.status !== "active") {
-          appendLog("REJECTED", `"${winningNormalized}" — already paused or not active`);
-          setStatus({ kind: "disabled", transcript: winningNormalized, reason: "Already paused, or the investigation isn't active" });
+          // PRIORITY 8 — plain-language reason, not just "disabled": the
+          // investigation is either already paused or already closed, both
+          // of which mean there's simply nothing currently running to pause.
+          const reason =
+            investigation.status === "paused" ? "Already paused — nothing to pause" : "Investigation isn't active";
+          appendLog("REJECTED", `"${winningNormalized}" — ${reason}`);
+          setStatus({ kind: "disabled", transcript: winningNormalized, reason });
           finishUtterance("REJECTED", "Pause investigation", "CONTROL_DISABLED");
           scheduleReset();
           return;
@@ -1031,8 +1237,15 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       }
       if (winningNormalized === RESUME_PHRASE || winningNormalized === START_COUNT_PHRASE) {
         if (investigation.status !== "paused") {
-          appendLog("REJECTED", `"${winningNormalized}" — not currently paused`);
-          setStatus({ kind: "disabled", transcript: winningNormalized, reason: "Not currently paused" });
+          // PRIORITY 8 root cause — "Start count" parses correctly as
+          // Resume, but Resume only ever makes sense from a genuinely
+          // paused state; saying it while already active isn't a bug in
+          // either the parser or the state logic, it just needs a reason
+          // that names the actual situation rather than the internal
+          // concept of "paused."
+          const reason = "Count is already running — nothing to resume";
+          appendLog("REJECTED", `"${winningNormalized}" — ${reason}`);
+          setStatus({ kind: "disabled", transcript: winningNormalized, reason });
           finishUtterance("REJECTED", "Resume investigation", "CONTROL_DISABLED");
           scheduleReset();
           return;
@@ -1143,7 +1356,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
             // down becomes who you're watching next; no-ops to a plain
             // select if the seat was already occupied.
             await occupySeat(tableChange.seat);
-            const text = `Seat ${tableChange.seat} occupied`;
+            const text = `Spot ${tableChange.seat} occupied`;
             diagnostics.info("voice", "table change — seat occupied", { seat: tableChange.seat });
             appendLog("ACCEPTED", text);
             setStatus({ kind: "accepted", label: text });
@@ -1155,10 +1368,10 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         }
         // seat-leaves
         if (!investigation.occupiedSeats.includes(tableChange.seat)) {
-          const reason = `Seat ${tableChange.seat} is already empty`;
+          const reason = `Spot ${tableChange.seat} is already empty`;
           appendLog("REJECTED", `"${winningNormalized}" — ${reason}`);
           setStatus({ kind: "disabled", transcript: winningNormalized, reason });
-          finishUtterance("REJECTED", `Seat ${tableChange.seat} left`, "CONTROL_DISABLED");
+          finishUtterance("REJECTED", `Spot ${tableChange.seat} left`, "CONTROL_DISABLED");
           scheduleReset();
           return;
         }
@@ -1171,7 +1384,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
           // doc comment in investigations.ts) — this is a table-occupancy
           // change, not an undo.
           await markSeatEmpty(tableChange.seat);
-          const text = `Seat ${tableChange.seat} left the table`;
+          const text = `Spot ${tableChange.seat} left the table`;
           diagnostics.info("voice", "table change — seat left", { seat: tableChange.seat });
           appendLog("ACCEPTED", text);
           setStatus({ kind: "accepted", label: text });
@@ -1266,6 +1479,32 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         return;
       }
 
+      // NATURAL TARGET-SETTING INTENT (belt-and-suspenders re-check — see
+      // the winningClassification-driven block above, which already
+      // committed this via classifyCore's own parseSetActiveTargetIntent
+      // call for the ordinary case; kept here too, matching this file's
+      // established double-check style, for a winning transcript that
+      // somehow reaches this point without the classification-driven
+      // branch having already returned).
+      const setActiveTargetIntent = parseSetActiveTargetIntent(winningTranscript);
+      if (setActiveTargetIntent) {
+        void (async () => {
+          const commitResult = await commitNarration([{ kind: "selectTarget", target: setActiveTargetIntent.target }]);
+          if (commitResult.kind === "blocked") {
+            appendLog("REJECTED", `"${winningNormalized}" — ${commitResult.reason}`);
+            setStatus({ kind: "disabled", transcript: winningNormalized, reason: commitResult.reason });
+            finishUtterance("BLOCKED", "set active target", "CONTROL_DISABLED");
+            scheduleReset();
+            return;
+          }
+          appendLog("ACCEPTED", commitResult.label);
+          setStatus({ kind: "accepted", label: commitResult.label });
+          finishUtterance("ACCEPTED", commitResult.label, undefined, commitResult.finalTarget);
+          scheduleReset();
+        })();
+        return;
+      }
+
       // Natural hand narration — tried FIRST, above (never replacing) the
       // single-command parser below. "no-opinion" means this utterance
       // contained none of narration's own vocabulary at all (e.g. "count",
@@ -1281,7 +1520,11 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       // narration check is the exact same parseNarration call — kept as a
       // second, independent check anyway (belt-and-suspenders, matching
       // this file's own established style) rather than trusted blindly.
-      const narration = parseNarration(winningTranscript);
+      // allowUnscopedContinuation — MUST match the resolveAlternatives call
+      // above exactly (a live player/Spot target, never the dealer), or
+      // this belt-and-suspenders re-check could disagree with what N-best
+      // already decided for the SAME transcript.
+      const narration = parseNarration(winningTranscript, { allowUnscopedContinuation: activeTarget !== "dealer" });
       if (narration.kind === "reject") {
         diagnostics.info("voice", "narration rejected — ambiguous or unsafe", { transcript: winningNormalized });
         appendLog("REJECTED", `"${winningNormalized}" — narration rejected (ambiguous or unsafe)`);
@@ -1315,7 +1558,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
           appendLog("ACCEPTED", commitResult.label);
           setStatus({ kind: "accepted", label: commitResult.label });
           if (voiceAudioFeedback) speak(commitResult.label);
-          finishUtterance("ACCEPTED", commitResult.label);
+          finishUtterance("ACCEPTED", commitResult.label, undefined, commitResult.finalTarget);
           scheduleReset();
         })();
         return;
@@ -1332,32 +1575,37 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         return;
       }
 
-      const label = dispatch(parsed.command);
-      if (label == null) {
+      const dispatched = dispatch(parsed.command);
+      if (dispatched == null) {
         // Recognized correctly — the parser matched a real command — but
         // its control is currently disabled. Never call this "not
         // recognized": that mislabel is exactly what made a correctly-
-        // heard "king" look like recognition itself had failed.
+        // heard "king" look like recognition itself had failed. PRIORITY
+        // 8 — the operator hears WHY, in plain language, not just that it
+        // was disabled (see explainControlDisabledReason's own comment).
+        const reason = explainControlDisabledReason(parsed.command);
         diagnostics.info("voice", "rejected — control currently disabled", {
           transcript: winningNormalized,
           command: parsed.command,
+          reason,
         });
-        appendLog("REJECTED", `"${winningNormalized}" — recognized, but that control is currently disabled`);
-        setStatus({ kind: "disabled", transcript: winningNormalized });
+        appendLog("REJECTED", `"${winningNormalized}" — ${reason}`);
+        setStatus({ kind: "disabled", transcript: winningNormalized, reason });
         finishUtterance("REJECTED", parsed.command.kind, "CONTROL_DISABLED");
         scheduleReset();
         return;
       }
 
       diagnostics.info("voice", "accepted", { transcript: winningNormalized, command: parsed.command });
-      appendLog("ACCEPTED", label);
-      setStatus({ kind: "accepted", label });
-      finishUtterance("ACCEPTED", label);
+      appendLog("ACCEPTED", dispatched.label);
+      setStatus({ kind: "accepted", label: dispatched.label });
+      finishUtterance("ACCEPTED", dispatched.label, undefined, dispatched.target);
       scheduleReset();
     },
     [
       dispatch,
       commitNarration,
+      explainControlDisabledReason,
       voiceAudioFeedback,
       floorSpokenCountContent,
       scheduleReset,
@@ -1422,18 +1670,27 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         currentVoiceEventIdRef.current = nextVoiceEventId();
         finalReceivedThisSessionRef.current = false;
         tSpeechStartRef.current = null;
+        // PRIORITY 9/12 — session-level reliability metrics (see
+        // sessionMetrics.ts). Purely additive counting; never gates or
+        // changes any restart/dispatch decision.
+        setSessionsStarted((c) => c + 1);
       }
       if (event === "speech-start") tSpeechStartRef.current = performance.now();
       appendLog(LIFECYCLE_LABEL[event]);
-      if (event === "ended" && !finalReceivedThisSessionRef.current) {
-        // A native session ended without ever producing a final result —
-        // e.g. the operator trailed off, or the 8s timeout in
-        // useVoiceRecognition fired first. Not necessarily an error (see
-        // RejectionCode's own doc comment on RECOGNITION_ENDED_UNEXPECTEDLY
-        // vs. ASR_NO_FINAL), but worth a dedicated, greppable line: this is
-        // exactly the "delayed/missing final" stall class section 5/11 of
-        // the voice reliability spec calls out.
-        appendLog("ASR_NO_FINAL", "session ended with no final result");
+      if (event === "ended") {
+        if (finalReceivedThisSessionRef.current) {
+          setSessionsWithFinal((c) => c + 1);
+        } else {
+          // A native session ended without ever producing a final result —
+          // e.g. the operator trailed off, or the timeout in
+          // useVoiceRecognition fired first. Not necessarily an error (see
+          // RejectionCode's own doc comment on RECOGNITION_ENDED_UNEXPECTEDLY
+          // vs. ASR_NO_FINAL), but worth a dedicated, greppable line: this is
+          // exactly the "delayed/missing final" stall class section 5/11 of
+          // the voice reliability spec calls out.
+          appendLog("ASR_NO_FINAL", "session ended with no final result");
+          setAsrNoFinalCount((c) => c + 1);
+        }
       }
     },
     [appendLog]
@@ -1444,7 +1701,22 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
     onInterimResult: handleInterimResult,
     onError: handleError,
     onLifecycleEvent: handleLifecycleEvent,
-    timeoutMs: 8000,
+    // PC Field Test #2, PRIORITY 9 — raised from 8000ms. This is a hard
+    // backstop that force-stops a native session (see useVoiceRecognition's
+    // own doc comment); it is not the primary cause of most ASR_NO_FINAL
+    // events (Chrome's own silence-detection usually ends a session well
+    // before this fires), but compound narration (§5 — "spot one stands
+    // spot 3 hits gets a 3") is meaningfully longer to speak than the
+    // single-target commands this timeout was originally tuned for, and a
+    // genuine trailing utterance being cut off by this backstop before
+    // Chrome ever finalizes it IS a real, avoidable contributor. This does
+    // not touch the restart/session-recovery logic itself, does not change
+    // what final results are ever committed, and does not weaken duplicate/
+    // stale-session protection — it only gives longer genuine speech more
+    // room before this hook forces a stop. See
+    // docs/EYEONPIT_VOICE_FIELD_TEST_2.md §9 for the full ASR_NO_FINAL
+    // investigation, including what remains outside this app's control.
+    timeoutMs: 12000,
     maxAlternatives: 5,
   });
 
@@ -1594,7 +1866,13 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
 
   return (
     <div className="fixed bottom-4 right-4 z-20 flex flex-col items-end gap-2">
-      {diagnosticsOpen && <VoiceDiagnosticsPanel entries={log} utterances={utteranceTraces} />}
+      {diagnosticsOpen && (
+        <VoiceDiagnosticsPanel
+          entries={log}
+          utterances={utteranceTraces}
+          sessionCounters={{ sessionsStarted, sessionsWithFinal, asrNoFinal: asrNoFinalCount }}
+        />
+      )}
 
       {status.kind !== "idle" && (
         <div role="status" className="max-w-[220px] rounded-xl border border-border bg-surface px-3 py-2 text-xs shadow-lg">

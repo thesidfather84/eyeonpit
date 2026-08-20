@@ -110,10 +110,12 @@ function baseScore(classification: TranscriptClassification, confidence: number 
  *                           actions are in play) rather than guessed.
  */
 export function resolveAlternatives(
-  alternatives: { transcript: string; confidence: number | null }[]
+  alternatives: { transcript: string; confidence: number | null }[],
+  opts?: { allowUnscopedContinuation?: boolean }
 ): ResolveResult {
+  const allowUnscopedContinuation = opts?.allowUnscopedContinuation ?? false;
   const traces: AlternativeTrace[] = alternatives.map((alt, index) => {
-    const classification = classifyVoiceTranscript(alt.transcript);
+    const classification = classifyVoiceTranscript(alt.transcript, false, allowUnscopedContinuation);
     return {
       index,
       transcript: alt.transcript,

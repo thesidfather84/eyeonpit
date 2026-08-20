@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Check, Copy, Download } from "lucide-react";
 import type { VoiceUtteranceSummary } from "@/lib/voice/voiceDiagnosticsTypes";
+import { computeSessionMetrics, type VoiceSessionMetrics } from "@/lib/voice/sessionMetrics";
 
 export interface VoiceDiagnosticEntry {
   id: number;
@@ -24,17 +25,44 @@ export function formatVoiceDiagnosticsLog(entries: VoiceDiagnosticEntry[]): stri
  * debugging artifact, not investigation evidence, so it carries only what's
  * needed to diagnose a recognition/parsing problem.
  */
-export function buildVoiceSessionExport(entries: VoiceDiagnosticEntry[], utterances: VoiceUtteranceSummary[]): string {
+export function buildVoiceSessionExport(
+  entries: VoiceDiagnosticEntry[],
+  utterances: VoiceUtteranceSummary[],
+  metrics?: VoiceSessionMetrics
+): string {
   return JSON.stringify(
     {
       exportedAt: new Date().toISOString(),
       utteranceCount: utterances.length,
       logEntryCount: entries.length,
+      ...(metrics ? { sessionMetrics: metrics } : {}),
       utterances,
       log: entries.map((e) => ({ time: e.time, label: e.label, detail: e.detail })),
     },
     null,
     2
+  );
+}
+
+/** "62% accepted (18/29) · N-best 3 · dealer 2 · player 1 · compound 4 · continuation 2 · ASR_NO_FINAL 8% (4/49)" — a compact one-line summary above the raw log, per PRIORITY 12. Every number here is also in the JSON export's own `sessionMetrics` block; this is the at-a-glance version. */
+function SessionMetricsSummary({ metrics }: { metrics: VoiceSessionMetrics }) {
+  const pct = (n: number) => `${Math.round(n * 100)}%`;
+  return (
+    <div className="flex flex-none flex-col gap-0.5 border-b border-border p-2 font-mono text-[10px] text-muted-foreground">
+      <div>
+        <span className="font-semibold text-foreground">{pct(metrics.acceptanceRate)} accepted</span>{" "}
+        ({metrics.accepted}/{metrics.totalUtterances}) · N-best rescues {metrics.nBestRescues} · dealer{" "}
+        {metrics.dealerConfusionRescues} · player {metrics.playerConfusionRescues} · normalization{" "}
+        {metrics.normalizationRescues} · compound {metrics.compoundUtterancesAccepted} · continuation{" "}
+        {metrics.activeTargetContinuationRescues}
+      </div>
+      <div>
+        ASR_NO_FINAL {pct(metrics.asrNoFinalRate)} ({metrics.asrNoFinal}/{metrics.sessionsStarted} sessions)
+        {metrics.averageSpeechStartToFinalMs != null ? ` · avg speech→final ${metrics.averageSpeechStartToFinalMs.toFixed(0)}ms` : ""}
+        {metrics.medianSpeechStartToFinalMs != null ? ` (median ${metrics.medianSpeechStartToFinalMs.toFixed(0)}ms)` : ""}
+        {metrics.averageFinalToCommitMs != null ? ` · avg final→commit ${metrics.averageFinalToCommitMs.toFixed(0)}ms` : ""}
+      </div>
+    </div>
   );
 }
 
@@ -86,6 +114,12 @@ function LatestUtterance({ utterance }: { utterance: VoiceUtteranceSummary }) {
         {utterance.finalToCommitMs != null ? ` · ${utterance.finalToCommitMs.toFixed(0)}ms` : ""}
       </div>
       <div className="text-foreground">{summaryLine(utterance)}</div>
+      {utterance.possibleFragment && (
+        <div className="font-semibold text-pending">
+          ⚠ Possible fragment — accepted shortly after a rejected utterance; may be a segmentation
+          artifact rather than a deliberate standalone card.
+        </div>
+      )}
     </div>
   );
 }
@@ -112,11 +146,18 @@ function LatestUtterance({ utterance }: { utterance: VoiceUtteranceSummary }) {
 export function VoiceDiagnosticsPanel({
   entries,
   utterances = [],
+  sessionCounters,
 }: {
   entries: VoiceDiagnosticEntry[];
   utterances?: VoiceUtteranceSummary[];
+  /** PRIORITY 9/12 — lifecycle-derived counters VoiceControl tracks itself (sessions started/ended-with-final/ended-without-final); optional and defaulted to all-zero so this component still renders exactly as before wherever a caller doesn't pass it. */
+  sessionCounters?: { sessionsStarted: number; sessionsWithFinal: number; asrNoFinal: number };
 }) {
   const [copied, setCopied] = useState<"log" | "json" | null>(null);
+  const metrics = computeSessionMetrics(
+    utterances,
+    sessionCounters ?? { sessionsStarted: 0, sessionsWithFinal: 0, asrNoFinal: 0 }
+  );
 
   async function copy(kind: "log" | "json", text: string) {
     try {
@@ -142,7 +183,7 @@ export function VoiceDiagnosticsPanel({
         <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={() => copy("json", buildVoiceSessionExport(entries, utterances))}
+            onClick={() => copy("json", buildVoiceSessionExport(entries, utterances, metrics))}
             className="tap-target flex items-center gap-1 rounded-md border border-border bg-surface-raised px-2 text-[10px] font-medium text-foreground"
           >
             {copied === "json" ? <Check className="h-3 w-3" aria-hidden /> : <Download className="h-3 w-3" aria-hidden />}
@@ -158,6 +199,7 @@ export function VoiceDiagnosticsPanel({
           </button>
         </div>
       </div>
+      {utterances.length > 0 && <SessionMetricsSummary metrics={metrics} />}
       {latest && <LatestUtterance utterance={latest} />}
       <ul className="flex max-h-40 flex-col gap-0.5 overflow-y-auto p-2 font-mono text-[10px] text-muted-foreground">
         {entries.map((e) => (

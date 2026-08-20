@@ -88,9 +88,46 @@ export default function VoiceGuidePage() {
       <VoicePhraseGroup>
         <VoicePhrase>Spot six sat down.</VoicePhrase>
         <VoicePhrase>Player at spot six.</VoicePhrase>
+        <VoicePhrase>New player at spot six.</VoicePhrase>
+        <VoicePhrase>Player sat down at spot one.</VoicePhrase>
         <VoicePhrase>Spot one left.</VoicePhrase>
         <VoicePhrase>Player seat one left the table.</VoicePhrase>
       </VoicePhraseGroup>
+
+      <h2>Saying who you&apos;re watching, without narrating a card</h2>
+      <p>
+        Sometimes you just want to tell EyeOnPit who you&apos;re currently watching, without describing a hand at all
+        — nothing gets recorded, only the active target changes:
+      </p>
+      <VoicePhraseGroup>
+        <VoicePhrase result="Sets the active target only — no card recorded">Current player is spot one.</VoicePhrase>
+        <VoicePhrase result="Sets the active target only — no card recorded">Watching spot one.</VoicePhrase>
+        <VoicePhrase result="Sets the active target only — no card recorded">I&apos;m on spot one.</VoicePhrase>
+      </VoicePhraseGroup>
+
+      <h2>Continuing a hand without repeating the target</h2>
+      <p>
+        Once a spot is already active, you can keep adding its cards without naming it again — EyeOnPit applies them
+        to whichever target you were already watching:
+      </p>
+      <VoicePhraseGroup>
+        <VoicePhrase result="Applies to whatever spot is already active">Has a ten and a three.</VoicePhrase>
+        <VoicePhrase result="Applies to the dealer if the dealer is active">Gets a five.</VoicePhrase>
+      </VoicePhraseGroup>
+
+      <h2>Describing a full round in one breath</h2>
+      <p>
+        EyeOnPit follows a compound sentence through several targets and actions at once, in the order you say them —
+        useful for narrating a whole round without pausing between clauses:
+      </p>
+      <VoicePhraseGroup>
+        <VoicePhrase result="Spot 1 stands, Spot 3 hits and gets a three">Spot one stands, spot three hits, gets a three.</VoicePhrase>
+        <VoicePhrase result="Dealer gets a five, then advances to the next hand">Dealer gets a five, next hand.</VoicePhrase>
+      </VoicePhraseGroup>
+      <p>
+        A compound sentence like this either commits everything in it, in order, or nothing at all — EyeOnPit never
+        records only the first half of what you said and silently drops the rest.
+      </p>
 
       <h2>What EyeOnPit intentionally refuses to guess</h2>
       <p>
@@ -102,6 +139,7 @@ export default function VoiceGuidePage() {
         <VoicePhrase result="Rejected">Maybe player one has a three.</VoicePhrase>
         <VoicePhrase result="Rejected">I think dealer has a five.</VoicePhrase>
         <VoicePhrase result="Rejected">Probably seat two has a king.</VoicePhrase>
+        <VoicePhrase result="Rejected — read as a clock time, never two cards">3:55.</VoicePhrase>
       </VoicePhraseGroup>
       <p>
         When EyeOnPit can&apos;t confidently tell what you meant, it says so rather than guessing — nothing is ever
@@ -129,8 +167,10 @@ export default function VoiceGuidePage() {
       <p>
         As a last resort, when EVERY reading offered fails to make sense on its own, EyeOnPit also recognizes a
         short, specific list of known dealer-related misreadings (for example, some devices occasionally return
-        &ldquo;Taylor&rdquo; for &ldquo;dealer&rdquo;) — but only in an unambiguous &ldquo;&lt;word&gt; has a
-        &lt;card&gt;&rdquo; shape, never as a general guess. When this happens, the Debug panel always shows exactly
+        &ldquo;Taylor&rdquo; or &ldquo;Spotify&rdquo; for &ldquo;dealer&rdquo;) — but only in an unambiguous
+        &ldquo;&lt;word&gt; has a &lt;card&gt;&rdquo; shape, never as a general guess. This works for a full dealer
+        hand too, not just one card — &ldquo;Spotify has a five and a king&rdquo; is recognized the same way
+        &ldquo;dealer has a five and a king&rdquo; would be. When this happens, the Debug panel always shows exactly
         which recovery rule fired, so it&apos;s never a silent correction.
       </p>
 

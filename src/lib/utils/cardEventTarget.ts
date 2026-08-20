@@ -66,8 +66,8 @@ export function ledgerTargetFor(
     : { targetType: "seat", targetId: activeTarget };
 }
 
-/** Human-readable label for a ledger target — "Dealer" / "Seat 3" / "Seat 3 (Split)" — so Undo's button label can say exactly what it will affect. */
+/** Human-readable label for a ledger target — "Dealer" / "Spot 3" / "Spot 3 (Split)" — so Undo's button label can say exactly what it will affect. */
 export function describeLedgerTarget(targetType: CardEventTargetType, targetId: number | "dealer"): string {
   if (targetType === "dealer") return "Dealer";
-  return targetType === "split" ? `Seat ${targetId} (Split)` : `Seat ${targetId}`;
+  return targetType === "split" ? `Spot ${targetId} (Split)` : `Spot ${targetId}`;
 }

@@ -88,6 +88,20 @@ export interface VoiceUtteranceSummary {
   activeTargetBefore: string;
   activeTargetAfter?: string;
   finalToCommitMs?: number;
+  /** performance.now() delta from the native session's own "speech-start" lifecycle event to this utterance's final result — see VoiceControl's own TIMING log line. Undefined when speech-start never fired this session (e.g. some engines don't). */
+  speechStartToFinalMs?: number;
+  /** True when the accepted winner was NOT the recognizer's own top-ranked alternative — i.e. N-best resolution actually rescued a lower-ranked reading. Undefined for a rejected utterance (there is no winner to have been rescued). */
+  nBestRescue?: boolean;
+  /** IDs of every ASR-artifact normalization rule (normalizeAsrSeatArtifacts) that fired on the winning alternative — see AppliedNormalizationRule. Empty array when the winner needed no normalization; undefined for a rejected utterance. */
+  normalizationRuleIds?: string[];
+  /** The specific dealer/player-confusion recovery rule that fired, when the winner was rescued via classifyVoiceTranscript.ts's contextual recovery grammar — e.g. "DEALER_ASR_TAYLOR". Undefined otherwise. */
+  recoveryRuleId?: string;
+  /** Number of ordered operations the winning classification carried (narrationOps.length) — present for narration, dealer-confusion-recovery, and set-active-target sources; a value greater than 1 identifies a genuinely compound/multi-op utterance (see PRIORITY 5/12). Undefined for a single-command (legacy) or query/lifecycle outcome, which have no op list at all. */
+  narrationOpsCount?: number;
+  /** Mirrors TranscriptClassification.hasExplicitTarget for the winning alternative — false identifies a target-omitted continuation utterance (PRIORITY 3) resolved entirely against the live active target. Undefined for a rejected utterance. */
+  hasExplicitTarget?: boolean;
+  /** PC Field Test #2, PRIORITY 4 — true when this was a bare, unscoped single-card accept arriving within a few seconds of a REJECTED/BLOCKED utterance, a pattern consistent with Chrome's own ASR segmentation splitting one longer intended utterance into a stray fragment plus a separate (often also-rejected) remainder. Diagnostic-only: never changes what committed. Undefined (not false) when the condition doesn't apply, so a raw JSON export stays uncluttered. */
+  possibleFragment?: boolean;
 }
 
 /** Human-readable text for every code — always shown alongside the code, never in place of it. */

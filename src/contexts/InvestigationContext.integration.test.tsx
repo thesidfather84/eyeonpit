@@ -267,7 +267,7 @@ describe("InvestigationContext — context-aware Undo", () => {
     await act(async () => {
       screen.getByText("select-seat3").click();
     });
-    await waitFor(() => expect(screen.getByTestId("undo-label").textContent).toBe("Undo Seat 3"));
+    await waitFor(() => expect(screen.getByTestId("undo-label").textContent).toBe("Undo Spot 3"));
 
     await act(async () => {
       screen.getByText("undo").click();

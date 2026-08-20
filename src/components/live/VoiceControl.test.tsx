@@ -201,7 +201,32 @@ describe("VoiceControl — selection", () => {
     await act(async () => sayFinal("seat one"));
 
     await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("1"));
-    await waitFor(() => screen.getByText("✓ Seat 1 selected"));
+    await waitFor(() => screen.getByText("✓ Spot 1 selected"));
+  });
+
+  it('PC Field Test #2, PRIORITY 6 (mic-test finding) — "current player is spot one" sets the active target AND the Debug panel\'s ACTIVE_TARGET_AFTER diagnostic reflects the real post-commit target, not the stale pre-commit one', async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <VoiceControl />
+        <ActiveTargetProbe />
+      </InvestigationProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("dealer"));
+
+    await startListening();
+    await act(async () => sayFinal("current player is spot one"));
+
+    await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("1"));
+    await waitFor(() => screen.getByText("✓ SPOT 1"));
+
+    await openDiagnostics();
+    // Real captured bug: this line used to read "Target: DEALER" (no
+    // arrow) even though the active target had genuinely just changed to
+    // Spot 1 — a React-state closure read one render too early, not an
+    // actual state inconsistency (see commitNarration's own doc comment
+    // on `finalTarget`). Now shows the true post-commit value.
+    await waitFor(() => screen.getByText(/Target: DEALER → SEAT1/));
   });
 
   it('2. "dealer" selects the dealer', async () => {
@@ -340,7 +365,7 @@ describe("VoiceControl — card entry", () => {
     await startListening();
     await act(async () => sayFinal("king"));
 
-    await waitFor(() => screen.getByText(/Heard.*king.*that action isn.t available right now/));
+    await waitFor(() => screen.getByText(/Heard.*king.*Investigation is paused/));
     expect(screen.queryByText(/Not recognized/)).toBeNull();
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
   });
@@ -413,7 +438,7 @@ describe("VoiceControl — noisy real-world transcripts, end to end (the safety 
     await startListening();
     await act(async () => sayFinal("C1 King Ace"));
 
-    await waitFor(() => screen.getByText("✓ S1: K A"));
+    await waitFor(() => screen.getByText("✓ SPOT 1: K A"));
     await waitFor(() => expect(screen.getByTestId("seat-1-card-count").textContent).toBe("2"));
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
   });
@@ -484,7 +509,7 @@ describe("VoiceControl — noisy real-world transcripts, end to end (the safety 
     await startListening();
     await act(async () => sayFinal("C1 Ace King"));
 
-    await waitFor(() => screen.getByText("✓ S1: A K"));
+    await waitFor(() => screen.getByText("✓ SPOT 1: A K"));
     await waitFor(() => expect(screen.getByTestId("seat-1-card-count").textContent).toBe("2"));
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
     expect(screen.getByTestId("active-target").textContent).toBe("1");
@@ -1259,7 +1284,7 @@ describe("VoiceControl — investigation-lifecycle voice commands (Pause/Resume/
     await awaitRestartFrom(before);
     await act(async () => sayFinal("king"));
 
-    await waitFor(() => screen.getByText(/isn.t available right now|not available/));
+    await waitFor(() => screen.getByText(/Investigation is paused/));
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
   });
 
@@ -1597,7 +1622,7 @@ describe('VoiceControl — SAFETY REGRESSION: "Three active seat five" must neve
     await waitFor(() => screen.getByText(/Not recognized/));
   });
 
-  it('multi-card narration that establishes its target FIRST is completely unaffected: "C5 has an ace C5 has a three" still becomes S5: A 3', async () => {
+  it('multi-card narration that establishes its target FIRST is completely unaffected: "C5 has an ace C5 has a three" still becomes SPOT 5: A 3', async () => {
     const investigationId = await freshInvestigationId();
     render(
       <InvestigationProvider investigationId={investigationId}>
@@ -1608,7 +1633,7 @@ describe('VoiceControl — SAFETY REGRESSION: "Three active seat five" must neve
     await startListening();
     await act(async () => sayFinal("C5 has an ace C5 has a three"));
 
-    await waitFor(() => screen.getByText("✓ S5: A 3"));
+    await waitFor(() => screen.getByText("✓ SPOT 5: A 3"));
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
   });
 });
@@ -1627,7 +1652,7 @@ describe("VoiceControl — natural table changes (sat down / player at / left)",
 
     await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe("3"));
     expect(screen.getByTestId("active-target").textContent).toBe("3");
-    await waitFor(() => screen.getByText("✓ Seat 3 occupied"));
+    await waitFor(() => screen.getByText("✓ Spot 3 occupied"));
   });
 
   it('"player at spot 2" occupies Spot 2 — an alternate natural phrasing for the same join event', async () => {
@@ -1664,7 +1689,7 @@ describe("VoiceControl — natural table changes (sat down / player at / left)",
 
     await waitFor(() => expect(screen.getByTestId("occupied-seats").textContent).toBe(""));
     await waitFor(() => expect(screen.getByTestId("active-target").textContent).toBe("dealer"));
-    await waitFor(() => screen.getByText("✓ Seat 1 left the table"));
+    await waitFor(() => screen.getByText("✓ Spot 1 left the table"));
   });
 
   it('"spot 1 left" for a seat that was never occupied is rejected rather than silently logged', async () => {
@@ -1746,7 +1771,7 @@ describe("VoiceControl — natural hand narration, end to end (milestone require
     await startListening();
     await act(async () => sayFinal("seat one five three seven"));
 
-    await waitFor(() => screen.getByText("✓ S1: 5 3 7"));
+    await waitFor(() => screen.getByText("✓ SPOT 1: 5 3 7"));
     await waitFor(() => expect(screen.getByTestId("seat-1-card-count").textContent).toBe("3"));
   });
 
@@ -1763,7 +1788,7 @@ describe("VoiceControl — natural hand narration, end to end (milestone require
     await startListening();
     await act(async () => sayFinal("C3 85"));
 
-    await waitFor(() => screen.getByText("✓ S3: 8 5"));
+    await waitFor(() => screen.getByText("✓ SPOT 3: 8 5"));
     await waitFor(() => expect(screen.getByTestId("seat-3-card-count").textContent).toBe("2"));
   });
 
@@ -1787,9 +1812,9 @@ describe("VoiceControl — natural hand narration, end to end (milestone require
     // (see parseNarration's SINGLE_WORD_WORKFLOW / two-token lookahead), so
     // it renders as its own leading "NEXT" clause exactly like any other
     // workflow op in the sequence — consistent with
-    // narrationConfirmation.test.ts's own "NEXT · DEALER: A · S1: 4 · DONE"
+    // narrationConfirmation.test.ts's own "NEXT · DEALER: A · SPOT 1: 4 · DONE"
     // case.
-    await waitFor(() => screen.getByText("✓ NEXT · DEALER: A K · S1: 4 5 · S2: 3 5 9 · DONE"));
+    await waitFor(() => screen.getByText("✓ NEXT · DEALER: A K · SPOT 1: 4 5 · SPOT 2: 3 5 9 · DONE"));
     await waitFor(() => expect(screen.getByTestId("dealer-card-count").textContent).toBe("2"));
     await waitFor(() => expect(screen.getByTestId("seat-1-card-count").textContent).toBe("2"));
     await waitFor(() => expect(screen.getByTestId("seat-2-card-count").textContent).toBe("3"));
@@ -1965,7 +1990,7 @@ describe("VoiceControl — ATOMIC COMMIT: a multi-op narration commits ALL of it
     await startListening();
     await act(async () => sayFinal("dealer king ace seat one five three seven done"));
 
-    await waitFor(() => screen.getByText("✓ DEALER: K A · S1: 5 3 7 · DONE"));
+    await waitFor(() => screen.getByText("✓ DEALER: K A · SPOT 1: 5 3 7 · DONE"));
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("2");
     expect(screen.getByTestId("seat-1-card-count").textContent).toBe("3");
     expect(screen.getByTestId("round-completed").textContent).toBe("true");
@@ -2104,7 +2129,7 @@ describe("VoiceControl — REAL DEVICE FIX: natural hand connectors and leading-
     await startListening();
     await act(async () => sayFinal("spot 3 has a 5 and a 7"));
 
-    await waitFor(() => screen.getByText("✓ S3: 5 7"));
+    await waitFor(() => screen.getByText("✓ SPOT 3: 5 7"));
     expect(screen.getByTestId("occupied-seats").textContent).toBe("3");
     expect(screen.getByTestId("active-target").textContent).toBe("3");
     expect(screen.getByTestId("seat-3-card-count").textContent).toBe("2");
@@ -2121,7 +2146,7 @@ describe("VoiceControl — REAL DEVICE FIX: natural hand connectors and leading-
     await startListening();
     await act(async () => sayFinal("player 2 has 4 8"));
 
-    await waitFor(() => screen.getByText("✓ S2: 4 8"));
+    await waitFor(() => screen.getByText("✓ SPOT 2: 4 8"));
     expect(screen.getByTestId("occupied-seats").textContent).toBe("2");
     expect(screen.getByTestId("seat-2-card-count").textContent).toBe("2");
   });
@@ -2137,7 +2162,7 @@ describe("VoiceControl — REAL DEVICE FIX: natural hand connectors and leading-
     await startListening();
     await act(async () => sayFinal("seat one has king ace"));
 
-    await waitFor(() => screen.getByText("✓ S1: K A"));
+    await waitFor(() => screen.getByText("✓ SPOT 1: K A"));
     expect(screen.getByTestId("occupied-seats").textContent).toBe("1");
     expect(screen.getByTestId("seat-1-card-count").textContent).toBe("2");
   });
@@ -2153,7 +2178,7 @@ describe("VoiceControl — REAL DEVICE FIX: natural hand connectors and leading-
     await startListening();
     await act(async () => sayFinal("one has a king and an ace"));
 
-    await waitFor(() => screen.getByText("✓ S1: K A"));
+    await waitFor(() => screen.getByText("✓ SPOT 1: K A"));
     expect(screen.getByTestId("occupied-seats").textContent).toBe("1");
     expect(screen.getByTestId("seat-1-card-count").textContent).toBe("2");
   });
@@ -2720,7 +2745,7 @@ describe("EyeOnPit 1.3 — multi-target narration end to end: multiple explicit 
     // Wait for the FINAL confirmation first — commitNarration awaits each
     // step in order, so this only appears once every card has landed,
     // avoiding a race against the intermediate render after just the first.
-    await waitFor(() => screen.getByText("✓ S1: 7 · S3: 5"));
+    await waitFor(() => screen.getByText("✓ SPOT 1: 7 · SPOT 3: 5"));
     expect(screen.getByTestId("seat-1-card-count").textContent).toBe("1");
     expect(screen.getByTestId("seat-3-card-count").textContent).toBe("1");
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("0");
@@ -2738,7 +2763,7 @@ describe("EyeOnPit 1.3 — multi-target narration end to end: multiple explicit 
     await startListening();
     await act(async () => sayFinal("Spot one has a seven, spot three has a five, dealer has an ace."));
 
-    await waitFor(() => screen.getByText("✓ S1: 7 · S3: 5 · DEALER: A"));
+    await waitFor(() => screen.getByText("✓ SPOT 1: 7 · SPOT 3: 5 · DEALER: A"));
     expect(screen.getByTestId("dealer-card-count").textContent).toBe("1");
     expect(screen.getByTestId("seat-1-card-count").textContent).toBe("1");
     expect(screen.getByTestId("seat-3-card-count").textContent).toBe("1");
@@ -2759,7 +2784,7 @@ describe("EyeOnPit 1.3 — repeated same-target narration end to end: two clause
     await act(async () => sayFinal("Player three has a five, player three has a king."));
 
     await waitFor(() => expect(screen.getByTestId("seat-3-card-count").textContent).toBe("2"));
-    await waitFor(() => screen.getByText("✓ S3: 5 K"));
+    await waitFor(() => screen.getByText("✓ SPOT 3: 5 K"));
   });
 
   it('"Seat four has a five, seat four has a king." -> both cards land on Seat 4 (no per-seat probe testid at 4, verified via the confirmation label and total card count across seats 1-3 staying zero)', async () => {
@@ -2773,7 +2798,7 @@ describe("EyeOnPit 1.3 — repeated same-target narration end to end: two clause
     await startListening();
     await act(async () => sayFinal("Seat four has a five, seat four has a king."));
 
-    await waitFor(() => screen.getByText("✓ S4: 5 K"));
+    await waitFor(() => screen.getByText("✓ SPOT 4: 5 K"));
     expect(screen.getByTestId("seat-1-card-count").textContent).toBe("0");
     expect(screen.getByTestId("seat-2-card-count").textContent).toBe("0");
     expect(screen.getByTestId("seat-3-card-count").textContent).toBe("0");
@@ -2899,7 +2924,7 @@ describe('EyeOnPit 1.3 — "Next hand" (a natural alias for "Done", never confus
     await startListening();
     await act(async () => sayFinal("next hand"));
 
-    await waitFor(() => screen.getByText(/isn.t available right now|not available/));
+    await waitFor(() => screen.getByText(/Dealer cards pending/));
     expect(screen.getByTestId("round-completed").textContent).toBe("false");
     expect(screen.getByTestId("round-count").textContent).toBe("1"); // never silently advanced to a new round either
   });
@@ -3260,7 +3285,7 @@ describe("VoiceControl — N-best resolution (field-captured: the correct result
 });
 
 describe("VoiceControl — PC field test #1 (2026-08-18): canonicalization, blackjack ASR normalization, compact narration, dealer-confusion recovery", () => {
-  it('V-000006/V-000018 fix: ALT1 "seat one has a five" (legacy) / ALT2 "the player in seat one has a five" (narration) now AGREE and commit S1: 5, instead of CONFLICTING_ALTERNATIVES', async () => {
+  it('V-000006/V-000018 fix: ALT1 "seat one has a five" (legacy) / ALT2 "the player in seat one has a five" (narration) now AGREE and commit SPOT 1: 5, instead of CONFLICTING_ALTERNATIVES', async () => {
     const investigationId = await freshInvestigationId();
     render(
       <InvestigationProvider investigationId={investigationId}>

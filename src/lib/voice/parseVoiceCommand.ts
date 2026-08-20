@@ -184,6 +184,26 @@ export function containsUncertaintyLanguage(tokens: string[]): boolean {
 }
 
 /**
+ * PC Field Test #2 — real captured examples of clock times ("3:55") and
+ * fractions ("1/8") reaching this app's voice pipeline. Checked against the
+ * RAW transcript, BEFORE normalizeTranscript strips `:`/`/` into ordinary
+ * whitespace (see that function's own doc comment on why it does — closed
+ * blackjack-narration vocabulary has no legitimate use for either
+ * character) — that stripping is exactly what turns "3:55" into the
+ * token stream "3 55", which downstream card/digit-stream logic must treat
+ * with extra suspicion precisely because the punctuation proving it was a
+ * timestamp is otherwise lost. Used only as an ADDITIONAL guard (see
+ * parseNarration.ts's compact-digit-stream handling) alongside the
+ * existing ambiguity rules — never a replacement for them.
+ */
+const TIME_LIKE_RE = /\b[0-9]{1,2}:[0-9]{2}\b/;
+const FRACTION_LIKE_RE = /\b[0-9]{1,2}\/[0-9]{1,2}\b/;
+
+export function containsTimeOrFractionPattern(rawTranscript: string): boolean {
+  return TIME_LIKE_RE.test(rawTranscript) || FRACTION_LIKE_RE.test(rawTranscript);
+}
+
+/**
  * A single applied ASR-artifact substitution, for diagnostics only (see
  * VoiceControl's PARSE ALT log lines — "NORMALIZATION RULE ID" / "WHY RULE
  * APPLIED" in the voice reliability spec). `id` is a small, stable,
@@ -228,6 +248,16 @@ export interface AppliedNormalizationRule {
  *      keeps ordinary sentences ("let's set the table", "did you see
  *      that", "a cheap seat") untouched: none of them are immediately
  *      followed by a bare seat number 1-7.
+ *   5. "play your"/"play are"/"play Air"/"play everyone" immediately before
+ *      a valid seat number (PC Field Test #2) — "player" misheard with an
+ *      extra filler word in between, under the EXACT same seat-number-
+ *      lookahead guard as rule 1: "play your favorite song" (no seat
+ *      number follows "your") is left completely untouched.
+ *   6. "play your" immediately before a full seat-prefix phrase ("play your
+ *      spot one") — recognized as "player", leaving the seat-prefix word
+ *      itself for matchSeatTargetPhrase's own stacked-prefix grammar.
+ *   7. "play" immediately before "sat" ("play sat down on spot one") —
+ *      recognized as "player", narrowly guarded on "sat" specifically.
  *
  * Applied once, at the string level, immediately after normalizeTranscript
  * and before any other parsing — both parseVoiceCommand and parseNarration
@@ -242,6 +272,28 @@ const ASR_R_SEAT_TOKEN_RE = /^r([0-9]+)$/;
 
 /** See rule 4 above — kept as its own small set rather than folded into SEAT_PREFIX_WORDS so these stay confined to this narrow, lookahead-guarded substitution and never become recognized target-trigger words anywhere else in the grammar. */
 const SEAT_PREFIX_ASR_VARIANTS = new Set(["set", "seet", "ceit", "see", "cheap"]);
+
+/**
+ * PC Field Test #2 — real captured Chrome mishearings of "player": "play
+ * your", "play are", "play Air", "play everyone", "play the" (Chrome
+ * Patch round — real captured "play the 3 hits gets a four"). Kept as its
+ * own narrow set (never folded into general vocabulary) and only ever
+ * consulted immediately after a literal "play" token with a further
+ * seat-number lookahead required — see normalizeAsrSeatArtifacts's own doc
+ * comment. "play music"/"play your favorite song"/"play the game" are
+ * structurally identical up to this point but fail the seat-number
+ * lookahead that follows, so they are never touched.
+ */
+const PLAY_FILLER_WORDS = new Set(["your", "are", "air", "everyone", "the"]);
+
+/**
+ * PC Field Test #2 real mic session — real captured single-filler-word
+ * artifacts between "play" and "sat" specifically ("play or sat down...",
+ * "play Oar sat down...", "play your sat down..."). Kept separate from
+ * PLAY_FILLER_WORDS above (different required lookahead — "sat" the next
+ * word, not a seat number two words later).
+ */
+const PLAY_SAT_FILLER_WORDS = new Set(["or", "oar", "your"]);
 
 export function normalizeAsrSeatArtifacts(
   normalized: string,
@@ -269,6 +321,63 @@ export function normalizeAsrSeatArtifacts(
           i += 1;
           continue;
         }
+      }
+      // PC Field Test #2 — "play your"/"play are"/"play Air"/"play
+      // everyone" recognized in place of "player", under the EXACT same
+      // narrow discipline as every other ASR substitution here: fires ONLY
+      // when the word immediately after the filler is unambiguously a seat
+      // number (1-7) — "play your favorite song" (no seat number follows)
+      // is deliberately left completely untouched, never guessed at.
+      if (PLAY_FILLER_WORDS.has(next)) {
+        const afterFiller = tokens[i + 2];
+        if (afterFiller != null && SEAT_NUMBER_BY_WORD[afterFiller] != null) {
+          onRuleApplied?.({ id: "ASR_PLAY_FILLER_TO_PLAYER", reason: `"play ${next}" immediately before a seat number — recognized artifact for "player"` });
+          result.push("player");
+          i += 1; // consume the filler word too; the seat number itself is handled on the next loop iteration
+          continue;
+        }
+      }
+      // "play your spot one" / "play your seat one" — the filler word is
+      // immediately followed by a FULL seat-prefix phrase rather than a
+      // bare number ("play your spot one left", not "play your one"). Only
+      // "your" qualifies here (not "are"/"air"/"everyone" — no real
+      // captured example pairs those with a following seat-prefix word, so
+      // broadening beyond what was actually observed is not justified).
+      // Drops only the filler word, leaving the seat-prefix word itself
+      // (e.g. "spot") for matchSeatTargetPhrase's own stacked-prefix
+      // grammar to resolve on the next iteration — see its doc comment.
+      if (next === "your" && tokens[i + 2] != null && SEAT_PREFIX_WORDS.includes(tokens[i + 2])) {
+        onRuleApplied?.({ id: "ASR_PLAY_YOUR_TO_PLAYER", reason: '"play your" immediately before a seat-prefix phrase — recognized artifact for "player"' });
+        result.push("player");
+        i += 1;
+        continue;
+      }
+      // "play sat down on spot one" — "play" immediately followed by "sat"
+      // (the start of "sat down at/on <target>", see
+      // parseTableChangeCommand.ts's own trailing-target grammar) is
+      // recognized as "player", narrowly guarded on "sat" specifically —
+      // never a blind substitution for "play" anywhere else.
+      if (next === "sat") {
+        onRuleApplied?.({ id: "ASR_PLAY_SAT_TO_PLAYER", reason: '"play" immediately before "sat" — recognized artifact for "player"' });
+        result.push("player");
+        continue;
+      }
+      // PC Field Test #2 real mic session — "play or sat down at spot 3" /
+      // "play Oar sat down at spot 3" / "play your sat down at spot 3":
+      // Chrome commonly inserts exactly ONE extra filler word ("or"/"oar"/
+      // "your") between "play" and "sat" that the rule above doesn't
+      // tolerate. Narrowly anchored on "sat" being the SPECIFIC word two
+      // tokens ahead — never a blind "play or"/"play your" substitution
+      // anywhere else ("play or don't play" / "play your cards right" are
+      // both left completely untouched, since neither is followed by
+      // "sat"). PLAY_SAT_FILLER_WORDS is deliberately its own small set
+      // (not merged into PLAY_FILLER_WORDS above, which requires a seat
+      // NUMBER next, a different shape entirely).
+      if (PLAY_SAT_FILLER_WORDS.has(next) && tokens[i + 2] === "sat") {
+        onRuleApplied?.({ id: "ASR_PLAY_FILLER_SAT_TO_PLAYER", reason: `"play ${next}" immediately before "sat" — recognized artifact for "player"` });
+        result.push("player");
+        i += 1; // consume the filler word; "sat" itself is handled on the next loop iteration
+        continue;
       }
     }
 

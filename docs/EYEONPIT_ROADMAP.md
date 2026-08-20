@@ -12,6 +12,219 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### Sherpa-ONNX Real Implementation Gate (2026-08-19)
+
+**Problem:** the prior round's `SherpaOnnxProvider` was an honest but
+non-functional scaffold (`supported: false`, `start()` immediately
+errored). That answered "is the license clean" but not the question the
+whole investigation exists to answer: does sherpa-onnx actually work,
+here, against real audio, in a real browser.
+
+**What shipped:**
+
+- **A real, working `SherpaOnnxProvider`** — genuine WASM loading, real
+  streaming recognizer, real `AudioWorkletNode` mic capture, real
+  interim/final result routing, real hotwords wiring using EyeOnPit casino
+  vocabulary. No longer a stub.
+- **Independent, hands-on verification, not documentation research:**
+  downloaded the official prebuilt sherpa-onnx browser-WASM release
+  directly from k2-fsa's GitHub Releases (no emscripten toolchain exists
+  in this environment, so nothing was compiled — this is the identical
+  official artifact), loaded it unmodified in a real Chrome tab via
+  browser automation, and fed real recorded English speech through the
+  live recognizer (no microphone exists here, so the engine's own
+  `acceptWaveform()` API was used directly, bypassing mic capture — a
+  legitimate real-audio test, not a text-only one). **Both real test clips
+  produced exact word-for-word correct transcripts**, with confirmed
+  genuine incremental streaming (first partial at 205ms) and a working
+  hotwords pipeline using actual EyeOnPit casino vocabulary.
+- **One factual correction**: the model actually bundled in the official
+  browser release is `sherpa-onnx-streaming-zipformer-en-2023-06-21`
+  (Apache-2.0, LibriSpeech+GigaSpeech), not the
+  `...-20M-2023-02-17` model the prior round's documentation-only research
+  had guessed — traced directly from k2-fsa's own build workflow, not
+  assumed.
+- **Honest limits, stated plainly, not glossed over:** no real
+  casino-vocabulary audio exists anywhere, so sherpa-onnx's accuracy on
+  EyeOnPit's own phrase corpus is still unmeasured. No same-audio
+  Chrome-vs-sherpa comparison is possible at all — the Web Speech API is
+  microphone-only by spec and has no file-feed equivalent, a real
+  architectural asymmetry, not a shortfall in this round's effort. CPU/RAM
+  are measurable for sherpa-onnx (runs in-page) but structurally
+  unmeasurable for Chrome's built-in recognizer (runs in the browser/OS's
+  own internal service, invisible to any web page). Firefox was not
+  tested (no Firefox browser-automation capability here); iPhone/Safari
+  feasibility remains undetermined.
+
+**Explicitly not touched:** CardEvent ledger, counting/simulation engine,
+1.9 lifecycle, Spot terminology, `VoiceControl.tsx`/`useVoiceRecognition.ts`
+production wiring (still untouched — Sherpa is not the default and is not
+exposed to normal operators). No 1.10 work.
+
+**Tests:** `sherpaOnnxProvider.test.ts` rewritten (17 tests, covering the
+pure hotwords/feature-detection logic and unsupported-environment
+behavior — a plain Node/vitest run cannot exercise the real WASM/audio
+path, which was verified separately, by hand, in a real browser). Full
+suite green, `tsc --noEmit` clean, `eslint` clean.
+
+**Status:** complete, pending review. Not committed/pushed. The ~205MB
+WASM/model asset bundle is gitignored (`public/sherpa-onnx-lab/`) and was
+never committed. Recommended next step: real casino-phrase audio (via a
+live microphone session) run through this same provider, to finally
+measure sherpa-onnx's accuracy on EyeOnPit's own vocabulary — see
+`docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md` §8.6.
+
+### Final Chrome Patch + Open-Source Voice Provider Prototype (2026-08-19)
+
+**Problem:** four narrow real-mic-captured Chrome parser gaps remained open
+after the Field Test #2 remediation rounds below, and — separately — the
+`SpeechProvider` abstraction `docs/EYEONPIT_1_9_VOICE_INDEPENDENCE.md`
+designed but explicitly did not build needed to move from design to real,
+tested code, plus real research into whether a free/open-source alternative
+engine to Chrome's Web Speech API is even viable, without prematurely
+replacing working production software.
+
+**What shipped** (full detail in `docs/EYEONPIT_VOICE_ARCHITECTURE.md` and
+`docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md`):
+
+- **Four Chrome parser fixes**, each a narrow, closed-grammar extension
+  with exact real-mic regression tests (`realMicChromePatch.test.ts`, 14
+  tests): "play the 3 hits gets a 4" (broadened "play"+filler recognition),
+  "player 3 hits of 4" (generalized the narration/legacy handoff rule so
+  recognized narration vocabulary is never mis-downgraded to legacy purely
+  by op-count), "players that are down at spot 3" (table-change ASR
+  recovery extended to the "that are" phrasing), "Taylor has a king in a
+  five" ("in" recognized as a dealer-recovery connector, matching the
+  existing "and" rule).
+- **`SpeechProvider` interface, real** — `src/lib/voice/speechProvider.ts`
+  plus `BrowserWebSpeechProvider`
+  (`src/lib/voice/browserWebSpeechProvider.ts`), a faithful, independently
+  tested port of `useVoiceRecognition.ts`'s proven session/restart/backoff
+  logic as a plain factory. **Not wired into production this round** — no
+  audio-testing capability exists in this environment to verify a live
+  swap; `VoiceControl.tsx`/`useVoiceRecognition.ts` are byte-for-byte
+  unchanged.
+- **`CasinoVoiceContext`/`buildHotwordList`** — a pure, weighted (not flat)
+  hotword-list design (`src/lib/voice/casinoVoiceContext.ts`), reserved for
+  a future hotword-capable provider; only `terminology`/`activeTarget` are
+  load-bearing today, by design.
+- **`SherpaOnnxProvider`, honestly scoped** — `supported: false`
+  hardcoded, `start()` reports `"not-implemented"` and does nothing else.
+  Real, cited sherpa-onnx (Apache-2.0 engine) and candidate model
+  (Apache-2.0, LibriSpeech-trained) provenance recorded; no model files,
+  WASM binaries, or engine source copied into the repo.
+- **Voice benchmark corpus, real** —
+  `src/lib/voice/voiceBenchmarkCorpus.ts`, implementing the methodology
+  `docs/EYEONPIT_1_9_VOICE_INDEPENDENCE.md` §6 designed but didn't build.
+  Scores real field-captured/documented-grammar phrases against EyeOnPit's
+  own classifier; **zero false CardEvents** across the full corpus today.
+  Latency/CPU/RAM/model-size fields are typed and explicitly `null` — not
+  measurable without real audio-input capability, never fabricated.
+- **whisper.cpp researched as a reference** (MIT engine, MIT model
+  weights) — not chosen as primary candidate, on real latency/streaming-
+  architecture grounds documented in the research doc, not integrated.
+
+**Explicitly not touched:** CardEvent ledger semantics, counting/simulation
+mathematics, the 1.9 lifecycle rule, Spot terminology, every existing voice
+regression from prior rounds. No Firefox support added. No 1.10
+split/multi-hand logic wired anywhere.
+
+**Tests:** `realMicChromePatch.test.ts` (14), `browserWebSpeechProvider.test.ts`
+(9), `sherpaOnnxProvider.test.ts` (5), `casinoVoiceContext.test.ts` (9),
+`voiceBenchmarkCorpus.test.ts` (7) — all new, all passing. Full suite green,
+`tsc --noEmit` clean, `eslint` clean.
+
+**Status:** complete, pending review. Not committed/pushed — see the
+round's own final report. Real-audio provider comparison (§7 of
+`docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md`) is the recommended next step,
+not 1.10.
+
+### PC Voice Field Test #2 Remediation (2026-08-19)
+
+**Problem:** the second round of PC voice field testing (run against the
+clean, unmodified baseline 1.9 deliberately preserved) surfaced real gaps
+across ten distinct areas — see `docs/EYEONPIT_VOICE_FIELD_TEST_2.md` for
+the complete root-cause analysis. In summary: two more Chrome ASR
+mishearings of "player" needed narrow recognition; several natural
+sentence shapes (trailing-target table changes, third-person action verbs,
+target-omitted continuation, a natural "watching spot one" target-setting
+intent) had no parser path; two real CONTROL_DISABLED reports traced to
+correct state logic paired with an unhelpfully generic message; and a
+narrow, real safety gap let a glued ASR digit run ("55" from a misheard
+"3:55") decompose into two extra cards once a target was already active.
+
+**What shipped** (full detail in `docs/EYEONPIT_VOICE_FIELD_TEST_2.md`):
+
+- **Player ASR recovery** — "play your"/"play are"/"play Air"/"play
+  everyone" before a seat number or seat-prefix phrase, and "play" before
+  "sat", all narrowly lookahead-guarded exactly like the existing "play"/
+  "start"/"set" rules.
+- **Multi-card dealer-confusion recovery** — "Spotify has a five and a
+  king" now recovers an ORDERED two-card dealer hand, not just the first
+  card, committed through the same transactional `commitNarration` path
+  ordinary narration uses.
+- **Active-target continuation** — "has a ten and a three," with a spot
+  already active, now resolves against it, gated on genuine connector-word
+  evidence (not just "a target exists") so "king ace" with zero connecting
+  grammar still correctly rejects.
+- **Connector ASR variant** — "in" recognized as "and" ("has a 10 in a
+  3"), identically gated to every other connector.
+- **Compound narration vocabulary gap closed** — "spot one stands spot 3
+  hits gets a 3" now parses; the transactional all-or-nothing commit
+  architecture already existed, the gap was only that third-person verb
+  inflections ("stands"/"hits") weren't recognized as the same inert
+  vocabulary as "stand"/"hit".
+- **New natural target-setting intent** — "current player is spot one" /
+  "watching spot one" / "I'm on spot one" set the active target through a
+  new small closed-grammar parser, creating no CardEvent.
+- **Expanded table-change grammar** — "player sat down at/on spot one"
+  (target trailing the verb phrase) and an optional leading "new"/"a"
+  filler before "player at spot six".
+- **CONTROL_DISABLED root-caused and fixed** — both real reports had
+  correct state logic; the actual gap was `dispatch()` returning bare
+  `null` with no reason. Operators now hear the truthful specific reason
+  ("Count is already running — nothing to resume," "Dealer cards pending
+  — enter cards or declare a round exception") instead of a generic
+  "not available right now."
+- **Numeric/time safety gap closed** — a colon/slash clock-time or
+  fraction pattern anywhere in an utterance now blocks glued-digit-run
+  decomposition into cards even when a target is already active (the
+  standalone "3:55"/"1/8"-alone cases were already safely rejected by
+  existing ambiguity rules, verified with new regression tests, not
+  assumed).
+- **Operator feedback terminology completed** — two real remaining 1.9
+  terminology leaks found and fixed: the actual narration confirmation
+  pill (`✓ S1: 10, 6` → `✓ SPOT 1: 10, 6`) and several Hand-Status-line/
+  Undo-button/event-log strings still defaulting to "Seat N".
+- **Session reliability metrics** — a new `computeSessionMetrics` pure
+  function surfaces acceptance rate, ASR_NO_FINAL rate, N-best/dealer/
+  player-confusion/normalization rescue counts, compound-utterance and
+  active-target-continuation counts, and speech-to-final/final-to-commit
+  timing, in the existing Debug panel and JSON export. The per-session
+  recognition timeout was raised from 8s to 12s to give the new, longer
+  compound narration more room before the hook's own backstop force-stops
+  a session — the restart/recovery logic itself was audited and found
+  already correct.
+
+**Explicitly not touched:** CardEvent ledger semantics, counting
+mathematics, simulation mathematics, the 1.9 investigation lifecycle rule,
+and the global Spot terminology *rule* itself (two remaining leaks were
+fixed, the rule was not changed) — confirmed via the full 1.9 lifecycle
+test suite passing unchanged. No `SpeechProvider`/Firefox work — those
+remain exactly where 1.9 left them, architecture-only.
+
+**Tests:** new `fieldTest2Regression.test.ts` (33 tests, every real
+ACCEPT/RECOVER and REJECT/SAFETY case from the remediation brief),
+`parseSetActiveTargetIntent.test.ts` (24 tests), `sessionMetrics.test.ts`
+(7 tests), plus terminology/behavior assertion updates across the existing
+voice suite. Full suite green, `tsc --noEmit` clean, `eslint` clean.
+
+**Status:** complete, pending review. Not committed/pushed — see the
+remediation's own final report for the full findings list. PC Voice Field
+Test #3 is the recommended next step — see
+`docs/EYEONPIT_VOICE_FIELD_TEST_2.md`'s own closing section for the
+suggested script.
+
 ### 1.9 Operator Lifecycle + Global Terminology (2026-08-19)
 
 **Problem:** nothing in the app checked investigation status before
@@ -407,10 +620,10 @@ use it.
 ## Sequence (current, authoritative order)
 
 This is the actual next-priority order. The 1.5/1.6/1.7/1.8/1.9 foundation
-below is now **built** (pending review), but that does not change voice's
-priority — **do not skip PC Voice Field Test #2** for any reason; it
-remains the next voice-specific gate, deliberately untouched by all of
-this foundation work.
+and the PC Voice Field Test #2 remediation below are now **built** (pending
+review), but that does not change voice's priority — **do not skip PC
+Voice Field Test #3** for any reason; it remains the next voice-specific
+gate.
 
 1. ~~Floor Mode operator usability cleanup~~ — complete, see above.
 2. ~~1.5 Reporting + 1.6 Gold Standard architecture foundation~~ — complete,
@@ -420,21 +633,24 @@ this foundation work.
    without touching voice.
 4. ~~1.9 Operator Lifecycle + Global Terminology~~ — complete, pending
    review, see above. Built without touching voice.
-5. **PC Voice Field Test #2** — a fresh diagnostic export, compared against
-   Field Test #1's fixes, before any further voice changes. Being
-   performed separately by the user. *(up next)*
-6. Fix/validate remaining Voice failures surfaced by Field Test #2.
-7. Repeat Voice testing until the reliability gate is met.
-8. Voice Independence — implement a real `SpeechProvider` abstraction
+5. ~~PC Voice Field Test #2 remediation~~ — complete, pending review, see
+   above and `docs/EYEONPIT_VOICE_FIELD_TEST_2.md`.
+6. **PC Voice Field Test #3** — a fresh diagnostic export against this
+   round's remediation, using the suggested script in
+   `docs/EYEONPIT_VOICE_FIELD_TEST_2.md`'s closing section, before any
+   further voice changes. *(up next)*
+7. Fix/validate remaining Voice failures surfaced by Field Test #3.
+8. Repeat Voice testing until the reliability gate is met.
+9. Voice Independence — implement a real `SpeechProvider` abstraction
    (design finalized, see `docs/EYEONPIT_1_9_VOICE_INDEPENDENCE.md`) and,
    behind it, a Firefox/cross-browser-capable engine — only after the
-   Field Test #2 gate above closes on the current browser baseline; run
+   Field Test gate above closes on the current browser baseline; run
    the benchmark corpus (same doc §6) against any candidate before it is
    approved.
-9. Build-out on top of the now-existing foundation: property metadata
+10. Build-out on top of the now-existing foundation: property metadata
    management UI, AI-narrative review/edit UI, `/lab` creation flows (add
    method, add scenario).
-10. **i18n/terminology integration, in this explicit order — never skip
+11. **i18n/terminology integration, in this explicit order — never skip
    ahead** (see `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §3.1): (a) Floor
    Mode visible labels, (b) `/lab` UI, (c) Reporting, (d) Documentation/site
    UI, (e) Voice localization LAST, as its own separate project with its
@@ -443,19 +659,19 @@ this foundation work.
    Spot the global default across both shells — what remains for this
    stage is wiring 1.8's `resolveTerminology()` *property preference*
    into that now-shared default, not introducing Spot itself.
-11. **Real-world Counter Detection validation** (see
+12. **Real-world Counter Detection validation** (see
    `docs/EYEONPIT_1_7_COUNTER_DETECTION.md` §9) — labeled datasets across
    known counters/non-counters/multiple count methods/conservative/covered
    profiles; the Confidence Engine's `EXPERIMENTAL_NOT_VALIDATED` status
    does not change until this exists and is reviewed.
-12. **`validateMethodGameCompatibility` MUST be wired into
+13. **`validateMethodGameCompatibility` MUST be wired into
     `createSimulationScenario`/`validateSimulationScenario` before or
     alongside any second `GameFamily` implementation** — not after (see
     `docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §7's explicit
     production-readiness gate). A second real `GameFamily` (Spanish 21,
     Baccarat, etc.) itself — architecture ready, no second game
     implemented yet.
-13. Real accounts/subscriptions/roles for `/lab`, once actually
+14. Real accounts/subscriptions/roles for `/lab`, once actually
     prioritized — foundation only today
     (`docs/EYEONPIT_1_8_GLOBAL_ARCHITECTURE.md` §8-9).
 

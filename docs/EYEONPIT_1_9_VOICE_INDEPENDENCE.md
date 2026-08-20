@@ -59,6 +59,17 @@ so a future engine plugs in at the top of the pipeline without the
 normalization/resolver/safety stack ever needing to know which engine
 produced the transcript.
 
+**Update (2026-08-19):** the `SpeechProvider` interface and a
+`BrowserWebSpeechProvider` implementation described as design-only in §2/§3
+below are now real, tested code — see
+`docs/EYEONPIT_VOICE_ARCHITECTURE.md`, which supersedes §2/§3 with what's
+actually built. §6's benchmark corpus design is likewise now implemented —
+see `src/lib/voice/voiceBenchmarkCorpus.ts` and that same architecture doc's
+§5. §4 (Firefox gap) and §5 (future EyeOnPit-controlled STT provider,
+choice of engine) remain accurate and undecided; §7's file list is updated
+by the newer document, not here, to keep this document's own historical
+record intact.
+
 ## 3. Proposed `SpeechProvider` interface (design only — not implemented)
 
 A future `lib/voice/speechProvider.ts` would define an interface shaped
@@ -232,9 +243,15 @@ to guess is always preferred over a wrong guess).
 - No fix for any PC Voice Field Test #2 finding (dealer→Taylor/Spotify,
   player→"play your", `ASR_NO_FINAL`, compound narration failures,
   active-target continuation gaps, `CONTROL_DISABLED` behavior) — those
-  remain open findings against the current, unmodified baseline by
-  explicit instruction, so Field Test #2 measures a clean, unchanged
-  pipeline.
+  remained open findings against the current, unmodified baseline at the
+  time this document was written, by explicit instruction, so Field Test
+  #2 measured a clean, unchanged pipeline. **Update:** every one of those
+  findings has since been remediated — see
+  `docs/EYEONPIT_VOICE_FIELD_TEST_2.md` for the full root-cause analysis
+  and fix. That remediation did not touch this document's own
+  `SpeechProvider`/Firefox architecture in any way; it operated entirely
+  within the existing `BrowserWebSpeechProvider` (i.e. the current,
+  unabstracted Chrome/Chromium Web Speech usage) described in §1–§3 above.
 - Zero changes under `src/lib/voice/`, `src/hooks/useVoiceRecognition.ts`,
   `src/components/live/VoiceControl.tsx`, or any voice-adjacent test file
   in this document's scope.

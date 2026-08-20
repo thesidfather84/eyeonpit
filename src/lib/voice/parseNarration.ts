@@ -42,6 +42,7 @@ import {
   RANK_WORDS,
   SEAT_NUMBER_BY_WORD,
   SEAT_PREFIX_WORDS,
+  containsTimeOrFractionPattern,
   containsUncertaintyLanguage,
   matchSeatTargetPhrase,
   normalizeAsrSeatArtifacts,
@@ -88,7 +89,25 @@ export type NarrationResult =
  * noise-based rejection threshold on an otherwise-valid narration), it
  * does not yet mutate anything.
  */
-const INERT_ACTION_WORDS = new Set(["hit", "stand", "double", "split", "surrender", "insurance"]);
+const INERT_ACTION_WORDS = new Set([
+  "hit",
+  "stand",
+  "double",
+  "split",
+  "surrender",
+  "insurance",
+  // PC Field Test #2 — natural third-person narration ("spot one stands",
+  // "spot three hits") uses the inflected verb form, not the imperative
+  // ("stand"/"hit") this set originally only covered. Same permanently-
+  // inert semantics either way — see this set's own doc comment above;
+  // adding the inflected forms recognizes more of the SAME vocabulary, it
+  // does not add any new mutation.
+  "stands",
+  "hits",
+  "doubles",
+  "splits",
+  "surrenders",
+]);
 
 /**
  * "Active seat one." / "Seat one active." — a natural way to say "make
@@ -130,8 +149,14 @@ const TARGET_ACTIVATION_WORDS = new Set(["active"]);
  * for its normal meaning ("I saw him as a kid") never establishes a target
  * in the first place and "as" there still counts as an ordinary noise
  * token exactly as before.
+ *
+ * "in" (PC Field Test #2 — real captured "has a 10 in a 3", Chrome's own
+ * misreading of "and") is included under the identical target-gated rule —
+ * only ever swallowed once a real target already exists, so "the count was
+ * in the negative" (no target established) still counts "in" as ordinary
+ * noise exactly as before.
  */
-const HAND_CONNECTOR_WORDS = new Set(["has", "as", "and", "with", "gets", "got", "shows"]);
+const HAND_CONNECTOR_WORDS = new Set(["has", "as", "and", "with", "gets", "got", "shows", "in"]);
 
 const SINGLE_WORD_WORKFLOW: Record<string, "done" | "next" | "undo"> = {
   done: "done",
@@ -250,8 +275,27 @@ function isTrivialLegacyEquivalent(ops: NarrationOp[], sawOnlyBareTarget: boolea
  * left to right exactly once, building one proposed ordered `ops` list;
  * every rejection path returns `{ kind: "reject" }` with that list
  * discarded, never a truncated prefix of it.
+ *
+ * `opts.allowUnscopedContinuation` (PC Field Test #2, default false) is the
+ * ONE deliberate, explicit exception to this module's "pure function of the
+ * transcript text alone" rule — see the module doc comment. It does not let
+ * the caller change WHAT a transcript means; it only tells this function
+ * "a live active target genuinely exists right now," which is what makes it
+ * safe to recognize target-omitted continuation narration ("has a ten and a
+ * three," said with Spot 1 already active) as structured hand narration
+ * rather than rejecting it outright. This is an explicit, caller-supplied
+ * input — exactly like `allowDealerConfusionRecovery` on
+ * classifyVoiceTranscript.ts — never an implicit read of global state, so
+ * the function remains fully deterministic given its complete inputs. Every
+ * unscoped card this produces still resolves against whatever the live
+ * active target actually is, and is still rejected at COMMIT time
+ * (resolveCardEntryTarget) if that target turns out not to be usable —
+ * this flag only ever affects whether the PARSE is attempted, never
+ * whether the eventual commit is safe.
  */
-export function parseNarration(rawTranscript: string): NarrationResult {
+export function parseNarration(rawTranscript: string, opts?: { allowUnscopedContinuation?: boolean }): NarrationResult {
+  const allowUnscopedContinuation = opts?.allowUnscopedContinuation ?? false;
+  const hasTimeOrFractionPattern = containsTimeOrFractionPattern(rawTranscript);
   const normalized = normalizeAsrSeatArtifacts(normalizeTranscript(rawTranscript));
   const tokens = dedupeAdjacentRepeats(normalized.split(" ").filter(Boolean));
   if (tokens.length === 0) return { kind: "no-opinion" };
@@ -276,6 +320,14 @@ export function parseNarration(rawTranscript: string): NarrationResult {
   // so deferring to legacy would be unsafe (it has no "target only, no
   // card" success case in its noisy fallback).
   let sawInertWord = false;
+  // True once a hand-connector word was swallowed specifically BECAUSE
+  // `allowUnscopedContinuation` is on and no target has been named in this
+  // utterance yet — real evidence of intentional hand-narration structure
+  // ("has a ten and a three"), as opposed to two bare adjacent card words
+  // with no connecting grammar at all ("king ace"). Only THIS signal, never
+  // `allowUnscopedContinuation` alone, is allowed to relax the "2+ distinct
+  // unscoped ranks is ambiguous" rule below — see that check's own comment.
+  let sawUnscopedConnector = false;
   // True once ANY target in this utterance was established through a form
   // the legacy single-command parser has NO equivalent understanding of —
   // the leading-seat-number shorthand ("three has a ten") or an extended
@@ -289,6 +341,48 @@ export function parseNarration(rawTranscript: string): NarrationResult {
   // player in seat one has a seven" were previously lost. See the two call
   // sites below and the final gating check near the end of this function.
   let sawNonLegacyTargetForm = false;
+  // PC Field Test #2 real-mic finding — the GENERAL fix, not a special case
+  // for any one word: counts every token consumed as INERT_ACTION_WORDS,
+  // TARGET_ACTIVATION_WORDS, or a target-gated HAND_CONNECTOR_WORDS match —
+  // i.e. every word narration itself understands but that legacy's own
+  // noisy-token fallback (extractFromNoisyTokens, parseVoiceCommand.ts) has
+  // NO vocabulary for at all and would count as an ordinary unrecognized
+  // stray word. isTrivialLegacyEquivalent's op-shape check only asks "does
+  // this LOOK like something legacy could produce" — it never asks "would
+  // legacy's own MAX_NOISE_TOKENS(1) budget actually accept this specific
+  // text." "spot 3 hits gets a 4" has an op-shape legacy could produce
+  // (target + one card) but consumes TWO narration-only words ("hits",
+  // "gets") along the way — deferring hands legacy a string its own 1-word
+  // tolerance was always going to reject. Compared against MAX_NOISE_TOKENS
+  // directly (not a second, arbitrary threshold) at the final gating check
+  // below, so deferral is refused precisely when — and only when — legacy's
+  // own tolerance would genuinely be insufficient, independent of which
+  // specific word(s) pushed it over.
+  let narrationOnlyFillerCount = 0;
+  // PC Field Test #2, real mic Gate #2 finding — true only for the token
+  // truly at the START of a fresh clause: the very first token of the
+  // whole utterance, or the token immediately after a workflow-boundary
+  // word resets `currentTarget`. The leading-seat-shorthand rule below
+  // ("three has a ten" -> Seat 3) must ONLY fire here — its own premise is
+  // "this number is naming a NEW target, not continuing an existing
+  // narration" — which is false the moment a connector word has ALREADY
+  // been consumed earlier in this same utterance (see the real captured
+  // bug: "has a 5 and a 3", where "5" sits AFTER "has" was already
+  // swallowed as a continuation connector, not at the true start of the
+  // utterance — yet the un-gated shorthand rule matched it anyway,
+  // reinterpreting a plain unscoped card as a brand-new Spot 5 target).
+  let atClauseStart = true;
+  // PC Field Test #2, real mic Gate #2 finding — true from the moment a
+  // hand-connector word (has/and/with/gets/got/shows/in) is consumed until
+  // either a card follows it (cleared by pushCard below) or the utterance
+  // ends. A connector word grammatically PROMISES a card is coming — unlike
+  // an inert action word ("stand"), which is a complete statement on its
+  // own — so an utterance that ends with this still true ("player five has
+  // a", "spot five hits gets a") is an INCOMPLETE card-entry construction,
+  // never a legitimate bare target-selection, no matter how the shape
+  // otherwise looks. Checked as an unconditional hard rejection near the
+  // end of this function, exactly like containsUncertaintyLanguage.
+  let sawUnresolvedConnector = false;
   // Tracks distinct ranks spoken before any target was ever established in
   // this utterance — the one place the OLD "two distinct cards, no target
   // -> ambiguous, reject" rule still applies exactly as it always has (see
@@ -306,6 +400,7 @@ export function parseNarration(rawTranscript: string): NarrationResult {
       ...(displayRank ? { displayRank } : {}),
     });
     if (!currentTarget) unscopedDistinctRanks.add(rank);
+    sawUnresolvedConnector = false;
   }
 
   function setTarget(target: VoiceTarget): void {
@@ -319,6 +414,13 @@ export function parseNarration(rawTranscript: string): NarrationResult {
 
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
+    // See `atClauseStart`'s own doc comment. Captured once per token, then
+    // reset to false by default — the three workflow branches immediately
+    // below explicitly set it back to true (alongside their existing
+    // `currentTarget = undefined`), since a workflow boundary is exactly
+    // the other place a fresh clause legitimately begins.
+    const isClauseStart = atClauseStart;
+    atClauseStart = false;
 
     // "new hand" — a two-token natural alias for the exact same "next"
     // round-control action bare "next" already dispatches (handleNext in
@@ -328,6 +430,7 @@ export function parseNarration(rawTranscript: string): NarrationResult {
       recognizedAnything = true;
       ops.push({ kind: "workflow", action: "next" });
       currentTarget = undefined; // a workflow boundary ends the previous target's scope — see §3
+      atClauseStart = true;
       i += 1;
       continue;
     }
@@ -341,6 +444,7 @@ export function parseNarration(rawTranscript: string): NarrationResult {
       recognizedAnything = true;
       ops.push({ kind: "workflow", action: "done" });
       currentTarget = undefined;
+      atClauseStart = true;
       i += 1;
       continue;
     }
@@ -349,6 +453,7 @@ export function parseNarration(rawTranscript: string): NarrationResult {
       recognizedAnything = true;
       ops.push({ kind: "workflow", action: SINGLE_WORD_WORKFLOW[token] });
       currentTarget = undefined;
+      atClauseStart = true;
       continue;
     }
 
@@ -403,32 +508,60 @@ export function parseNarration(rawTranscript: string): NarrationResult {
     // always just a card, exactly as before — "I have one five three
     // seven" or "the score was five to one" never hits this branch because
     // the very next token isn't a connector. Only fires when no target is
-    // active (`!currentTarget`), which is what makes this "the beginning
-    // of a clause": a workflow op or a real target word always resets
-    // `currentTarget` to undefined first, so this can never fire mid-hand
-    // and reinterpret a plain continuation card as a NEW seat.
-    if (!currentTarget && SEAT_NUMBER_BY_WORD[token] != null && HAND_CONNECTOR_WORDS.has(tokens[i + 1] ?? "")) {
+    // active (`!currentTarget`) AND this token is truly at the start of a
+    // fresh clause (`isClauseStart` — see its own doc comment, added after
+    // a real captured bug: "has a 5 and a 3" was misreading its SECOND
+    // number, "5", as a brand-new Seat 5 shorthand, purely because
+    // `currentTarget` happened to still be unset — even though "5" sits
+    // well after "has" was already consumed as a continuation connector,
+    // nowhere near the true start of the utterance).
+    if (
+      !currentTarget &&
+      isClauseStart &&
+      SEAT_NUMBER_BY_WORD[token] != null &&
+      HAND_CONNECTOR_WORDS.has(tokens[i + 1] ?? "")
+    ) {
       recognizedAnything = true;
       sawNonLegacyTargetForm = true; // legacy has no shorthand grammar at all — see the flag's own doc comment
       setTarget({ kind: "seat", seat: SEAT_NUMBER_BY_WORD[token] });
       continue;
     }
 
-    // Hand connectors ("has", "and", "with", "gets", "got", "shows") are
-    // inert grammar INSIDE an already-established explicit target/card-
-    // entry context — see HAND_CONNECTOR_WORDS's own doc comment for why
-    // this is gated on `currentTarget` rather than unconditional.
-    if (currentTarget && HAND_CONNECTOR_WORDS.has(token)) continue;
+    // Hand connectors ("has", "and", "with", "gets", "got", "shows", "in")
+    // are inert grammar INSIDE an already-established explicit target/
+    // card-entry context — see HAND_CONNECTOR_WORDS's own doc comment for
+    // why this is gated on `currentTarget` rather than unconditional.
+    if (currentTarget && HAND_CONNECTOR_WORDS.has(token)) {
+      narrationOnlyFillerCount += 1; // see this variable's own doc comment — legacy has no vocabulary for connector words at all
+      sawUnresolvedConnector = true; // see this variable's own doc comment — cleared by the next pushCard, hard-rejected if the utterance ends before one arrives
+      continue;
+    }
+
+    // PC Field Test #2 — target-omitted continuation: the SAME connector
+    // words, tolerated even with no target named in THIS utterance, but
+    // ONLY when the caller has confirmed a live active target genuinely
+    // exists (`allowUnscopedContinuation`) — see parseNarration's own doc
+    // comment on that flag. Marks `sawUnscopedConnector`, the one signal
+    // allowed to relax the unscoped-ambiguity check near the end of this
+    // function.
+    if (!currentTarget && allowUnscopedContinuation && HAND_CONNECTOR_WORDS.has(token)) {
+      sawUnscopedConnector = true;
+      narrationOnlyFillerCount += 1;
+      sawUnresolvedConnector = true;
+      continue;
+    }
 
     if (INERT_ACTION_WORDS.has(token)) {
       recognizedAnything = true; // valid narration vocabulary — never counted as noise, even though it produces no op (see INERT_ACTION_WORDS doc comment)
       sawInertWord = true;
+      narrationOnlyFillerCount += 1;
       continue;
     }
 
     if (TARGET_ACTIVATION_WORDS.has(token)) {
       recognizedAnything = true; // "active seat one" / "seat one active" — see TARGET_ACTIVATION_WORDS's own doc comment
       sawInertWord = true;
+      narrationOnlyFillerCount += 1;
       continue;
     }
 
@@ -444,11 +577,17 @@ export function parseNarration(rawTranscript: string): NarrationResult {
       recognizedAnything = true;
       const decomposed = decomposeNumericStream(token);
       if (!decomposed) return { kind: "reject" }; // undecomposable digit run — never guess which cards were meant (§2)
-      if (!currentTarget && decomposed.length > 1) {
+      if ((!currentTarget || hasTimeOrFractionPattern) && decomposed.length > 1) {
         // An unscoped compact stream inherently proposes 2+ cards with no
         // established target to receive them — exactly the ambiguity §4
         // says may stay rejected ("an unscoped 'King Ace' may remain
         // rejected"), just arriving as one token instead of two words.
+        // PC Field Test #2 (§10, numeric/time safety): even WITH a target
+        // already established, a glued 2+-digit run is refused here when
+        // the transcript also contains a colon/slash clock-time or
+        // fraction shape ("spot 6 has a 3:55") — that punctuation is
+        // strong evidence the digits are a timestamp, not two more dealt
+        // ranks, so this is never decomposed into cards, guessed or not.
         return { kind: "reject" };
       }
       for (const rank of decomposed) pushCard(rank, rank);
@@ -459,8 +598,43 @@ export function parseNarration(rawTranscript: string): NarrationResult {
   }
 
   if (!recognizedAnything) return { kind: "no-opinion" };
+  // SAFETY (real captured mic-test bug): "player five has a" / "spot five
+  // hits gets a" — a connector word grammatically PROMISES a following
+  // card ("has A CARD", "gets A CARD"); an utterance that ends before that
+  // card ever arrives is an INCOMPLETE construction, never a legitimate
+  // bare target-selection, no matter how the resulting op shape otherwise
+  // looks. An unconditional hard rejection — see `sawUnresolvedConnector`'s
+  // own doc comment — checked BEFORE the noise cap and the trivial-defer
+  // check below, so this can never accidentally defer to legacy (which
+  // sometimes also rejects the same text, but not reliably — N-best
+  // resolution can still pick a DIFFERENT, shorter alternative that reads
+  // as a complete bare target-select on its own, e.g. "player five" said
+  // as a separate ASR alternative from "player five has a").
+  if (sawUnresolvedConnector) return { kind: "reject" };
   if (noiseTokens > MAX_NOISE_TOKENS) return { kind: "reject" };
-  if (unscopedDistinctRanks.size > 1) return { kind: "reject" };
+  // PC Field Test #2 — relaxed ONLY when genuine connector grammar proved
+  // intentional hand-narration structure (`sawUnscopedConnector`), never
+  // merely because `allowUnscopedContinuation` was on: "king ace" (two bare
+  // adjacent card words, no connecting grammar at all) must stay rejected
+  // regardless of whether a live active target exists — see
+  // `sawUnscopedConnector`'s own doc comment. A REAL captured mic session
+  // additionally proved `noiseTokens === 0` must hold too: "Taylor has a
+  // king and a five" (an unrelated proper-noun misreading of "dealer"
+  // riding along with two connector-joined cards) was passing this check
+  // with exactly one tolerated stray word ("Taylor"), producing an
+  // UNSCOPED two-card action that collided with a genuine, explicit-target
+  // N-best alternative ("dealer has a king and a five") and turned what
+  // should have been an outright accept into a false
+  // CONFLICTING_ALTERNATIVES. The ordinary 1-stray-word noise tolerance
+  // elsewhere in this app was calibrated for a single misheard word next
+  // to ONE command (a misheard proper noun beside a card, or beside a
+  // target+card); it was never validated against a 2+-card unscoped
+  // sequence, where a stray word competing for the SAME role a dealer/seat
+  // confusion token would occupy is a materially different risk. This
+  // relaxation now requires a genuinely clean utterance.
+  if (unscopedDistinctRanks.size > 1 && !(allowUnscopedContinuation && sawUnscopedConnector && noiseTokens === 0)) {
+    return { kind: "reject" };
+  }
 
   // SAFETY (real captured field bug): "Three active seat five" must never
   // become DEALER: 3. A card pushed before ANY target was established in
@@ -511,7 +685,33 @@ export function parseNarration(rawTranscript: string): NarrationResult {
   // own doc comment. Deferring here would hand legacy a transcript it
   // cannot actually reparse, which is exactly how "three has a ten" and
   // "the player in seat one has a seven" were previously lost.
-  if (!sawNonLegacyTargetForm && isTrivialLegacyEquivalent(ops, sawOnlyBareTarget)) return { kind: "no-opinion" };
+  //
+  // PC Field Test #2 real-mic finding, GENERAL fix (not specific to any one
+  // word — see `narrationOnlyFillerCount`'s own doc comment): also never
+  // defer when this utterance leaned on MORE narration-only vocabulary than
+  // legacy's own noise budget (MAX_NOISE_TOKENS) would tolerate. A single
+  // connector word ("seat one has a five") still safely defers — legacy's
+  // own extractFromNoisyTokens already accepts exactly that, unchanged. Two
+  // or more ("spot 3 hits gets a 4" — an inert action word AND a connector)
+  // would always have been rejected by legacy's stricter budget; asking the
+  // identical question isTrivialLegacyEquivalent already asks structurally
+  // ("could legacy produce this shape"), just answered against legacy's
+  // OWN actual tolerance instead of the shape alone.
+  //
+  // Chrome Patch round real-mic finding — the check also now includes
+  // ordinary `noiseTokens`, not narrationOnlyFillerCount alone: "player 3
+  // hits of 4" has ONE narration-only word ("hits") and, separately, ONE
+  // genuinely unrecognized word ("of," Chrome's own mishearing of "gets"),
+  // each individually within its own 1-word budget — but legacy would see
+  // BOTH as noise simultaneously (it has no vocabulary for "hits" either),
+  // for a combined total of 2, over its budget. Narration's own general
+  // noise cap (checked earlier, using `noiseTokens` alone) already proved
+  // this exact utterance is safe to accept directly; this sum is only
+  // about whether DEFERRING to legacy specifically remains safe.
+  const legacyWouldAcceptTheText = noiseTokens + narrationOnlyFillerCount <= MAX_NOISE_TOKENS;
+  if (!sawNonLegacyTargetForm && legacyWouldAcceptTheText && isTrivialLegacyEquivalent(ops, sawOnlyBareTarget)) {
+    return { kind: "no-opinion" };
+  }
 
   return { kind: "ops", ops };
 }

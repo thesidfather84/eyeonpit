@@ -13,6 +13,61 @@ export default function ReleaseNotesPage() {
       <DocsPageHeader title="Release Notes" subtitle="What changed, version by version." />
 
       <div className="mt-2">
+        <ReleaseEntry version="1.4.5" date="2026-08-19" title="PC Voice Field Test #2 Remediation">
+          <p>
+            A voice-reliability follow-up focused on natural phrasing, clearer explanations when a command can&apos;t
+            act, and a narrow safety fix — driven by a second round of real PC field testing.
+          </p>
+          <ul>
+            <li>
+              <strong>More natural player phrasing recognized.</strong> A few more common misreadings of
+              &ldquo;player&rdquo; (&ldquo;play your,&rdquo; &ldquo;play are,&rdquo; &ldquo;play Air,&rdquo;
+              &ldquo;play everyone&rdquo;) are now recognized under the same narrow, lookahead-guarded rules as
+              existing artifacts like &ldquo;play&rdquo; before a spot number.
+            </li>
+            <li>
+              <strong>Dealer misreading recovery now handles a full hand.</strong> &ldquo;Spotify has a five and a
+              king&rdquo; recovers both cards, in order — previously only the first card would.
+            </li>
+            <li>
+              <strong>Continue a hand without repeating the target.</strong> Once a spot is active, &ldquo;has a ten
+              and a three&rdquo; now applies to it directly — no need to say the spot number again.
+            </li>
+            <li>
+              <strong>Describe a full round in one breath.</strong> &ldquo;Spot one stands, spot three hits, gets a
+              three&rdquo; now works as a single compound sentence, all committed together or not at all.
+            </li>
+            <li>
+              <strong>New: say who you&apos;re watching.</strong> &ldquo;Current player is spot one,&rdquo;
+              &ldquo;watching spot one,&rdquo; and &ldquo;I&apos;m on spot one&rdquo; set the active target without
+              recording anything.
+            </li>
+            <li>
+              <strong>More natural table-change phrasing.</strong> &ldquo;Player sat down at spot one&rdquo; and
+              &ldquo;new player at spot six&rdquo; are now recognized alongside the existing forms.
+            </li>
+            <li>
+              <strong>Clearer explanations when a command can&apos;t act.</strong> Instead of a generic &ldquo;not
+              available right now,&rdquo; EyeOnPit now says specifically why — &ldquo;Count is already running
+              &mdash; nothing to resume,&rdquo; &ldquo;Dealer cards pending &mdash; enter cards or declare a round
+              exception,&rdquo; and similar.
+            </li>
+            <li>
+              <strong>A narrow safety fix.</strong> A misheard clock time or fraction (&ldquo;3:55,&rdquo;
+              &ldquo;1/8&rdquo;) can never be read as two extra cards, even when a spot is already active.
+            </li>
+            <li>
+              <strong>Session summary in the Debug panel.</strong> A new line above the log shows acceptance rate,
+              how often a lower-ranked recognizer alternative was actually correct, and recognition timing.
+            </li>
+          </ul>
+          <p className="!mt-4 text-xs">
+            94 new automated tests added. Full suite: 1214 passed, 1 pre-existing skip. The voice parser&apos;s core
+            safety rules (reject when genuinely ambiguous, never partially commit a compound sentence, never guess
+            between two targets), the CardEvent ledger, and counting mathematics were not touched in this release.
+          </p>
+        </ReleaseEntry>
+
         <ReleaseEntry version="1.4.4" date="2026-08-18" title="Floor Mode Operator Usability Cleanup">
           <p>
             A presentation-only cleanup: Floor Mode&apos;s screen now consistently uses the same plain casino

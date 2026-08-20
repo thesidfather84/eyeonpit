@@ -44,7 +44,7 @@ export function computeWorkflowStatus(investigation: Investigation, round: Round
   if (missingWager != null) {
     return {
       message: "Waiting for starting wagers.",
-      guidance: `Seat ${missingWager} has no wager recorded yet — set it from the bet panel.`,
+      guidance: `Spot ${missingWager} has no wager recorded yet — set it from the bet panel.`,
     };
   }
 
@@ -65,7 +65,7 @@ export function computeWorkflowStatus(investigation: Investigation, round: Round
   );
   if (waitingOnDouble) {
     return {
-      message: `Seat ${waitingOnDouble.seatNumber} is doubled. Enter one final card.`,
+      message: `Spot ${waitingOnDouble.seatNumber} is doubled. Enter one final card.`,
       guidance: "A doubled hand takes exactly one more card, then locks automatically.",
     };
   }
@@ -73,7 +73,7 @@ export function computeWorkflowStatus(investigation: Investigation, round: Round
   const activeSplit = hands.find((h) => h.isSplit && h.hand.playerCards.length === 0);
   if (activeSplit) {
     return {
-      message: `Split hand active on Seat ${activeSplit.seatNumber}.`,
+      message: `Split hand active on Spot ${activeSplit.seatNumber}.`,
       guidance: "Enter cards for the split hand — its result is derived automatically when the round completes.",
     };
   }

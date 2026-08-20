@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored, unmodified third-party sherpa-onnx WASM build (gitignored,
+    // never committed — see sherpaOnnxProvider.ts's ASSET DEPLOYMENT doc
+    // comment). Not our code; nothing here is ever edited.
+    "public/sherpa-onnx-lab/**",
   ]),
 ]);
 

@@ -8,6 +8,7 @@ import {
   FlaskConical,
   LineChart,
   ListChecks,
+  Mic,
   PlusCircle,
   ShieldAlert,
   Users,
@@ -82,6 +83,12 @@ export default function LabHomePage() {
       description: "Measured sensitivity/specificity/false-positive rate against deterministic synthetic archetypes.",
     },
     { href: "/lab/admin", label: "Admin / Method Validation", icon: Wrench, description: "Review verification status and source citations." },
+    {
+      href: "/lab/sherpa-voice-test",
+      label: "Sherpa Real Mic Field Test",
+      icon: Mic,
+      description: "ASR evaluation only — Sherpa-ONNX vs. Chrome, raw transcripts, no CardEvents written, nothing connected to a live investigation.",
+    },
   ];
 
   return (

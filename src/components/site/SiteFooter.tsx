@@ -57,7 +57,13 @@ export function SiteFooter() {
         </div>
         <div className="mt-10 flex flex-col gap-2 border-t border-border/60 pt-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span>© {new Date().getFullYear()} EyeOnPit. All rights reserved.</span>
-          <span>Proprietary EyeOnPit Engine.</span>
+          <div className="flex items-center gap-4">
+            {/* Internal R&D workspace — passcode-gated at /lab/access, never renders any Lab content without authentication. Not part of the operator/customer product. */}
+            <Link href="/lab" className="text-muted-foreground hover:text-foreground">
+              Lab
+            </Link>
+            <span>Proprietary EyeOnPit Engine.</span>
+          </div>
         </div>
       </div>
     </footer>

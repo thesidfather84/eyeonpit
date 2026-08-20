@@ -14,8 +14,16 @@ export type ConfirmationEntry =
   /** A target was established with no card following it in the same narration (e.g. "seat two stand") — renders as the bare target label, no colon/ranks. */
   | { kind: "target"; target: VoiceTarget };
 
+/**
+ * PRIORITY: operator feedback must say "Spot N," never the bare internal
+ * shorthand "S1"–"S7" — this is the normal, visible confirmation pill
+ * (`setStatus({kind:"accepted",label})`), not a diagnostic surface, so the
+ * 1.9 global terminology rule applies here directly. See
+ * lib/utils/cardEntryResolution.ts's own doc comment for the sibling fix on
+ * the manual-entry/single-command confirmation path.
+ */
 function targetLabel(target: VoiceTarget): string {
-  return target.kind === "dealer" ? "DEALER" : `S${target.seat}`;
+  return target.kind === "dealer" ? "DEALER" : `SPOT ${target.seat}`;
 }
 
 type Slot = { kind: "cards"; label: string; ranks: string[] } | { kind: "workflow"; label: string };

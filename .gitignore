@@ -45,3 +45,8 @@ next-env.d.ts
 
 # claude code local state — never committed
 .claude/
+
+# EXPERIMENTAL sherpa-onnx WASM/model assets (~205MB) — lab/dev-only, per
+# sherpaOnnxProvider.ts's own ASSET DEPLOYMENT doc comment. Never committed:
+# too large for version control, and never meant to ship to operators.
+/public/sherpa-onnx-lab/

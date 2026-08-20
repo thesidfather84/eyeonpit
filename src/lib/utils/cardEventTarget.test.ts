@@ -67,11 +67,11 @@ describe("describeLedgerTarget", () => {
   });
 
   it("labels a seat", () => {
-    expect(describeLedgerTarget("seat", 3)).toBe("Seat 3");
+    expect(describeLedgerTarget("seat", 3)).toBe("Spot 3");
   });
 
   it("labels a split hand distinctly from its primary seat", () => {
-    expect(describeLedgerTarget("split", 3)).toBe("Seat 3 (Split)");
+    expect(describeLedgerTarget("split", 3)).toBe("Spot 3 (Split)");
   });
 });
 

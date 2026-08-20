@@ -242,9 +242,9 @@ describe("Operator loop, end to end (requirement #24) — Floor start through En
     await narrateAndAwaitConfirmation("dealer king five", /✓ DEALER: K 5/);
     // "player" = seat prefix synonym; each unoccupied seat is occupied by
     // its own narration, exactly like tapping the seat tile would.
-    await narrateAndAwaitConfirmation("player one seven three", /✓ S1: 7 3/);
-    await narrateAndAwaitConfirmation("player two ace king", /✓ S2: A K/);
-    await narrateAndAwaitConfirmation("player three five six", /✓ S3: 5 6/);
+    await narrateAndAwaitConfirmation("player one seven three", /✓ SPOT 1: 7 3/);
+    await narrateAndAwaitConfirmation("player two ace king", /✓ SPOT 2: A K/);
+    await narrateAndAwaitConfirmation("player three five six", /✓ SPOT 3: 5 6/);
 
     // VISUAL CONFIRMATION (requirement #4) — the compact play field reflects
     // exactly what was heard, close to each target's own label. Cards for a

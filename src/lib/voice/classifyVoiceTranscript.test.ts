@@ -161,8 +161,14 @@ describe("PC field test #1 — CONTEXTUAL DEALER-CONFUSION RECOVERY (§4 + PC he
     expect(tryDealerConfusionRecovery("Taylor seat three has a king")).toBeNull();
   });
 
-  it("refuses to recover when two different ranks are present — not unambiguous", () => {
-    expect(tryDealerConfusionRecovery("Taylor has a king and an ace")).toBeNull();
+  it('PC Field Test #2 — "Taylor has a king and an ace" now recovers to an ORDERED two-card dealer hand (K, A), not a rejection: "and" joins a second card onto the same recovered hand rather than proposing two conflicting single-card readings', () => {
+    const result = tryDealerConfusionRecovery("Taylor has a king and an ace");
+    expect(result?.valid).toBe(true);
+    expect(result?.valid && result.narrationOps).toEqual([
+      { kind: "selectTarget", target: { kind: "dealer" } },
+      { kind: "card", target: { kind: "dealer" }, rank: "10", displayRank: "K" },
+      { kind: "card", target: { kind: "dealer" }, rank: "A" },
+    ]);
   });
 
   it("refuses to recover uncertainty language, even in an otherwise-recoverable shape", () => {

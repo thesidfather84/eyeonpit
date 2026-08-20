@@ -834,7 +834,7 @@ export function InvestigationProvider({
             seats: { ...round.seats, [seatNumber]: { ...seat, betAmount: amount, wagerChange } },
           };
         },
-        { type: "bet-change", message: `Seat ${seatNumber} bet set to $${amount}` }
+        { type: "bet-change", message: `Spot ${seatNumber} bet set to $${amount}` }
       );
     },
     [mutate]
@@ -924,7 +924,7 @@ export function InvestigationProvider({
             },
           };
         },
-        { type: "correction", message: `Seat ${seatNumber} hand cleared` }
+        { type: "correction", message: `Spot ${seatNumber} hand cleared` }
       );
     },
     [mutate]

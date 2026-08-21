@@ -447,9 +447,38 @@ export default function SherpaVoiceTestPage() {
     URL.revokeObjectURL(url);
   }
 
+  // LAB UX ADDITION, 2026-08-20: Copy JSON previously gave no confirmation
+  // it worked at all — an operator had no way to tell a click succeeded
+  // short of pasting somewhere and checking. `copyStatus` drives both the
+  // button's own temporary label and an `aria-live` announcement; reverts
+  // to "idle" automatically after 2s so it never gets stuck.
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const copyStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   function copyJson() {
-    navigator.clipboard?.writeText(exportJson).catch(() => {});
+    if (copyStatusTimeoutRef.current) window.clearTimeout(copyStatusTimeoutRef.current);
+    if (!navigator.clipboard) {
+      setCopyStatus("failed");
+      copyStatusTimeoutRef.current = setTimeout(() => setCopyStatus("idle"), 2500);
+      return;
+    }
+    navigator.clipboard
+      .writeText(exportJson)
+      .then(() => {
+        setCopyStatus("copied");
+        copyStatusTimeoutRef.current = setTimeout(() => setCopyStatus("idle"), 2000);
+      })
+      .catch(() => {
+        setCopyStatus("failed");
+        copyStatusTimeoutRef.current = setTimeout(() => setCopyStatus("idle"), 2500);
+      });
   }
+
+  useEffect(() => {
+    return () => {
+      if (copyStatusTimeoutRef.current) window.clearTimeout(copyStatusTimeoutRef.current);
+    };
+  }, []);
 
   const currentPhrase = phraseIndex >= 0 && phraseIndex < ALL_PHRASES.length ? ALL_PHRASES[phraseIndex] : null;
   const isDealerStress = phraseIndex < DEALER_STRESS_PHRASES.length;
@@ -691,10 +720,38 @@ export default function SherpaVoiceTestPage() {
       <section className="rounded-xl border border-border bg-surface p-3">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-bold text-foreground">4. Captured results ({records.length})</h2>
-          <div className="flex gap-2">
-            <button type="button" onClick={copyJson} className="tap-target flex items-center gap-1 rounded-lg border border-border px-2 text-xs font-semibold text-foreground">
-              <Copy className="h-3 w-3" aria-hidden /> Copy JSON
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={copyJson}
+              className={`tap-target flex items-center gap-1 rounded-lg border px-2 text-xs font-semibold ${
+                copyStatus === "copied"
+                  ? "border-status-green bg-status-green/10 text-status-green"
+                  : copyStatus === "failed"
+                    ? "border-destructive bg-destructive/10 text-destructive"
+                    : "border-border text-foreground"
+              }`}
+            >
+              {copyStatus === "copied" ? (
+                <>
+                  <Check className="h-3 w-3" aria-hidden /> JSON Copied
+                </>
+              ) : copyStatus === "failed" ? (
+                <>
+                  <X className="h-3 w-3" aria-hidden /> Copy failed
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3 w-3" aria-hidden /> Copy JSON
+                </>
+              )}
             </button>
+            {/* Accessible confirmation channel, separate from the button's
+                own visual label — screen readers announce this without the
+                operator needing to notice the button text changed. */}
+            <span role="status" aria-live="polite" className="sr-only">
+              {copyStatus === "copied" ? "JSON copied to clipboard" : copyStatus === "failed" ? "Copy to clipboard failed" : ""}
+            </span>
             <button type="button" onClick={downloadJson} className="tap-target flex items-center gap-1 rounded-lg border border-border px-2 text-xs font-semibold text-foreground">
               <Download className="h-3 w-3" aria-hidden /> Download JSON
             </button>

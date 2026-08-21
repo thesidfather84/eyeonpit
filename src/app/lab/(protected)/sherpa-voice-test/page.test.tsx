@@ -8,8 +8,8 @@
 // calling into the provider at all, which is enough to exercise the
 // 2026-08-20 Lab UX fix under real React state/render behavior, not a
 // reimplementation of it.
-import { render, screen, fireEvent } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen, fireEvent, act } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import SherpaVoiceTestPage from "./page";
 
 function phraseHeading(): string {
@@ -80,5 +80,107 @@ describe("Sherpa A/B/C Lab page — REGRESSION (items 7 & 8, 2026-08-20 real mic
     fireEvent.click(screen.getByRole("button", { name: /Next Phrase/ }));
     fireEvent.click(screen.getByRole("button", { name: /B — Current \(shipped\)/ }));
     expect(phraseHeading()).toContain("Phrase 1 of 29");
+  });
+
+  const CONFIG_BUTTON_NAME = {
+    A: /A — Hotwords OFF/,
+    B: /B — Current \(shipped\)/,
+    C: /C — Tuned/,
+  } as const;
+
+  it.each([
+    ["A", "B"],
+    ["B", "C"],
+    ["C", "A"],
+  ] as const)("%s -> %s resets the phrase run to Phrase 1 and updates the banner", (from, to) => {
+    render(<SherpaVoiceTestPage />);
+    fireEvent.click(screen.getByRole("button", { name: CONFIG_BUTTON_NAME[from] }));
+    fireEvent.click(screen.getByRole("button", { name: /Skip/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Next Phrase/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Skip/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Next Phrase/ }));
+    expect(phraseHeading()).toContain("Phrase 3 of 29");
+    expect(screen.getByTestId("active-config-banner").textContent).toContain(`Config ${from}`);
+
+    fireEvent.click(screen.getByRole("button", { name: CONFIG_BUTTON_NAME[to] }));
+
+    expect(phraseHeading()).toContain("Phrase 1 of 29");
+    expect(screen.getByTestId("active-config-banner").textContent).toContain(`Config ${to}`);
+  });
+
+  it("no transcript/session state bleeds between configurations — a stale error/status from the PREVIOUS configuration is cleared on switch, never shown as if it belongs to the new one", () => {
+    render(<SherpaVoiceTestPage />);
+    // Sherpa is unsupported in this test environment (no real AudioWorklet/
+    // getUserMedia) — clicking Start Phrase deterministically produces a
+    // real error/status without needing any WASM/audio mocking.
+    fireEvent.click(screen.getByRole("button", { name: /Start Phrase/ }));
+    expect(screen.getByText("unsupported-in-this-browser")).toBeTruthy();
+    expect(screen.getByText("error")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: CONFIG_BUTTON_NAME.B }));
+
+    expect(screen.queryByText("unsupported-in-this-browser")).toBeNull();
+    expect(screen.queryByText("error")).toBeNull();
+    expect(screen.getByText("idle")).toBeTruthy();
+  });
+});
+
+describe("Sherpa A/B/C Lab page — Copy JSON confirmation feedback", () => {
+  it("shows '✓ JSON Copied' and an accessible status announcement after a successful copy, then reverts", async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    render(<SherpaVoiceTestPage />);
+    const copyButton = screen.getByRole("button", { name: /Copy JSON/ });
+    await act(async () => {
+      fireEvent.click(copyButton);
+      await Promise.resolve();
+    });
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: /JSON Copied/ })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("JSON copied to clipboard");
+
+    await act(async () => {
+      vi.advanceTimersByTime(2100);
+    });
+    expect(screen.getByRole("button", { name: /^Copy JSON$/ })).toBeTruthy();
+
+    vi.useRealTimers();
+  });
+
+  it("shows a clear failure message when the clipboard write rejects — never claims success", async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    render(<SherpaVoiceTestPage />);
+    const copyButton = screen.getByRole("button", { name: /Copy JSON/ });
+    await act(async () => {
+      fireEvent.click(copyButton);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("button", { name: /Copy failed/ })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("Copy to clipboard failed");
+    expect(screen.queryByRole("button", { name: /JSON Copied/ })).toBeNull();
+
+    vi.useRealTimers();
+  });
+
+  it("shows a failure message when no Clipboard API exists at all, rather than silently doing nothing or falsely claiming success", async () => {
+    vi.useFakeTimers();
+    Object.assign(navigator, { clipboard: undefined });
+
+    render(<SherpaVoiceTestPage />);
+    const copyButton = screen.getByRole("button", { name: /Copy JSON/ });
+    await act(async () => {
+      fireEvent.click(copyButton);
+    });
+
+    expect(screen.getByRole("button", { name: /Copy failed/ })).toBeTruthy();
+
+    vi.useRealTimers();
   });
 });

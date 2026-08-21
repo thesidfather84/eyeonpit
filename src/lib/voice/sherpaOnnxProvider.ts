@@ -296,6 +296,106 @@
  * every other "WHAT WAS NOT RE-VERIFIED" note in this file), so what's
  * proven here is the ordering logic, not the literal race window.
  * ============================================================
+ * FOLLOW-UP REAL-MIC SESSION, 2026-08-20 (Config C) — the drain fix did NOT
+ * eliminate truncation; root cause narrowed to beam-search hypothesis
+ * regression; a second, narrower fix applied
+ * ============================================================
+ * A second real production mic session, run specifically against Config C
+ * AFTER the finalization-drain fix above shipped, showed the SAME class of
+ * failure persisting — proving mechanism 1 (the delivery race) was real and
+ * worth fixing, but NOT the only or even the dominant cause. Real captured
+ * examples from that session:
+ *
+ *   - Expected "Dealer has a king" -> final "DEALER HAS" (TWO trailing
+ *     words lost, not one — see SHERPA_FIELD_TRUNCATION_EXAMPLES below).
+ *   - Expected "Player one has a five and a three" -> the INTERIM stream
+ *     itself reached the complete, correct "PLAYER ONE HAS A FIVE AND A
+ *     THREE" — then the FINAL *regressed* to "PLAYER ONE HAS A FIVE AND A",
+ *     a shorter text than what had already been decoded and displayed.
+ *   - Expected "Dealer has a king and a five" -> final "DEALER HAS A KING
+ *     IN" — not merely truncated but DIVERGENT: "IN" is not a prefix-safe
+ *     shortening of "AND A FIVE", it's a different (wrong) token entirely.
+ *
+ * WHY THE DRAIN FIX COULDN'T HAVE CAUGHT THIS: the drain fix only ever
+ * helps when audio was captured but not yet DELIVERED to this thread at
+ * the moment `stop()` ran. In the "Player one..." example, the interim
+ * stream had ALREADY reached the fully correct text — meaning every sample
+ * for every word, including "three", had unambiguously already been
+ * delivered, accepted via `acceptWaveform()`, and DECODED into that exact
+ * hypothesis, before `stop()` was ever called. There was no undelivered
+ * audio left to drain. The only remaining place text can be LOST between
+ * "the interim already said this" and "the final says something shorter"
+ * is inside the decoder's own hypothesis selection — i.e. exactly
+ * mechanism 2 from the section above: `modified_beam_search` (the decoding
+ * method hotwords require, used by Config B and C both) keeps
+ * `maxActivePaths` (4) ranked hypotheses, not one committed token sequence
+ * the way `greedy_search` (Config A, unaffected by this class of bug) does.
+ * `getResult()` returns whichever hypothesis currently ranks #1 — and nothing
+ * in the sherpa-onnx JS API guarantees that ranking is monotonic as more
+ * audio/right-context is decoded through `inputFinished()`'s own trailing
+ * flush. The DIVERGENT case ("...KING IN") is the clearest direct evidence
+ * of this: a beam-search hypothesis-swap (a fundamentally different path,
+ * not merely a shorter one) is not explainable by ANY audio-delivery
+ * timing issue — a delivery problem can only ever produce a clean prefix
+ * (audio simply wasn't there yet), never a different word in its place.
+ *
+ * WHAT WAS NOT CHANGED, AND WHY: `enableEndpoint`, `hotwordsScore`,
+ * `maxActivePaths`, and the hotwords vocabulary itself were all considered
+ * and explicitly left untouched this round. Retuning any of them (e.g.
+ * widening the beam, lowering the hotword bias) is exactly the kind of
+ * speculative parameter change explicitly out of bounds without a real
+ * mic session to actually measure its effect — none of those are grounded
+ * in the specific evidence above the way the fix below is. If a future
+ * session's evidence points at hotword-bias-induced beam starvation
+ * specifically, that is real follow-up work, not assumed here.
+ *
+ * THE FIX — a FINALIZATION REGRESSION GUARD, not "trust the last interim
+ * blindly" (see `applyFinalizationRegressionGuard` below for the exact,
+ * narrow, provable rule): every interim result is compared against the
+ * PREVIOUS one; when the decoder holds the EXACT SAME text steady across
+ * two consecutive decode reads (real evidence the hypothesis has settled,
+ * not a one-off flicker), that text is recorded as `stableInterimText`.
+ * After the drain-and-flush finalization above produces its own
+ * `finalText`, the guard checks ONE thing, deterministically: is
+ * `finalText` a proper TOKEN-BOUNDARY PREFIX of `stableInterimText` (every
+ * one of `finalText`'s words matches, in order, the leading words of
+ * `stableInterimText`, with `stableInterimText` having strictly more
+ * words)? If, and only if, that holds, `stableInterimText` — text the SAME
+ * decoder already produced and held stable, never a fabrication or a
+ * different reading — replaces `finalText` before it's emitted.
+ *
+ * This rule is deliberately narrow and asymmetric, per explicit
+ * instruction not to simply substitute interim text without proof it
+ * cannot create stale/false recognition:
+ *   - It NEVER fires when `finalText` is equal to, longer than, or
+ *     genuinely DIFFERENT from `stableInterimText` — a final that
+ *     legitimately improves on or diverges from any prior interim (the
+ *     ordinary, correct case) passes through completely untouched.
+ *   - It NEVER invents content — the replacement text is always something
+ *     the SAME recognizer, on the SAME audio, already explicitly output
+ *     and held steady for a real decode cycle, never a guess.
+ *   - It does NOT fix the DIVERGENT case above ("...KING IN") — that
+ *     example's final is not a token-prefix of any stable interim (it
+ *     ends in a different word, "IN", not merely fewer words), so the
+ *     guard correctly declines to touch it. That case is left exactly as
+ *     today: EyeOnPit's own narration parser already fails closed on it
+ *     (a transcript ending in a dangling connector word is rejected, never
+ *     silently misapplied — see parseNarration.ts's own
+ *     `sawUnresolvedConnector` rule), so no false CardEvent risk exists
+ *     either way. This divergent-hypothesis class remains a genuinely open
+ *     ASR-quality gap, disclosed honestly, not silently patched over.
+ *   - It changes NOTHING about `parseNarration.ts`/`classifyVoiceTranscript.ts`
+ *     or Browser Web Speech — this fix is entirely inside
+ *     `SherpaOnnxProvider`, upstream of every parsing/safety layer, which
+ *     never even knows this guard exists.
+ *
+ * NOT YET FIELD-VALIDATED: this fix is grounded in the exact three real
+ * transcripts above (used as regression fixtures in
+ * `sherpaOnnxProvider.test.ts`) and in the documented, real
+ * non-monotonicity of beam-search transducer decoding — it is NOT yet
+ * confirmed to eliminate truncation/regression in a real microphone
+ * session, and must not be reported as fixed until one is run.
+ * ============================================================
  * SAFETY BOUNDARY — UNCHANGED. This provider, like every SpeechProvider,
  * only ever replaces AUDIO -> TRANSCRIPT. It has no access to and makes
  * no calls into normalization, narration parsing, N-best resolution, the
@@ -552,6 +652,83 @@ export async function finalizeSherpaStream(deps: {
   return text.length > 0 ? text : null;
 }
 
+/**
+ * The exact real transcripts captured in the 2026-08-20 Config C follow-up
+ * mic session (see this module's own FOLLOW-UP REAL-MIC SESSION doc
+ * comment) — kept as data, not just prose, so the final report and the
+ * regression tests derived from it can cite these precisely, the same
+ * discipline `SHERPA_ONNX_REAL_AUDIO_VERIFICATION` above already
+ * established.
+ */
+export const SHERPA_FIELD_TRUNCATION_EXAMPLES = [
+  {
+    expectedPhrase: "Dealer has a king",
+    finalText: "DEALER HAS",
+    /** Not directly confirmed stable in the field notes for this specific line, but consistent with the session's overall finding; used here only as a REGRESSION-GUARD input fixture, not a claim about what the real interim stream showed. */
+    stableInterimText: "DEALER HAS A KING",
+    guardShouldRecover: true,
+  },
+  {
+    expectedPhrase: "Player one has a five and a three",
+    finalText: "PLAYER ONE HAS A FIVE AND A",
+    stableInterimText: "PLAYER ONE HAS A FIVE AND A THREE",
+    guardShouldRecover: true,
+  },
+  {
+    expectedPhrase: "Dealer has a king and a five",
+    finalText: "DEALER HAS A KING IN",
+    stableInterimText: "DEALER HAS A KING AND A FIVE",
+    // DIVERGENT, not a clean truncation — "IN" is a different token than
+    // "AND", not simply a missing tail. The regression guard must NOT fire
+    // here (see this module's own doc comment on why that's correct, not
+    // a remaining gap in the guard).
+    guardShouldRecover: false,
+  },
+] as const;
+
+/**
+ * Token-aware "is `prefix` a proper prefix of `full`" check — splits on
+ * whitespace and compares token-by-token, never a raw substring/startsWith
+ * check, so e.g. "DEALER HAS A KING" is never mistaken for a prefix of
+ * "DEALER HAS A KINGPIN" (a different word), only of a genuine multi-word
+ * continuation. Requires `prefix` to have STRICTLY FEWER tokens than
+ * `full` — equal-length or longer text never counts as "a prefix of" (an
+ * equal/longer final is either already correct or already an improvement,
+ * neither of which this guard should ever touch).
+ */
+function isProperTokenPrefix(prefix: string, full: string): boolean {
+  const prefixTokens = prefix.trim().split(/\s+/).filter(Boolean);
+  const fullTokens = full.trim().split(/\s+/).filter(Boolean);
+  if (prefixTokens.length === 0 || prefixTokens.length >= fullTokens.length) return false;
+  return prefixTokens.every((token, i) => token === fullTokens[i]);
+}
+
+/**
+ * FINALIZATION REGRESSION GUARD — see this module's own FOLLOW-UP REAL-MIC
+ * SESSION doc comment for the full investigation and why this exact, narrow
+ * rule (rather than "just use the last interim") is the correct, provable
+ * fix. Pure and independently testable, exactly like `finalizeSherpaStream`.
+ *
+ * Fires ONLY when `finalText` is a proper TOKEN-BOUNDARY PREFIX of
+ * `stableInterimText` — text the SAME recognizer already produced and held
+ * steady across a real decode cycle, never a fabrication. In every other
+ * case (final is equal to, longer than, or genuinely DIFFERENT from the
+ * stable interim — i.e. diverges rather than merely truncates) `finalText`
+ * passes through completely unchanged. This is what makes the rule safe
+ * against both directions of failure: it can never suppress a final that's
+ * a genuine improvement over any prior interim, and it can never paper over
+ * a hypothesis-SWAP (a different word, not just a missing one) by gluing on
+ * text that doesn't actually match what was said next.
+ */
+export function applyFinalizationRegressionGuard(finalText: string | null, stableInterimText: string): string | null {
+  if (finalText === null) return finalText;
+  if (stableInterimText.length === 0) return finalText;
+  if (isProperTokenPrefix(finalText, stableInterimText)) {
+    return stableInterimText;
+  }
+  return finalText;
+}
+
 export interface SherpaOnnxProviderOptions extends SpeechProviderOptions {
   /** Base URL the WASM glue JS / .wasm / .data files are served from — see ASSET DEPLOYMENT above. Defaults to `resolveDefaultAssetBaseUrl(process.env)` (env-var-overridable; `/sherpa-onnx-lab/`, a gitignored dev-only static path, when unset). */
   assetBaseUrl?: string;
@@ -713,6 +890,11 @@ export function createSherpaOnnxProvider(options: SherpaOnnxProviderOptions): Sp
   let workletNode: AudioWorkletNode | null = null;
   let suppressed = false;
   let lastInterimText = "";
+  // FINALIZATION REGRESSION GUARD state — see applyFinalizationRegressionGuard's
+  // own doc comment. Set only when the SAME text is read from getResult()
+  // on two consecutive decode passes (real evidence of a settled
+  // hypothesis, not a one-off flicker); consulted once, in stop().
+  let stableInterimText = "";
   let running = false;
 
   function emitResult(text: string, isFinal: boolean, cb?: (r: SpeechProviderResult) => void) {
@@ -816,10 +998,17 @@ export function createSherpaOnnxProvider(options: SherpaOnnxProviderOptions): Sp
       recognizer.decode(stream);
     }
     const text = recognizer.getResult(stream).text;
-    if (text.length > 0 && text !== lastInterimText) {
-      lastInterimText = text;
-      emitResult(text, false, options.onInterimResult);
+    if (text.length === 0) return;
+    if (text === lastInterimText) {
+      // Unchanged across another audio chunk — a real stability signal
+      // (the decoder held this exact hypothesis steady), recorded as the
+      // FINALIZATION REGRESSION GUARD's trusted candidate. Not re-emitted
+      // as a new interim event — that dedup behavior is unchanged.
+      stableInterimText = text;
+      return;
     }
+    lastInterimText = text;
+    emitResult(text, false, options.onInterimResult);
   }
 
   async function start(): Promise<void> {
@@ -897,13 +1086,20 @@ export function createSherpaOnnxProvider(options: SherpaOnnxProviderOptions): Sp
       const currentRecognizer = recognizer;
       const currentStream = stream;
       try {
-        const finalText = await finalizeSherpaStream({
+        const rawFinalText = await finalizeSherpaStream({
           drainPendingAudio: () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
           inputFinished: () => currentStream.inputFinished(),
           isReady: () => currentRecognizer.isReady(currentStream),
           decode: () => currentRecognizer.decode(currentStream),
           getResultText: () => currentRecognizer.getResult(currentStream).text,
         });
+        // FINALIZATION REGRESSION GUARD (2026-08-20 Config C follow-up
+        // session) — see applyFinalizationRegressionGuard's own doc
+        // comment. Recovers `finalText` back to `stableInterimText` ONLY
+        // when `finalText` regressed to a proper prefix of text the SAME
+        // decoder already held stable; every other case (equal, longer, or
+        // a genuinely different/divergent final) passes through untouched.
+        const finalText = applyFinalizationRegressionGuard(rawFinalText, stableInterimText);
         if (finalText !== null) {
           emitResult(finalText, true, options.onFinalResult);
         }
@@ -924,6 +1120,7 @@ export function createSherpaOnnxProvider(options: SherpaOnnxProviderOptions): Sp
     stream = null;
     recognizer = null;
     lastInterimText = "";
+    stableInterimText = "";
     options.onAudioEnd?.();
   }
 

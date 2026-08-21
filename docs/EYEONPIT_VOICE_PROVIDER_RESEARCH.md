@@ -688,6 +688,66 @@ anywhere (`VoiceControl.tsx`/`useVoiceRecognition.ts` are untouched, still
 Browser Web Speech only) — this default has zero effect on any operator-
 facing behavior.
 
+### 11.3b Follow-up real-mic session (2026-08-20, Config C) — the drain fix alone was NOT sufficient
+
+A second real production mic session, run specifically against Config C
+after §11.3's finalization-drain fix shipped, showed truncation/regression
+still happening. Real captured examples:
+
+| Expected | Final (post-drain-fix) | Interim reached |
+|---|---|---|
+| "Dealer has a king" | "DEALER HAS" | (consistent with the same pattern) |
+| "Player one has a five and a three" | "PLAYER ONE HAS A FIVE AND A" | "PLAYER ONE HAS A FIVE AND A THREE" (the FULL correct phrase) |
+| "Dealer has a king and a five" | "DEALER HAS A KING IN" | — |
+
+**This proves the delivery race (§11.3 mechanism 1) was real but not the
+dominant cause.** In the "Player one..." example, the interim stream had
+already reached the fully correct text — every sample for every word,
+including "three", had unambiguously already been delivered and decoded
+before `stop()` ever ran. There was no undelivered audio left for a drain
+to rescue. The only remaining place text can be lost between "the interim
+already said this" and "the final says less" is inside the decoder's own
+hypothesis selection — `modified_beam_search` (required for hotwords, used
+by both B and C), whose top-ranked hypothesis is not guaranteed monotonic
+as more audio is decoded through `inputFinished()`'s trailing flush. The
+third example ("...KING IN") is the clearest direct evidence: "IN" is a
+DIFFERENT token than "AND", not a missing tail — a hypothesis-SWAP,
+something no audio-delivery timing issue can produce (a delivery problem
+can only ever yield a clean prefix, never a different word).
+
+**The fix — a FINALIZATION REGRESSION GUARD** (`applyFinalizationRegressionGuard`,
+`sherpaOnnxProvider.ts`): every interim is compared against the previous
+one; when the SAME text is held steady across two consecutive decode reads
+(real evidence of a settled hypothesis, not a flicker), it's recorded as
+`stableInterimText`. After the drain-and-flush finalization runs, if
+`finalText` is a proper TOKEN-BOUNDARY PREFIX of `stableInterimText` — every
+one of `finalText`'s words matches the leading words of `stableInterimText`,
+which has strictly more words — `stableInterimText` replaces `finalText`
+before it's emitted. This is deliberately narrow: it only ever recovers text
+the SAME decoder already produced and held stable (never a fabrication),
+never fires when `finalText` is equal to, longer than, or genuinely
+DIFFERENT from the stable interim (a real improvement or a real divergence
+both pass through untouched), and correctly declines to fix the DIVERGENT
+"...KING IN" case — that one is left exactly as before, already safely
+failing closed via `parseNarration.ts`'s existing dangling-connector
+rejection rule (no false CardEvent risk either way), and remains an
+honestly-disclosed open ASR-quality gap rather than something silently
+patched over. `enableEndpoint`, `hotwordsScore`, `maxActivePaths`, and the
+hotwords vocabulary were all considered and explicitly left untouched —
+retuning any of them without a real mic session to measure the effect would
+be exactly the kind of speculative change this investigation was told not
+to make.
+
+**Regression fixtures:** the three real transcripts above are recorded as
+data (`SHERPA_FIELD_TRUNCATION_EXAMPLES`) and used directly as test inputs
+in `sherpaOnnxProvider.test.ts`.
+
+**Still not field-validated.** This fix is grounded in the exact real
+transcripts above and in the documented, real non-monotonicity of
+beam-search transducer decoding — it has NOT yet been confirmed to
+eliminate truncation/regression in a real microphone session, and must not
+be reported as fixed until one is run.
+
 ### 11.6 Status — Sherpa remains NOT production-approved
 
 Nothing in this section changes Sherpa-ONNX's status: it is still an

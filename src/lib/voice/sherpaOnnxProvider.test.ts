@@ -25,6 +25,8 @@ import {
   resolveDefaultAssetBaseUrl,
   classifySherpaStartError,
   finalizeSherpaStream,
+  applyFinalizationRegressionGuard,
+  SHERPA_FIELD_TRUNCATION_EXAMPLES,
 } from "./sherpaOnnxProvider";
 import type { HotwordEntry } from "./casinoVoiceContext";
 
@@ -331,6 +333,70 @@ describe("finalizeSherpaStream — the 2026-08-20 real-mic FINALIZATION TRUNCATI
       getResultText: () => "WHATEVER THE REAL RECOGNIZER ACTUALLY DECODED",
     });
     expect(finalText).toBe("WHATEVER THE REAL RECOGNIZER ACTUALLY DECODED");
+  });
+});
+
+describe("applyFinalizationRegressionGuard — 2026-08-20 Config C follow-up session: the drain fix alone did NOT eliminate truncation", () => {
+  it("REGRESSION FIXTURE 1 (real transcript): 'Dealer has a king' truncated to 'DEALER HAS' — recovers the stable interim", () => {
+    const [ex] = SHERPA_FIELD_TRUNCATION_EXAMPLES;
+    expect(ex.guardShouldRecover).toBe(true);
+    expect(applyFinalizationRegressionGuard(ex.finalText, ex.stableInterimText)).toBe(ex.stableInterimText);
+  });
+
+  it("REGRESSION FIXTURE 2 (real transcript): interim reached the FULL correct 'PLAYER ONE HAS A FIVE AND A THREE', final regressed to 'PLAYER ONE HAS A FIVE AND A' — recovers the full text", () => {
+    const ex = SHERPA_FIELD_TRUNCATION_EXAMPLES[1];
+    expect(ex.expectedPhrase).toBe("Player one has a five and a three");
+    expect(ex.guardShouldRecover).toBe(true);
+    expect(applyFinalizationRegressionGuard(ex.finalText, ex.stableInterimText)).toBe(
+      "PLAYER ONE HAS A FIVE AND A THREE"
+    );
+  });
+
+  it("REGRESSION FIXTURE 3 (real transcript): 'Dealer has a king and a five' finalized as 'DEALER HAS A KING IN' — a DIVERGENT hypothesis-swap, not a clean truncation — the guard correctly declines to touch it", () => {
+    const ex = SHERPA_FIELD_TRUNCATION_EXAMPLES[2];
+    expect(ex.guardShouldRecover).toBe(false);
+    expect(applyFinalizationRegressionGuard(ex.finalText, ex.stableInterimText)).toBe(ex.finalText);
+  });
+
+  it("every fixture's own guardShouldRecover flag matches what the real function actually does — a structural check that the fixture data and the implementation never silently drift apart", () => {
+    for (const ex of SHERPA_FIELD_TRUNCATION_EXAMPLES) {
+      const result = applyFinalizationRegressionGuard(ex.finalText, ex.stableInterimText);
+      if (ex.guardShouldRecover) {
+        expect(result).toBe(ex.stableInterimText);
+      } else {
+        expect(result).toBe(ex.finalText);
+      }
+    }
+  });
+
+  it("never fires when final is equal to the stable interim — nothing to recover", () => {
+    expect(applyFinalizationRegressionGuard("DEALER HAS A KING", "DEALER HAS A KING")).toBe("DEALER HAS A KING");
+  });
+
+  it("never fires when final is LONGER than (or a genuine improvement over) the stable interim — the 'final genuinely better than interim' case stays untouched", () => {
+    expect(applyFinalizationRegressionGuard("DEALER HAS A KING AND A FIVE", "DEALER HAS A KING")).toBe(
+      "DEALER HAS A KING AND A FIVE"
+    );
+  });
+
+  it("never fires when there is no stable interim at all (empty)", () => {
+    expect(applyFinalizationRegressionGuard("DEALER HAS", "")).toBe("DEALER HAS");
+  });
+
+  it("never fires on a null final (nothing decoded) — passes null through unchanged, never invents text from a stable interim alone", () => {
+    expect(applyFinalizationRegressionGuard(null, "DEALER HAS A KING")).toBeNull();
+  });
+
+  it("word-boundary safe — 'DEALER HAS A KING' is never mistaken for a prefix of 'DEALER HAS A KINGPIN' (a different word, not a continuation)", () => {
+    expect(applyFinalizationRegressionGuard("DEALER HAS A KING", "DEALER HAS A KINGPIN")).toBe("DEALER HAS A KING");
+  });
+
+  it("never fires on a same-length but genuinely different final (a real word substitution, not a truncation)", () => {
+    expect(applyFinalizationRegressionGuard("DEALER HAS A QUEEN", "DEALER HAS A KING")).toBe("DEALER HAS A QUEEN");
+  });
+
+  it("recovers a single trailing word loss (the original Field Test #4 finding this round re-confirmed)", () => {
+    expect(applyFinalizationRegressionGuard("DEALER HAS A", "DEALER HAS A KING")).toBe("DEALER HAS A KING");
   });
 });
 

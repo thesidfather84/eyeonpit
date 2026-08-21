@@ -12,6 +12,67 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### Sherpa Finalization Regression Guard + Lab Copy-Feedback (2026-08-20, follow-up)
+
+**Problem:** a second real production mic session against Config C, run
+after the finalization-drain fix (previous entry, §11.3), showed the SAME
+truncation/regression class still happening — "Dealer has a king" → final
+"DEALER HAS"; "Player one has a five and a three" → the INTERIM stream
+already reached the full correct text, but final regressed to "...AND A";
+"Dealer has a king and a five" → final "DEALER HAS A KING IN" (a divergent
+hypothesis-swap, not merely a truncation).
+
+**Root cause narrowed:** the drain fix only rescues audio that was captured
+but not yet delivered at `stop()` time — in the "Player one..." example
+every sample had already been decoded into the correct interim before
+`stop()` ran, proving the loss happens inside the decoder's own hypothesis
+selection. `modified_beam_search` (required for hotwords, used by Configs B
+and C) keeps several ranked hypotheses; its top-ranked reading is not
+guaranteed monotonic as `inputFinished()`'s trailing flush decodes more
+context. The "...KING IN" case is direct evidence of a hypothesis SWAP
+(different word, not a missing tail) — not explainable by any audio-timing
+issue.
+
+**Fix — a finalization regression guard, not "trust the last interim":**
+`applyFinalizationRegressionGuard` (`sherpaOnnxProvider.ts`) tracks
+`stableInterimText` (text the decoder held identical across two consecutive
+decode reads — real settlement evidence, not a flicker). After finalization,
+if `finalText` is a proper token-boundary PREFIX of `stableInterimText`, the
+stable text replaces it. Deliberately narrow: never fires when final is
+equal/longer/genuinely different (a real improvement or divergence passes
+through untouched); correctly declines to fix the divergent "...KING IN"
+case (already safely rejected downstream by `parseNarration.ts`'s existing
+dangling-connector rule — no false-CardEvent risk either way). The three
+real transcripts are recorded as data
+(`SHERPA_FIELD_TRUNCATION_EXAMPLES`) and used directly as regression test
+fixtures. `enableEndpoint`/`hotwordsScore`/`maxActivePaths`/hotwords
+vocabulary were explicitly left untouched — no speculative parameter
+retuning without real-mic measurement.
+
+**Also shipped (small Lab UX additions):** three explicit A→B/B→C/C→A
+config-switch reset regression tests plus a stale-error/status-doesn't-bleed
+test added to the existing reset fix; Copy JSON now shows a temporary
+"✓ JSON Copied" state (reverting after ~2s) with an `aria-live` status
+announcement, and a distinct "Copy failed" state (never a false success
+claim) when the clipboard write rejects or the API is unavailable.
+
+**Explicitly not done:** no `enableEndpoint`/hotword/beam-width retuning
+(would be speculative without real-mic measurement). No production
+Browser Web Speech, `VoiceControl.tsx`, or `counting-engine/` changes. No
+1.10 Split/Double changes.
+
+**Tests:** 11 new in `sherpaOnnxProvider.test.ts` (regression-guard rule +
+the three real fixtures), 7 new in the Lab page test file (3 explicit
+transition tests, 1 no-bleed test, 3 Copy JSON feedback tests). Full suite
+green (1528 passed, 1 pre-existing skip — the previously-flaky
+`VoiceControl.test.tsx` case passed clean this run), `tsc --noEmit` clean,
+`eslint` clean, `counting-engine/` diff empty.
+
+**Status:** complete, gates green, committed/pushed/deployed — see
+`docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md` §11.3b. **Not field-validated —
+do not report truncation as fixed until the next real-microphone session
+confirms it.**
+
 ### Sherpa Real A/B/C Mic Session — Findings, Safety Fix, Finalization Fix, Lab UX Fix (2026-08-20)
 
 **Problem:** the user ran the real production A/B/C microphone comparison

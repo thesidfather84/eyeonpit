@@ -50,3 +50,9 @@ next-env.d.ts
 # sherpaOnnxProvider.ts's own ASSET DEPLOYMENT doc comment. Never committed:
 # too large for version control, and never meant to ship to operators.
 /public/sherpa-onnx-lab/
+
+# EXPERIMENTAL whisper.cpp command.wasm WASM/model assets (~33MB) —
+# lab/dev-only, per whisperCppProvider.ts's own ASSET DEPLOYMENT doc
+# comment. Never committed: too large for version control, never meant to
+# ship to operators.
+/public/whisper-cpp-lab/

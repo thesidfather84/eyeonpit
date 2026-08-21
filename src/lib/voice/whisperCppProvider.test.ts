@@ -14,8 +14,10 @@ import {
   createWhisperCppProvider,
   WHISPER_CPP_PROVIDER_ID,
   WHISPER_CPP_PROVENANCE,
+  WHISPER_CPP_ASSET_MANIFEST,
   WHISPER_CPP_MODELS,
   DEFAULT_WHISPER_MODEL,
+  WHISPER_MODEL_FS_PATH,
   detectWhisperCppSupport,
   resolveDefaultWhisperAssetBaseUrl,
   classifyWhisperStartError,
@@ -65,8 +67,8 @@ describe("resolveDefaultWhisperAssetBaseUrl — same env-var-overridable pattern
 
 describe("classifyWhisperStartError — same exact-asset-URL error detail as Sherpa's own", () => {
   it('classifies a loadScript 404 as "assets-not-found", naming the exact failing URL', () => {
-    expect(classifyWhisperStartError("failed to load /whisper-cpp-lab/libcommand.js")).toBe(
-      "assets-not-found: failed to load /whisper-cpp-lab/libcommand.js"
+    expect(classifyWhisperStartError("failed to load /whisper-cpp-lab/command.js")).toBe(
+      "assets-not-found: failed to load /whisper-cpp-lab/command.js"
     );
   });
 
@@ -121,13 +123,13 @@ describe("createWhisperCppProvider — Node/vitest environment (no window)", () 
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it("accepts assetBaseUrl/modelId/pollIntervalMs options without throwing at construction time (no network/DOM access until start())", () => {
+  it("accepts assetBaseUrl/modelId/feedIntervalMs options without throwing at construction time (no network/DOM access until start())", () => {
     expect(() =>
       createWhisperCppProvider({
         onFinalResult: vi.fn(),
         assetBaseUrl: "/whisper-cpp-lab/",
         modelId: "base.en-q5_1",
-        pollIntervalMs: 100,
+        feedIntervalMs: 100,
       })
     ).not.toThrow();
   });
@@ -156,13 +158,41 @@ describe("WHISPER_CPP_PROVENANCE — real, cited, and honest about what was NOT 
     expect(WHISPER_CPP_PROVENANCE.emscriptenToolchainAvailableInThisEnvironment).toBe(false);
   });
 
-  it("honestly records this was NOT verified running in a real browser this round — unlike sherpa-onnx's own real-audio verification", () => {
-    expect(WHISPER_CPP_PROVENANCE.verifiedRunningInARealBrowserThisRound).toBe(false);
+  it("records the exact pinned upstream commit the deployed assets were extracted from — real, verifiable provenance, not guessed", () => {
+    expect(WHISPER_CPP_PROVENANCE.pinnedCommit).toBe("339f2b4e");
+    expect(WHISPER_CPP_PROVENANCE.pinnedCommitSubject).toMatch(/package\.json/);
+    expect(WHISPER_CPP_ASSET_MANIFEST.pinnedCommit).toBe(WHISPER_CPP_PROVENANCE.pinnedCommit);
+  });
+
+  it("records assets were extracted from the official live demo, not built from source", () => {
+    expect(WHISPER_CPP_PROVENANCE.assetsExtractedFrom).toMatch(/official live demo/i);
   });
 
   it("has zero files copied into this repo and zero upstream modifications", () => {
     expect(WHISPER_CPP_PROVENANCE.filesActuallyCopiedIntoThisRepo).toEqual([]);
     expect(WHISPER_CPP_PROVENANCE.modificationsToUpstream).toEqual([]);
+  });
+});
+
+describe("WHISPER_CPP_ASSET_MANIFEST — real sha256/size for every extracted asset, recorded this round", () => {
+  it("records all four real deployed files with a positive size and a 64-char sha256", () => {
+    for (const [name, info] of Object.entries(WHISPER_CPP_ASSET_MANIFEST.files)) {
+      expect(info.sizeBytes).toBeGreaterThan(0);
+      expect(info.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(name.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("the model file (whisper.bin) is roughly 31MB — the real downloaded tiny.en-q5_1 size", () => {
+    const model = WHISPER_CPP_ASSET_MANIFEST.files["whisper.bin"];
+    expect(model.sizeBytes).toBeGreaterThan(30_000_000);
+    expect(model.sizeBytes).toBeLessThan(33_000_000);
+  });
+});
+
+describe("WHISPER_MODEL_FS_PATH — the fixed virtual-FS destination confirmed from the real reference implementation", () => {
+  it('is always "whisper.bin" — the model is never written under its own original filename', () => {
+    expect(WHISPER_MODEL_FS_PATH).toBe("whisper.bin");
   });
 });
 

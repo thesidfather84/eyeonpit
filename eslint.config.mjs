@@ -16,6 +16,11 @@ const eslintConfig = defineConfig([
     // never committed — see sherpaOnnxProvider.ts's ASSET DEPLOYMENT doc
     // comment). Not our code; nothing here is ever edited.
     "public/sherpa-onnx-lab/**",
+    // Same treatment for the vendored, unmodified whisper.cpp command.wasm
+    // build (gitignored, never committed — see whisperCppProvider.ts's
+    // ASSET DEPLOYMENT doc comment). Not our code; nothing here is ever
+    // edited.
+    "public/whisper-cpp-lab/**",
   ]),
 ]);
 

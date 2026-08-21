@@ -3,113 +3,147 @@
  * before touching this file.
  *
  * ============================================================
- * WHY whisper.cpp's `examples/command.wasm`, SPECIFICALLY — real research,
- * 2026-08-20
+ * WHY whisper.cpp's `examples/command.wasm`, SPECIFICALLY
  * ============================================================
  * Three official, maintained browser/WASM examples ship in
- * https://github.com/ggml-org/whisper.cpp (MIT license, confirmed via the
- * repository's own LICENSE file — same permissive posture already recorded
- * for sherpa-onnx in docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md):
- *
- *   - `examples/whisper.wasm` — a general file-or-microphone transcription
- *     demo (record or upload up to 120s of audio, click Transcribe).
- *   - `examples/stream.wasm` — continuous, always-on streaming
- *     transcription.
- *   - `examples/command.wasm` — described, in the project's own README, as
- *     "a basic Voice Assistant example that accepts voice commands from
- *     the microphone" — purpose-built for exactly EyeOnPit's use case
- *     (short, discrete spoken commands), not a general dictation demo.
- *
- * `command.wasm` was chosen because it is the ONE official example whose
- * own stated purpose already matches "short casino commands" — no other
- * third-party wrapper was considered or needed; this uses the upstream
- * project's own purpose-built example directly, per explicit instruction.
- * A live, functioning official demo exists at
- * https://ggml.ai/whisper.cpp/command.wasm/ (confirmed reachable and
- * listing real models this round — see WHISPER_CPP_MODELS below).
+ * https://github.com/ggml-org/whisper.cpp (MIT license):
+ *   - `examples/whisper.wasm` — general file-or-microphone transcription.
+ *   - `examples/stream.wasm` — continuous, always-on streaming.
+ *   - `examples/command.wasm` — the project's own README: "a basic Voice
+ *     Assistant example that accepts voice commands from the microphone."
+ * `command.wasm` was chosen because its own stated purpose already matches
+ * "short casino commands." No third-party wrapper was considered.
  *
  * ============================================================
- * THE REAL, CITED JS API CONTRACT THIS PROVIDER IS WRITTEN AGAINST
+ * REAL ASSET EXTRACTION (2026-08-20) — provenance, not a build
  * ============================================================
- * Read directly from the upstream source
- * (`examples/command.wasm/emscripten.cpp` and its own README, both on
- * `master` as of 2026-08-20) — not guessed, not inferred from the demo
- * page's rendered UI alone:
+ * whisper.cpp publishes NO prebuilt browser-WASM release on GitHub
+ * Releases (confirmed by checking), and no emscripten/CMake toolchain was
+ * available to build one from source in the environment that first wrote
+ * this file. Instead, the exact compiled assets were extracted directly
+ * from the project's own OFFICIAL, maintained live demo at
+ * https://ggml.ai/whisper.cpp/command.wasm/ — the same domain
+ * (ggml.ai, the whisper.cpp org's own site) already cited elsewhere in
+ * this codebase's research, not a third-party mirror. The demo page's own
+ * footer gives EXACT, verifiable provenance for the build that produced
+ * these files:
  *
- *   - `init(path_model: string) -> number` — loads a ggml model from the
- *     given path in the Emscripten virtual filesystem and starts a
- *     background worker that continuously listens for audio. Returns a
- *     1-based context index on success, 0 on failure.
- *   - `free(index: number) -> void` — stops the worker/context.
- *   - `set_audio(index: number, audio: Float32Array) -> number` — hands the
- *     engine raw PCM samples (continuously processed by the worker
- *     thread); 0 on success, negative on an invalid/uninitialized index.
- *   - `get_transcribed() -> string` — a POLLING function: returns the most
- *     recently recognized command, or an empty string if none is new yet.
- *     This is the ONLY way recognized text reaches JS — there is no
- *     callback/event mechanism in this API.
- *   - `get_status()` / `set_status(text)` — a coarse human-readable status
- *     string (e.g. "Speech detected! Processing…").
+ *   Pinned commit:   339f2b4e
+ *   Commit subject:  "bindings-javascript : remove package.json from git (#4001)"
+ *   Repository:      https://github.com/ggerganov/whisper.cpp
+ *   Build time:      Thu Aug 20 13:59:54 2026 (per the live page's own footer)
  *
- * ARCHITECTURAL DIFFERENCE FROM SHERPA-ONNX, DISCLOSED HONESTLY: this API
- * has its OWN internal voice-activity detection deciding when one "command"
- * is complete — unlike sherpa-onnx's stream, there is no caller-driven
- * `inputFinished()`-equivalent to force-finalize a partial utterance on
- * demand. Every non-empty `get_transcribed()` read is therefore treated
- * here as a COMPLETE, FINAL result (`onFinalResult`) — never as a growing
- * interim — because that is what the engine's own design produces. This
- * provider does not fabricate interim/partial text for an API that
- * doesn't provide it (`onInterimResult` is simply never called). See
- * `createWhisperCppProvider`'s own doc comment for exactly how "Start
- * Phrase"/"End Phrase" map onto this poll-based lifecycle.
+ * Files extracted, byte-identical, sha256-recorded (see
+ * `WHISPER_CPP_ASSET_MANIFEST` below):
+ *   - `command.js`   (1,773,304 bytes) — the compiled Emscripten glue, WASM
+ *     embedded as base64 inside it (single-file build: a separate
+ *     `command.wasm`/`package.js` were checked and confirmed NOT to exist
+ *     at this URL — 404 — confirming single-file mode).
+ *   - `helpers.js`   (6,521 bytes) — shared fetch/IndexedDB-cache helper
+ *     used by every whisper.cpp WASM example, unmodified upstream code.
+ *   - `coi-serviceworker.js` (6,028 bytes) — cross-origin-isolation
+ *     service-worker shim the reference HTML loads defensively; whether
+ *     THIS particular build strictly requires it (vs. including it only
+ *     as standard boilerplate) was not conclusively determined this round
+ *     — see WHAT WAS AND WAS NOT VERIFIED below.
  *
- * ============================================================
- * WHAT WAS NOT VERIFIED THIS ROUND — stated plainly, matching this
- * codebase's own established discipline (see sherpaOnnxProvider.ts's own
- * "WHAT WAS NOT RE-VERIFIED" precedent)
- * ============================================================
- * Unlike the sherpa-onnx round, this provider has NOT been run against a
- * real WASM module in a real browser this round, for a concrete, stated
- * reason: whisper.cpp does not publish a prebuilt browser-WASM release
- * artifact on GitHub Releases (confirmed by checking — sherpa-onnx does,
- * command.wasm does not); building one requires an emscripten/CMake
- * toolchain, which is confirmed absent in this environment (same
- * constraint recorded in every prior provider investigation in this
- * repo). A live, official demo IS reachable at
- * https://ggml.ai/whisper.cpp/command.wasm/, but extracting and verifying
- * its real compiled assets in a real browser (the same way sherpa-onnx's
- * official release was downloaded and loaded via browser automation) is
- * real follow-up work this round did not undertake, given the scope of
- * everything else in this round. This code is genuine, working logic
- * written against the REAL, cited API contract above (not a `supported:
- * false` stub) — feature detection is real, and `start()` fails loudly and
- * specifically (`onError("assets-not-found: ...")`) exactly like
- * sherpa-onnx does when its own assets aren't provisioned, never silently
- * pretending to work. See ASSET DEPLOYMENT below for the concrete next
- * step.
+ * These are the OFFICIAL project's OWN compiled output, served from the
+ * OFFICIAL project's OWN domain — not rebuilt, not modified, not sourced
+ * from any third-party wrapper.
  *
  * ============================================================
- * ASSET DEPLOYMENT — nothing is provisioned anywhere yet
+ * THE REAL JS API CONTRACT — read directly from the live reference HTML's
+ * own inline `<script>` (view-source of
+ * https://ggml.ai/whisper.cpp/command.wasm/), NOT from documentation
+ * summaries, and NOT guessed:
  * ============================================================
- * No JS/WASM glue files exist anywhere for this provider (none were built
- * — no toolchain — and none were downloaded — no prebuilt release exists).
- * This is a REAL, stated gap, not glossed over: until a build (by the user,
- * on a machine with emscripten/CMake) or an extraction of the live demo's
- * real compiled assets happens, `start()` will correctly, honestly report
- * `assets-not-found` for `libcommand.js`. The same Vercel Blob strategy
- * already used for sherpa-onnx's ~204MB bundle (see that provider's own
- * ASSET DEPLOYMENT doc comment) is the documented, ready-made path once
- * real assets exist — nothing here is architecturally blocked on it, there
- * is simply nothing to upload yet. `resolveDefaultWhisperAssetBaseUrl`
- * below follows the identical env-var-overridable pattern
- * (`NEXT_PUBLIC_WHISPER_ASSET_BASE_URL`) for exactly this reason.
+ *   - Model loading: the model is ALWAYS written to the FIXED virtual-FS
+ *     path `"whisper.bin"` — REGARDLESS of which actual model file was
+ *     downloaded — via:
+ *       try { Module.FS_unlink("whisper.bin"); } catch (e) {}
+ *       Module.FS_createDataFile("/", "whisper.bin", bytes, true, true);
+ *     NOT `Module.FS.writeFile(...)` (an earlier version of this file
+ *     incorrectly assumed the same API shape sherpa-onnx's WASM build
+ *     uses — confirmed wrong by reading the real reference code).
+ *   - `Module.init("whisper.bin") -> number` — loads the model at that
+ *     fixed path and starts a background worker with its own internal
+ *     voice-activity detection. Returns a truthy context handle on
+ *     success.
+ *   - `Module.set_audio(instance, audio: Float32Array) -> void` — REPLACES
+ *     the engine's internal audio buffer with WHATEVER is passed, every
+ *     call. The reference implementation calls this with the FULL,
+ *     EVER-GROWING accumulated recording (re-decoded and concatenated)
+ *     roughly every 250ms — NOT with only the newest small chunk. An
+ *     earlier version of this file called `set_audio` with only each tiny
+ *     incremental AudioWorkletNode chunk, which — given the REPLACE
+ *     semantics just confirmed from the real reference code — would have
+ *     meant the engine only ever saw the last ~2.9ms of audio and never a
+ *     coherent utterance. Fixed: this provider now accumulates all
+ *     captured (resampled) samples into a growing buffer client-side and
+ *     periodically calls `set_audio` with the FULL buffer, matching the
+ *     real, working reference exactly.
+ *   - `Module.get_transcribed() -> string` — a POLLING function: the most
+ *     recently recognized command, or empty/short noise otherwise. The
+ *     ONLY way recognized text reaches JS — no callback/event mechanism.
+ *   - `Module.get_status()` / `Module.set_status(text)` — a coarse status
+ *     string.
+ *   - `_free` is a real exported symbol (confirmed present in the
+ *     downloaded `command.js`), though the reference HTML itself never
+ *     calls it (it's a single continuous-session demo, never torn down).
+ *     This provider calls it in `stop()` anyway, for the same "every
+ *     phrase is its own clean segment" reason sherpa-onnx's own
+ *     SEGMENTATION fix established — real capability, conservatively used,
+ *     not demonstrated by the upstream demo itself.
  *
- * Model file: whisper.cpp's own project publishes GGML-converted versions
- * of OpenAI's Whisper weights (OpenAI's weights are themselves MIT
- * licensed) at huggingface.co/ggerganov/whisper.cpp — the SAME source the
- * live official demo above pulls its own model options from. See
- * `WHISPER_CPP_MODELS` for the specific real sizes confirmed from that
- * live demo page this round.
+ * ARCHITECTURAL DIFFERENCE FROM SHERPA-ONNX, disclosed honestly: this API
+ * has its OWN internal VAD deciding when one "command" is complete — there
+ * is no caller-driven force-finalize primitive. Every non-empty
+ * `get_transcribed()` read is treated here as a COMPLETE, FINAL result
+ * (`onFinalResult`) — never a growing interim, because that's what this
+ * engine's design actually produces. `onInterimResult` is never called.
+ *
+ * A REAL, DISCLOSED, UNRESOLVED RISK — the global `Module` name: the
+ * reference HTML declares a plain global `var Module = {...}` BEFORE
+ * loading `command.js` (classic, non-modularized Emscripten output — this
+ * provider cannot rename that requirement, since it uses the prebuilt
+ * official asset rather than recompiling with a custom `EXPORT_NAME`).
+ * `sherpaOnnxProvider.ts` ALSO uses the literal global `window.Module` for
+ * the identical reason. Both providers cache their own module reference
+ * once, in their own module-scope promise, and never re-read the global
+ * afterward — reasoning through the two engines' own code suggests this
+ * makes them independently safe even if a Lab session uses BOTH providers
+ * one after another (the second provider's initialization overwrites
+ * `window.Module`, but the first provider's already-resolved reference is
+ * a stable object unaffected by that reassignment) — but this has NOT been
+ * empirically verified this round for BOTH engines loaded in the same
+ * page session. See the round's own final report for exactly what WAS
+ * verified (Whisper alone, in isolation).
+ *
+ * ============================================================
+ * WHAT WAS AND WAS NOT VERIFIED THIS ROUND — see the round's own final
+ * report for the authoritative, current verification status (asset
+ * HTTP 200s, model download, WASM init, recognizer construction, Lab
+ * ready-state) — this comment intentionally does not duplicate that
+ * status inline, to avoid it silently going stale as later rounds verify
+ * more. Real microphone transcription accuracy, specifically, requires
+ * Sidney's own real-mic session — never claimed fixed/working here.
+ * ============================================================
+ *
+ * ============================================================
+ * ASSET DEPLOYMENT
+ * ============================================================
+ * Local dev: place the 4 extracted files (`command.js`, `helpers.js`,
+ * `coi-serviceworker.js`, `whisper.bin`) in the gitignored
+ * `public/whisper-cpp-lab/` directory (see `.gitignore`) — never
+ * committed, ~33MB total, the same treatment as sherpa-onnx's own
+ * gitignored local asset directory. `assetBaseUrl`/
+ * `NEXT_PUBLIC_WHISPER_ASSET_BASE_URL` default to `/whisper-cpp-lab/`
+ * when unset.
+ * Production: the SAME Vercel Blob strategy that fixed sherpa-onnx's own
+ * "assets-not-found" production incident — public-read, version-pinned by
+ * the commit hash above so a future, genuinely different whisper.cpp build
+ * lives at a different path rather than silently overwriting this one. See
+ * the round's own final report for the exact deployed Blob path.
  *
  * ============================================================
  * SAFETY BOUNDARY — IDENTICAL to every other SpeechProvider. This provider
@@ -133,27 +167,43 @@ export const WHISPER_CPP_PROVENANCE = {
   exampleChosenBecause:
     'The project\'s own README describes command.wasm as "a basic Voice Assistant example that accepts voice commands from the microphone" — the one official example purpose-built for short discrete commands, matching EyeOnPit\'s use case directly, rather than examples/whisper.wasm (general file/mic transcription) or examples/stream.wasm (continuous streaming transcription).',
   liveOfficialDemo: "https://ggml.ai/whisper.cpp/command.wasm/",
+  /** Read directly from the live demo page's own footer — real, verifiable, not guessed. */
+  pinnedCommit: "339f2b4e",
+  pinnedCommitSubject: "bindings-javascript : remove package.json from git (#4001)",
   modelSource: "https://huggingface.co/ggerganov/whisper.cpp",
   modelLicense: "MIT (OpenAI's original Whisper weights are MIT licensed; whisper.cpp publishes GGML-converted versions of the same weights)",
   prebuiltBrowserReleaseExists: false,
   emscriptenToolchainAvailableInThisEnvironment: false,
-  verifiedRunningInARealBrowserThisRound: false,
+  assetsExtractedFrom: "official live demo (ggml.ai/whisper.cpp/command.wasm/), not built from source",
   filesActuallyCopiedIntoThisRepo: [] as string[],
   modificationsToUpstream: [] as string[],
   researchedOn: "2026-08-20",
 } as const;
 
+/** sha256 + byte size for every extracted asset — recorded so a stale/swapped file at the deployed URL is detectable, same discipline as sherpaAssetManifest.ts. */
+export const WHISPER_CPP_ASSET_MANIFEST = {
+  pinnedCommit: "339f2b4e",
+  files: {
+    "command.js": { sizeBytes: 1773304, sha256: "9111f29e0102453cf7b19d9e4189223b99762ed8d962d59177458c76626554cd" },
+    "helpers.js": { sizeBytes: 6521, sha256: "5371c69265551a7f7d48a7953d118e6503d8a5d480710966dfb9c2a52981a4d8" },
+    "coi-serviceworker.js": { sizeBytes: 6028, sha256: "e97bbac6017322d48aa54a5bc7ce473c725a4b7376ff245002e0ba71c3dcdd7e" },
+    "whisper.bin": { sizeBytes: 32166155, sha256: "c77c5766f1cef09b6b7d47f21b546cbddd4157886b3b5d6d4f709e91e66c7c2b" },
+  },
+} as const;
+
 /**
- * Real model sizes confirmed from the live official demo page
- * (https://ggml.ai/whisper.cpp/command.wasm/) this round — not invented.
- * `tiny.en` (quantized, q5_1) is the DEFAULT: smallest/fastest of the
- * offered options, and "an English model appropriate for SHORT casino
- * commands" does not call for the largest available model — per explicit
- * instruction not to provision more than necessary.
+ * Real model options confirmed from the live demo page this round.
+ * `tiny.en-q5_1` is the DEFAULT and the ONLY one this round actually
+ * deployed/verified (see `WHISPER_CPP_ASSET_MANIFEST` — its file is always
+ * written to the fixed virtual-FS path `"whisper.bin"`, per the real API
+ * contract above, regardless of which original model filename it came
+ * from). `base.en`/`base.en-q5_1`/plain `tiny.en` remain typed options for
+ * a future round but were not downloaded/deployed this round.
  */
 export type WhisperCppModelId = "tiny.en" | "tiny.en-q5_1" | "base.en" | "base.en-q5_1";
 
 export interface WhisperCppModelInfo {
+  /** The real Hugging Face filename this model downloads from — NOT the virtual-FS destination filename, which is always the fixed "whisper.bin" (see WHISPER_MODEL_FS_PATH). */
   file: string;
   approxSizeBytes: number;
   quantized: boolean;
@@ -166,8 +216,11 @@ export const WHISPER_CPP_MODELS: Record<WhisperCppModelId, WhisperCppModelInfo> 
   "base.en-q5_1": { file: "ggml-base.en-q5_1.bin", approxSizeBytes: 57_000_000, quantized: true },
 };
 
-/** Smallest, fastest offered model — appropriate for short commands, avoids provisioning more than necessary (see this module's own doc comment). */
+/** Smallest, fastest offered model — appropriate for short commands, avoids provisioning more than necessary. The one actually downloaded/deployed this round. */
 export const DEFAULT_WHISPER_MODEL: WhisperCppModelId = "tiny.en-q5_1";
+
+/** The FIXED virtual-filesystem destination filename `Module.init()` expects — confirmed from the real reference implementation (`loadWhisper()`'s own `dst = 'whisper.bin'`), true for every model choice, never the model's own original filename. */
+export const WHISPER_MODEL_FS_PATH = "whisper.bin";
 
 interface WhisperFeatureDetection {
   webAssembly: boolean;
@@ -201,7 +254,7 @@ function detectAmbientWhisperCppSupport(): WhisperFeatureDetection {
   });
 }
 
-/** Identical pattern to sherpaOnnxProvider's resolveDefaultAssetBaseUrl — see that function's own doc comment for why the literal `process.env.NEXT_PUBLIC_WHISPER_ASSET_BASE_URL` expression must appear verbatim at the one real call site below. */
+/** Identical pattern to sherpaOnnxProvider's resolveDefaultAssetBaseUrl. */
 export function resolveDefaultWhisperAssetBaseUrl(env: Record<string, string | undefined>): string {
   return env.NEXT_PUBLIC_WHISPER_ASSET_BASE_URL || "/whisper-cpp-lab/";
 }
@@ -215,24 +268,40 @@ export function classifyWhisperStartError(message: string): string {
   return /404|failed to load/i.test(message) ? `assets-not-found: ${message}` : message;
 }
 
-// Minimal shape of what the compiled command.wasm glue is documented to
-// expose globally — see this module's own "REAL, CITED JS API CONTRACT"
-// doc comment above (read from examples/command.wasm/emscripten.cpp).
+// Minimal shape of what the real, downloaded command.js glue actually
+// exposes on the global `Module` object — confirmed by reading the live
+// reference HTML's own inline script (view-source), not guessed. Classic
+// (non-modularized) Emscripten output requires the literal global name
+// `Module` — see this module's own top-of-file doc comment on the
+// resulting cross-provider naming risk with sherpa-onnx.
 interface WhisperCommandModule {
-  onRuntimeInitialized?: () => void;
-  locateFile: (path: string, scriptDirectory: string) => string;
-  FS?: { writeFile: (path: string, data: Uint8Array) => void };
+  print?: (text: string) => void;
+  printErr?: (text: string) => void;
+  setStatus?: (text: string) => void;
+  monitorRunDependencies?: (left: number) => void;
+  preRun?: () => void;
+  postRun?: () => void;
+  locateFile?: (path: string, scriptDirectory: string) => string;
+  FS_unlink?: (path: string) => void;
+  FS_createDataFile?: (parent: string, name: string, data: Uint8Array, canRead: boolean, canWrite: boolean) => void;
   init?: (pathModel: string) => number;
   free?: (index: number) => void;
-  set_audio?: (index: number, audio: Float32Array) => number;
+  set_audio?: (index: number, audio: Float32Array) => void;
   get_transcribed?: () => string;
   get_status?: () => string;
   set_status?: (status: string) => void;
 }
-declare global {
-  interface Window {
-    WhisperModule?: WhisperCommandModule;
-  }
+// Deliberately NOT a `declare global { interface Window { Module?: ... } }`
+// augmentation — sherpaOnnxProvider.ts already augments the same global
+// `Window.Module` property with its OWN, different type, and TypeScript
+// requires every augmentation of the same property to agree on one type
+// (confirmed the hard way: `tsc` rejected the naive version of this file
+// with "Subsequent property declarations must have the same type").
+// Casting locally at each use site avoids touching Sherpa's own,
+// already-verified global declaration at all.
+type WhisperGlobalWindow = Window & { Module?: WhisperCommandModule };
+function getWhisperWindow(): WhisperGlobalWindow {
+  return window as WhisperGlobalWindow;
 }
 
 function loadScript(url: string): Promise<void> {
@@ -245,7 +314,7 @@ function loadScript(url: string): Promise<void> {
   });
 }
 
-/** Same linear-interpolation resampler used by sherpaOnnxProvider — duplicated rather than imported so this new, unverified provider can never accidentally change Sherpa's own already-verified behavior by editing a shared module. A future round may extract a shared helper once BOTH providers have real browser verification behind them. */
+/** Same linear-interpolation resampler used by sherpaOnnxProvider — duplicated rather than imported so each provider's own verification status stays independent. */
 function resampleTo16k(samples: Float32Array, fromSampleRate: number): Float32Array {
   const targetRate = 16000;
   if (fromSampleRate === targetRate) return samples;
@@ -295,38 +364,35 @@ async function fetchModel(url: string): Promise<Uint8Array> {
 let moduleLoadPromise: Promise<WhisperCommandModule> | null = null;
 
 export interface WhisperCppProviderOptions extends SpeechProviderOptions {
-  /** Base URL the compiled `libcommand.js`/`.wasm` glue and the model file are served from. Defaults to `resolveDefaultWhisperAssetBaseUrl(process.env)` — see ASSET DEPLOYMENT above for why nothing is provisioned there yet in any environment. */
+  /** Base URL `command.js`/`helpers.js`/`coi-serviceworker.js`/the model file are served from. Defaults to `resolveDefaultWhisperAssetBaseUrl(process.env)`. */
   assetBaseUrl?: string;
-  /** Which GGML model to load — defaults to `DEFAULT_WHISPER_MODEL` (smallest/fastest, appropriate for short commands). */
+  /** Which GGML model to load — defaults to `DEFAULT_WHISPER_MODEL` (the only one actually deployed/verified this round). */
   modelId?: WhisperCppModelId;
-  /** How often (ms) to poll `get_transcribed()`/`get_status()` while listening. Defaults to 250ms — frequent enough not to visibly delay a short command, far below any latency this engine's own inference time would dominate. */
-  pollIntervalMs?: number;
+  /** How often (ms) to poll `get_transcribed()`/`get_status()` AND re-feed the full accumulated audio buffer via `set_audio()` — see the module's own doc comment on why this must be the FULL buffer, matching the real reference implementation's own ~250ms cadence exactly. */
+  feedIntervalMs?: number;
 }
 
 /**
- * Real, working logic against the documented command.wasm API — see this
- * module's own top-of-file doc comment for exactly what is and is not
- * verified this round.
+ * Real, working logic against the REAL, read-from-source command.wasm API
+ * — see this module's own top-of-file doc comment for exactly what that
+ * contract is and how it was confirmed.
  *
- * START PHRASE / END PHRASE MAPPING (per explicit requirement to support
- * the Lab's existing workflow): `start()` loads the glue script + model
- * (cached at module/URL scope so repeated phrase cycles don't re-fetch
- * ~30-150MB every time — same reasoning as Sherpa's own module-scope
- * cache) and calls `init()` to create a fresh context every phrase — no
- * context/model state is reused ACROSS phrases at the ENGINE level (only
- * the already-downloaded bytes are), matching Sherpa's own "every phrase
- * is its own clean recognition segment" precedent, since this API's real
- * reuse-safety across repeated init()/free() cycles has not been verified.
- * Audio capture begins immediately (this engine's own internal VAD decides
- * when a "command" is complete — there is no caller-driven force-finalize
- * primitive, see the module doc comment). `stop()` stops audio capture and
- * polling and calls `free()` on the context — a clean, fully torn-down
- * session every time, never carrying state into the next phrase.
+ * START PHRASE / END PHRASE MAPPING: `start()` loads the glue script +
+ * model (cached at module/URL scope so repeated phrase cycles don't
+ * re-fetch ~31MB every time) and calls `init()` to create a fresh context
+ * every phrase — no context/model state reused ACROSS phrases at the
+ * ENGINE level, matching Sherpa's own "every phrase is its own clean
+ * recognition segment" precedent. Audio capture accumulates into a
+ * growing buffer (this engine's own internal VAD decides when a "command"
+ * is complete — there is no caller-driven force-finalize primitive) and
+ * is re-fed to `set_audio()` in FULL, periodically — see the module doc
+ * comment for why. `stop()` stops audio capture/feeding and calls
+ * `free()` — a clean, fully torn-down session every time.
  */
 export function createWhisperCppProvider(options: WhisperCppProviderOptions): SpeechProvider {
   const assetBaseUrl = (options.assetBaseUrl ?? DEFAULT_ASSET_BASE_URL).replace(/\/?$/, "/");
   const modelId = options.modelId ?? DEFAULT_WHISPER_MODEL;
-  const pollIntervalMs = options.pollIntervalMs ?? 250;
+  const feedIntervalMs = options.feedIntervalMs ?? 250;
   const detection = detectAmbientWhisperCppSupport();
   const supported = detection.webAssembly && detection.audioWorklet && detection.getUserMedia;
 
@@ -335,10 +401,17 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
   let audioContext: AudioContext | null = null;
   let mediaStream: MediaStream | null = null;
   let workletNode: AudioWorkletNode | null = null;
-  let pollHandle: ReturnType<typeof setInterval> | null = null;
+  let feedHandle: ReturnType<typeof setInterval> | null = null;
   let suppressed = false;
   let running = false;
   let lastTranscribed = "";
+  let lastStatus = "";
+  // The FULL accumulated recording so far — set_audio() REPLACES the
+  // engine's buffer on every call (confirmed from the real reference
+  // implementation, see the module doc comment), so this must keep
+  // growing for the whole phrase, never reset mid-phrase.
+  let accumulatedChunks: Float32Array[] = [];
+  let accumulatedLength = 0;
 
   function emitFinal(text: string) {
     const result: SpeechProviderResult = { transcript: text, confidence: null, isFinal: true, alternatives: [{ transcript: text, confidence: null }] };
@@ -348,28 +421,46 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
   async function initModule(): Promise<WhisperCommandModule> {
     if (!moduleLoadPromise) {
       moduleLoadPromise = (async () => {
-        window.WhisperModule = {
+        const win = getWhisperWindow();
+        win.Module = {
           locateFile: (path: string) => `${assetBaseUrl}${path}`,
         };
-        await loadScript(`${assetBaseUrl}libcommand.js`);
+        await loadScript(`${assetBaseUrl}command.js`);
         await new Promise<void>((resolve) => {
-          const mod = window.WhisperModule!;
-          const prior = mod.onRuntimeInitialized;
-          mod.onRuntimeInitialized = () => {
-            prior?.();
+          const mod = win.Module!;
+          const priorPostRun = mod.postRun;
+          mod.postRun = () => {
+            priorPostRun?.();
             resolve();
           };
         });
-        return window.WhisperModule!;
+        return win.Module!;
       })();
     }
     return moduleLoadPromise;
   }
 
-  function poll() {
+  /** Concatenates every captured chunk into one Float32Array — see the module doc comment on why the FULL buffer, not just new samples, must be re-fed each cycle. */
+  function concatAccumulated(): Float32Array {
+    const out = new Float32Array(accumulatedLength);
+    let offset = 0;
+    for (const chunk of accumulatedChunks) {
+      out.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return out;
+  }
+
+  function feedAndPoll() {
     if (suppressed || !moduleRef || contextIndex === null) return;
-    const status = moduleRef.get_status?.();
-    if (status) options.onSpeechStart?.();
+    if (accumulatedLength > 0) {
+      moduleRef.set_audio?.(contextIndex, concatAccumulated());
+    }
+    const status = moduleRef.get_status?.() ?? "";
+    if (status.length > 0 && status !== lastStatus) {
+      lastStatus = status;
+      options.onSpeechStart?.();
+    }
     const text = moduleRef.get_transcribed?.() ?? "";
     if (text.length > 0 && text !== lastTranscribed) {
       lastTranscribed = text;
@@ -390,13 +481,17 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
 
       const modelInfo = WHISPER_CPP_MODELS[modelId];
       const modelBytes = await fetchModel(`${assetBaseUrl}${modelInfo.file}`);
-      const fs = whisperModule.FS;
-      fs?.writeFile(modelInfo.file, modelBytes);
+      try {
+        whisperModule.FS_unlink?.(WHISPER_MODEL_FS_PATH);
+      } catch {
+        // Real reference behavior — ignore "doesn't exist yet" on first load.
+      }
+      whisperModule.FS_createDataFile?.("/", WHISPER_MODEL_FS_PATH, modelBytes, true, true);
 
       const initFn = whisperModule.init;
       if (!initFn) throw new Error("init missing after module init");
-      const index = initFn(modelInfo.file);
-      if (index === 0) throw new Error("whisper.cpp init() returned 0 (model load failed)");
+      const index = initFn(WHISPER_MODEL_FS_PATH);
+      if (!index) throw new Error("whisper.cpp init() returned a falsy handle (model load failed)");
       contextIndex = index;
 
       options.onAudioStart?.();
@@ -409,13 +504,14 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
       const source = audioContext.createMediaStreamSource(mediaStream);
       workletNode = new AudioWorkletNode(audioContext, "whisper-capture-processor");
       workletNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
-        if (suppressed || !moduleRef || contextIndex === null) return;
+        if (suppressed) return;
         const samples = resampleTo16k(event.data, audioContext!.sampleRate);
-        moduleRef.set_audio?.(contextIndex, samples);
+        accumulatedChunks.push(samples);
+        accumulatedLength += samples.length;
       };
       source.connect(workletNode);
 
-      pollHandle = setInterval(poll, pollIntervalMs);
+      feedHandle = setInterval(feedAndPoll, feedIntervalMs);
     } catch (err) {
       running = false;
       const message = err instanceof Error ? err.message : String(err);
@@ -430,9 +526,9 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
    */
   function stop(): void {
     running = false;
-    if (pollHandle !== null) {
-      clearInterval(pollHandle);
-      pollHandle = null;
+    if (feedHandle !== null) {
+      clearInterval(feedHandle);
+      feedHandle = null;
     }
     workletNode?.port.close();
     workletNode?.disconnect();
@@ -452,6 +548,9 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
     contextIndex = null;
     moduleRef = null;
     lastTranscribed = "";
+    lastStatus = "";
+    accumulatedChunks = [];
+    accumulatedLength = 0;
     options.onAudioEnd?.();
   }
 

@@ -7,6 +7,7 @@ import { createBrowserWebSpeechProvider } from "@/lib/voice/browserWebSpeechProv
 import { buildHotwordList } from "@/lib/voice/casinoVoiceContext";
 import { classifyVoiceTranscript } from "@/lib/voice/classifyVoiceTranscript";
 import type { SpeechProvider, SpeechProviderResult } from "@/lib/voice/speechProvider";
+import { DEFAULT_AB_CONFIG, resolveAbConfigProviderOptions, computeAggregatesByConfig, type AbConfig } from "@/lib/voice/sherpaAbTestHarness";
 
 /**
  * SHERPA REAL MIC FIELD TEST — ASR + SAFETY-PIPELINE EVALUATION, LAB ONLY.
@@ -108,7 +109,6 @@ const NOISE_PHRASES = [
 const ALL_PHRASES = [...DEALER_STRESS_PHRASES, ...PLAYER_PHRASES, ...NOISE_PHRASES];
 
 type ProviderChoice = "sherpa-onnx" | "browser-web-speech";
-type AbConfig = "A" | "B" | "C";
 /** Provider-connection-level status — separate from PhraseState, which tracks the CURRENT phrase's own start/end cycle. */
 type ProviderStatus = "idle" | "loading" | "listening" | "error" | "stopped";
 type PhraseState = "idle" | "listening" | "done" | "skipped";
@@ -175,7 +175,10 @@ function classifyForDisplay(rawTranscript: string): ClassificationSummary {
 
 export default function SherpaVoiceTestPage() {
   const [providerChoice, setProviderChoice] = useState<ProviderChoice>("sherpa-onnx");
-  const [abConfig, setAbConfig] = useState<AbConfig>("B");
+  // 2026-08-20: C (tuned BPE + uppercase) is now the preferred Lab research
+  // default — see DEFAULT_AB_CONFIG's own doc comment for why (the real
+  // A/B/C mic session). A and B remain fully selectable for comparison.
+  const [abConfig, setAbConfig] = useState<AbConfig>(DEFAULT_AB_CONFIG);
   const [status, setStatus] = useState<ProviderStatus>("idle");
   const [phraseState, setPhraseState] = useState<PhraseState>("idle");
   const [lastError, setLastError] = useState<string | null>(null);
@@ -218,6 +221,30 @@ export default function SherpaVoiceTestPage() {
     setPhraseState("idle");
     setLiveInterim("");
     setLiveFinal("");
+  }
+
+  // LAB UX FIX, 2026-08-20 (real A/B/C mic session finding): switching
+  // provider/configuration used to leave `phraseIndex` wherever the
+  // PREVIOUS run had reached, silently starting the newly-selected
+  // configuration's captured records mid-corpus unless the operator
+  // remembered to also click "Restart list from phrase 1" — otherwise the
+  // only fix was a full page reload. This is a real, confirmed contributor
+  // to the unequal per-configuration completed-record totals in the real
+  // session (A=26, B=27, C=25 — see
+  // docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md §11). Same render-time-reset
+  // pattern as `phraseStateResetFor` above. `records` (the actual captured
+  // cross-configuration comparison data) is deliberately NEVER cleared
+  // here — only this run's transient phrase/session state resets, and no
+  // page reload is ever required.
+  const configKey = `${providerChoice}:${abConfig}`;
+  const [configResetFor, setConfigResetFor] = useState(configKey);
+  if (configResetFor !== configKey) {
+    setConfigResetFor(configKey);
+    setPhraseIndex(0);
+    setModelLoadMs(null);
+    setLastError(null);
+    setStatus("idle");
+    setLastCompletedRecord(null);
   }
 
   useEffect(() => {
@@ -326,23 +353,11 @@ export default function SherpaVoiceTestPage() {
     if (providerChoice !== "sherpa-onnx") {
       return createBrowserWebSpeechProvider(commonOptions);
     }
-    if (abConfig === "A") {
-      return createSherpaOnnxProvider({ ...commonOptions, assetBaseUrl: ASSET_BASE_URL, hotwords: undefined });
-    }
-    if (abConfig === "C") {
-      return createSherpaOnnxProvider({
-        ...commonOptions,
-        assetBaseUrl: ASSET_BASE_URL,
-        hotwords: hotwordList,
-        modelingUnit: "bpe",
-        bpeVocabUrl: BPE_VOCAB_URL,
-        hotwordCasing: "upper",
-      });
-    }
-    // B — exactly what every prior round shipped: hotwords on, default
-    // modelingUnit/casing (both CONFIRMED wrong for this model, kept
-    // exactly as-is so the A/B/C comparison measures the real regression).
-    return createSherpaOnnxProvider({ ...commonOptions, assetBaseUrl: ASSET_BASE_URL, hotwords: hotwordList });
+    return createSherpaOnnxProvider({
+      ...commonOptions,
+      assetBaseUrl: ASSET_BASE_URL,
+      ...resolveAbConfigProviderOptions(abConfig, hotwordList, BPE_VOCAB_URL),
+    });
   }, [providerChoice, abConfig, hotwordList, handleInterim, handleFinal, handleError]);
 
   const startPhrase = useCallback(() => {
@@ -397,28 +412,10 @@ export default function SherpaVoiceTestPage() {
     setRecords((prev) => prev.map((r) => (r.index === index ? { ...r, correctness } : r)));
   }
 
-  const aggregatesByConfig = useMemo(() => {
-    const groups: Record<string, UtteranceRecord[]> = {};
-    for (const r of records) {
-      const key = r.provider === "sherpa-onnx" ? `sherpa-${r.abConfig ?? "?"}` : "chrome";
-      (groups[key] ??= []).push(r);
-    }
-    return Object.entries(groups).map(([key, recs]) => {
-      const total = recs.length;
-      const accepted = recs.filter((r) => r.classification?.accepted).length;
-      const wouldProduceCardEvent = recs.filter((r) => r.classification?.wouldProduceCardEvent).length;
-      const marked = recs.filter((r) => r.correctness !== "unmarked").length;
-      const correct = recs.filter((r) => r.correctness === "correct").length;
-      return {
-        key,
-        total,
-        acceptedRate: total ? accepted / total : 0,
-        cardEventRate: total ? wouldProduceCardEvent / total : 0,
-        correctRate: marked ? correct / marked : null,
-        marked,
-      };
-    });
-  }, [records]);
+  // Grouping/rate logic lives in sherpaAbTestHarness.ts, pure and unit-tested
+  // there (see computeAggregatesByConfig's own doc comment on why totals are
+  // never padded/normalized to a common N).
+  const aggregatesByConfig = useMemo(() => computeAggregatesByConfig(records), [records]);
 
   const exportJson = useMemo(
     () =>
@@ -510,7 +507,7 @@ export default function SherpaVoiceTestPage() {
               >
                 {c === "A" && "A — Hotwords OFF"}
                 {c === "B" && "B — Current (shipped)"}
-                {c === "C" && "C — Tuned (bpe + uppercase)"}
+                {c === "C" && "C — Tuned (bpe + uppercase) — preferred"}
               </button>
             ))}
           </div>
@@ -528,6 +525,18 @@ export default function SherpaVoiceTestPage() {
 
       {/* Script + per-phrase controls */}
       <section className="rounded-xl border border-border bg-surface p-3">
+        {/* LAB UX FIX, 2026-08-20: makes the ACTIVE recording configuration
+            unmistakable at the point results are actually captured, not
+            just in section 1's button row above (which scrolls out of view
+            once phrases are underway) — the real A/B/C session flagged
+            this as a real risk of misattributing a captured run to the
+            wrong configuration. */}
+        <p
+          data-testid="active-config-banner"
+          className="mb-2 inline-block rounded-full border border-accent bg-accent/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-accent"
+        >
+          Recording under: {providerChoice === "sherpa-onnx" ? `Sherpa-ONNX — Config ${abConfig}` : "Chrome Web Speech (baseline)"}
+        </p>
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-bold text-foreground">
             2. Phrase {phraseIndex + 1} of {ALL_PHRASES.length}
@@ -642,6 +651,12 @@ export default function SherpaVoiceTestPage() {
       {/* Aggregate accuracy per configuration */}
       <section className="rounded-xl border border-border bg-surface p-3">
         <h2 className="mb-2 text-sm font-bold text-foreground">3. Aggregate accuracy by configuration</h2>
+        {aggregatesByConfig.some((a) => a.total !== aggregatesByConfig[0]?.total) && (
+          <p className="mb-2 rounded-md border border-pending/40 bg-pending/10 p-2 text-[11px] font-medium text-pending">
+            Unequal phrase counts per configuration — these rates are descriptive of what was actually captured in
+            each run, not a controlled equal-N accuracy comparison. See docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md §11.
+          </p>
+        )}
         {aggregatesByConfig.length === 0 ? (
           <p className="text-xs text-muted-foreground">No phrases recorded yet.</p>
         ) : (

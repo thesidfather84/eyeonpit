@@ -12,6 +12,94 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### Sherpa Real A/B/C Mic Session — Findings, Safety Fix, Finalization Fix, Lab UX Fix (2026-08-20)
+
+**Problem:** the user ran the real production A/B/C microphone comparison
+(§9.4/§10 of `docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md`) that every prior
+round could build but not itself execute. Three things came out of it: a
+headline result (C preferred on phrase-level blackjack recognition
+quality), a real safety defect (a false `SEAT5:3` CardEvent from a phrase
+that never named a seat), and a real finalization defect (FINAL transcripts
+missing their last word even when an interim already had it right).
+
+**Headline result:** A (hotwords off) clearly inferior. B (shipped
+cjkchar/lowercase) and C (tuned bpe/uppercase) close in aggregate rate
+(44.4%/25.9% vs. 44.0%/28.0%, on 27 vs. 25 completed records — NOT equal-N,
+reported as captured, never padded), but **C preferred anyway** — it
+correctly recovered specific real Dealer/Player phrases A and B both
+missed, which is the actual criterion, not the aggregate percentage.
+
+**Safety defect found and fixed:** "Has a five and a three" (no seat named)
+was misrecognized by Sherpa (config B) as "FIVE IN THE THREE," which
+EyeOnPit's own classifier then read as `SEAT5:3` — a false, accepted
+CardEvent. Root-caused to a **generic, provider-agnostic defect in
+`parseNarration.ts`'s leading-seat-shorthand rule** (not Sherpa-specific):
+it treated a bare number followed by ANY hand-connector word, including two
+words (`in`/`as`) already documented elsewhere in the same file as
+ASR-recovery-only aliases, as sufficient evidence to invent a brand-new
+seat target. Fixed by requiring the immediate connector to be exactly
+`"has"` — the only word any existing test or real transcript ever actually
+uses in that position; every legitimate shorthand phrase is unaffected,
+Browser Web Speech's own behavior was not weakened, and this fix protects
+BOTH providers equally, since the bug is reachable from any provider that
+produces this token shape.
+
+**Finalization truncation investigated and a real defect fixed:** traced to
+a genuine delivery race in `SherpaOnnxProvider.stop()` — audio already
+captured by the AudioWorkletProcessor but not yet delivered to the main
+thread at the exact instant "End Phrase" was clicked was silently dropped
+before finalization. Fixed with a finalization DRAIN (`stop()` now awaits
+one event-loop tick before flushing) — purely additive ordering, never a
+promotion of interim text to final. Extracted as a pure, unit-tested
+function (`finalizeSherpaStream`) specifically so this has real regression
+coverage without a microphone. A second, real property of
+`modified_beam_search` decoding (its top hypothesis can in principle
+re-rank during the trailing flush) was investigated and documented but not
+acted on — the delivery race is independently sufficient and is the only
+one of the two with a deterministic fix; re-ranking remains a documented
+open question for a future session if truncation recurs after this fix.
+
+**Lab UX fixed:** switching the A/B/C selector previously left the phrase
+run wherever the previous configuration had reached, requiring a page
+reload — a real, confirmed contributor to the session's unequal
+per-configuration completed-record totals (A=26, B=27, C=25). Now resets
+the phrase run to Phrase 1 and clears transient session state automatically
+on any config/provider switch, with no reload; the active configuration is
+now shown as a persistent, unmistakable banner; the aggregate table now
+flags unequal totals explicitly rather than presenting them as a controlled
+comparison. Grouping/config-mapping logic extracted to
+`src/lib/voice/sherpaAbTestHarness.ts`, pure and unit-tested.
+
+**Configuration decision:** config C is now the default selection on
+`/lab/sherpa-voice-test` load (Lab-only — production EyeOnPit does not
+reference Sherpa-ONNX anywhere and is completely unaffected). A and B
+remain fully selectable for ongoing comparison.
+
+**Explicitly not done:** Sherpa was NOT made the production voice provider
+— it remains EXPERIMENTAL, Lab-only, gated behind `/lab`, never wired into
+`VoiceControl.tsx`/`useVoiceRecognition.ts`. No new hotword aliases or
+grammar were added speculatively. No 1.10 Split/Double behavior touched. No
+`counting-engine/` changes.
+
+**Tests:** 6 new regression tests in `parseNarration.test.ts` (the false
+SEAT5:3 fix + legitimate-form preservation), 4 new in
+`classifyVoiceTranscript.test.ts` (classification-layer confirmation), 6 new
+in `sherpaOnnxProvider.test.ts` (`finalizeSherpaStream` ordering
+guarantees), a new `sherpaAbTestHarness.test.ts` (11 tests — config mapping,
+aggregate grouping, unequal-totals accounting), and a new Lab page test
+(`page.test.tsx`, 5 tests — config-switch reset, records preserved across
+switches). Full suite green (1509 passed, 1 pre-existing CPU-contention
+flake reconfirmed passing in isolation, 1 pre-existing skip), `tsc --noEmit`
+clean, `eslint` clean, `counting-engine/` diff empty.
+
+**Status:** complete, gates green. See
+`docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md` §11 for full detail. Recommended
+next step: a follow-up real-mic session specifically re-running the Dealer/
+Player phrases that previously truncated, to confirm the finalization drain
+fix actually eliminates the pattern in practice (see §11.3's own note on
+what would count as evidence the beam-search-re-ranking mechanism is also
+contributing).
+
 ### 1.10 Split/Double — Phase 6, Natural Split-Hand Continuation (2026-08-20)
 
 **Scope:** once an operator explicitly selects a split hand ("spot 3 hand

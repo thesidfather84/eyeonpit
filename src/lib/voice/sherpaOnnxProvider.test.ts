@@ -24,6 +24,7 @@ import {
   detectSherpaOnnxSupport,
   resolveDefaultAssetBaseUrl,
   classifySherpaStartError,
+  finalizeSherpaStream,
 } from "./sherpaOnnxProvider";
 import type { HotwordEntry } from "./casinoVoiceContext";
 
@@ -157,13 +158,13 @@ describe("createSherpaOnnxProvider — Node/vitest environment (no window)", () 
     expect(onInterimResult).not.toHaveBeenCalled();
   });
 
-  it("stop()/suppressForSpeech()/resumeAfterSpeech() are safe no-ops before start() — never throw, never call a handler", () => {
+  it("stop()/suppressForSpeech()/resumeAfterSpeech() are safe no-ops before start() — never throw (stop() is now async, see the FINALIZATION DRAIN fix), never call a handler", async () => {
     const onFinalResult = vi.fn();
     const onError = vi.fn();
     const provider = createSherpaOnnxProvider({ onFinalResult, onError });
 
+    await expect(provider.stop()).resolves.toBeUndefined();
     expect(() => {
-      provider.stop();
       provider.suppressForSpeech();
       provider.resumeAfterSpeech();
     }).not.toThrow();
@@ -244,6 +245,92 @@ describe("hotwords decoding requirements — confirmed for real this round, not 
   it("hotwords score is a positive, conservative constant", () => {
     expect(SHERPA_HOTWORDS_SCORE).toBeGreaterThan(0);
     expect(SHERPA_HOTWORDS_SCORE).toBeLessThan(10);
+  });
+});
+
+describe("finalizeSherpaStream — the 2026-08-20 real-mic FINALIZATION TRUNCATION fix, pure/injected, no WASM/DOM", () => {
+  it("REGRESSION (item 1): drains pending audio BEFORE reading the final result — a chunk delivered only during the drain is incorporated, fixing the real 'Dealer has a king' -> 'Dealer has a' truncation", async () => {
+    let drained = false;
+    const decodeCalls: string[] = [];
+    const finalText = await finalizeSherpaStream({
+      drainPendingAudio: async () => {
+        // Simulates the audio-worklet message (containing "KING") that was
+        // already captured but not yet delivered when stop() was called —
+        // this is exactly the real race the investigation found.
+        drained = true;
+      },
+      inputFinished: () => decodeCalls.push("inputFinished"),
+      isReady: () => false,
+      decode: () => decodeCalls.push("decode"),
+      getResultText: () => (drained ? "DEALER HAS A KING" : "DEALER HAS A"),
+    });
+    expect(finalText).toBe("DEALER HAS A KING");
+  });
+
+  it("REGRESSION (item 2): when the final decode is genuinely better/longer than any prior interim, the real (later) text is what's used — this fix never freezes an earlier reading", async () => {
+    const finalText = await finalizeSherpaStream({
+      drainPendingAudio: async () => {},
+      inputFinished: () => {},
+      isReady: () => false,
+      decode: () => {},
+      getResultText: () => "PLAYER THREE HITS GETS A FOUR",
+    });
+    expect(finalText).toBe("PLAYER THREE HITS GETS A FOUR");
+  });
+
+  it("drains before calling inputFinished() — strict ordering, not just 'eventually called'", async () => {
+    const order: string[] = [];
+    await finalizeSherpaStream({
+      drainPendingAudio: async () => {
+        order.push("drain");
+      },
+      inputFinished: () => order.push("inputFinished"),
+      isReady: () => false,
+      decode: () => order.push("decode"),
+      getResultText: () => "X",
+    });
+    expect(order).toEqual(["drain", "inputFinished"]);
+  });
+
+  it("decodes every ready chunk (loop, not a single decode) before reading the result", async () => {
+    let readyCount = 3;
+    const decodeCalls: number[] = [];
+    await finalizeSherpaStream({
+      drainPendingAudio: async () => {},
+      inputFinished: () => {},
+      isReady: () => readyCount > 0,
+      decode: () => {
+        decodeCalls.push(readyCount);
+        readyCount -= 1;
+      },
+      getResultText: () => "X",
+    });
+    expect(decodeCalls).toEqual([3, 2, 1]);
+  });
+
+  it("never emits a final for empty decoded text — returns null, exactly like the pre-fix inline check", async () => {
+    const finalText = await finalizeSherpaStream({
+      drainPendingAudio: async () => {},
+      inputFinished: () => {},
+      isReady: () => false,
+      decode: () => {},
+      getResultText: () => "",
+    });
+    expect(finalText).toBeNull();
+  });
+
+  it("never inspects, compares, or falls back to interim text — it has no interim parameter at all, by construction; it only ever reads the real post-drain decode result", async () => {
+    // There is no way to pass "the last interim" into this function — this
+    // is the structural guarantee behind "do not simply promote arbitrary
+    // interim text to final."
+    const finalText = await finalizeSherpaStream({
+      drainPendingAudio: async () => {},
+      inputFinished: () => {},
+      isReady: () => false,
+      decode: () => {},
+      getResultText: () => "WHATEVER THE REAL RECOGNIZER ACTUALLY DECODED",
+    });
+    expect(finalText).toBe("WHATEVER THE REAL RECOGNIZER ACTUALLY DECODED");
   });
 });
 

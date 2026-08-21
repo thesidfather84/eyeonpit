@@ -192,3 +192,30 @@ describe("PC field test #1 — CONTEXTUAL DEALER-CONFUSION RECOVERY (§4 + PC he
     if (genuine.valid) expect(genuine.source).not.toBe("dealer-confusion-recovery");
   });
 });
+
+describe("classifyVoiceTranscript — SAFETY: real Sherpa-ONNX A/B/C mic session, 2026-08-20 — the false SEAT5:3 defect", () => {
+  it('"five in the three" (real Sherpa recognition of "Has a five and a three" — no seat ever spoken) never classifies to SEAT5:3, with or without dealer-confusion-recovery/unscoped-continuation enabled — reproduces the exact Lab classifyForDisplay call shape (allowDealerConfusionRecovery=true, allowUnscopedContinuation=true)', () => {
+    const c = classifyVoiceTranscript("five in the three", true, true);
+    if (c.valid) {
+      expect(c.actionKey).not.toBe("C:SEAT5:3");
+      expect(c.actionKey.startsWith("T:SEAT5")).toBe(false);
+    }
+  });
+
+  it("without unscoped-continuation evidence (no genuinely live active target), the same transcript fails closed rather than guessing", () => {
+    const c = classifyVoiceTranscript("five in the three", true, false);
+    expect(c.valid).toBe(false);
+  });
+
+  it('legitimate "Player five has a three" still explicitly targets Seat 5 — the fix does not touch prefixed seat phrases', () => {
+    const c = classifyVoiceTranscript("Player five has a three");
+    expect(c.valid).toBe(true);
+    if (c.valid) expect(c.actionKey).toBe("C:SEAT5:3");
+  });
+
+  it('a genuinely explicit "spot 5 has a five and a three" is completely unaffected and still resolves to Seat 5', () => {
+    const c = classifyVoiceTranscript("spot 5 has a five and a three");
+    expect(c.valid).toBe(true);
+    if (c.valid) expect(c.actionKey).toBe("C:SEAT5:5|C:SEAT5:3");
+  });
+});

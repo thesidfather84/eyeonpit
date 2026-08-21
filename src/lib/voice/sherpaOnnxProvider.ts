@@ -228,6 +228,74 @@
  * without its real model.
  *
  * ============================================================
+ * REAL-MIC FINALIZATION TRUNCATION, 2026-08-20 (Sherpa A/B/C session) — root
+ * cause found, drain fix applied
+ * ============================================================
+ * The real production A/B/C mic session (docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md
+ * §11) repeatedly showed the FINAL transcript missing exactly the last
+ * spoken word, even though an interim shown moments earlier already
+ * contained the complete, correct phrase — e.g. "Dealer has a king"
+ * finalized as "Dealer has a", "Player three hits, gets a four" finalized
+ * without the "four". This investigation looked at two candidate
+ * mechanisms, both real properties of this exact pipeline, and fixed the
+ * one that is a genuine, deterministic code defect:
+ *
+ * 1. GENUINE, CONFIRMED, FIXED — a delivery race in `stop()`. Audio is
+ *    captured on the AudioWorkletProcessor's own real-time rendering
+ *    thread, one render-quantum message at a time, and delivered to THIS
+ *    thread asynchronously via `workletNode.port.onmessage` (see `start()`
+ *    below) — that delivery is NOT synchronous with whatever JS code
+ *    happens to be running on the main thread at the moment the operator
+ *    clicks "End Phrase." The OLD `stop()` called `stream.inputFinished()`
+ *    and read the result SYNCHRONOUSLY, in the same tick as the click
+ *    handler. Any audio chunk the processor had already captured and
+ *    posted, but that the main thread's message queue had not yet
+ *    delivered to `handleAudioChunk` at that exact instant, was never fed
+ *    to `stream.acceptWaveform()` before `inputFinished()` ran — and
+ *    because `recognizer`/`stream` were then immediately nulled out in
+ *    `stop()`'s own cleanup, that chunk's `onmessage` callback (whenever it
+ *    eventually fired, a moment later) hit the `!recognizer || !stream`
+ *    guard in `handleAudioChunk` and was silently dropped, never decoded.
+ *    An operator who speaks the last word and clicks "End Phrase" promptly
+ *    — exactly the natural, fast field-test cadence — reliably lands in
+ *    this window, and it is always the TRAILING word/rank that's lost,
+ *    matching every real example above. This is a genuine, deterministic,
+ *    fixable defect: see FINALIZATION DRAIN below and `finalizeSherpaStream`.
+ * 2. REAL, BUT NOT WHAT WAS FIXED HERE — `modified_beam_search` (the
+ *    decoding method hotwords require, see `SHERPA_HOTWORDS_DECODING_METHOD`)
+ *    maintains several ranked hypotheses (`maxActivePaths: 4`), not one
+ *    committed token sequence the way `greedy_search` (config A) does — the
+ *    text `getResult()` returns is whichever hypothesis currently ranks
+ *    first, and that ranking CAN change, in principle, as more audio/right-
+ *    context is decoded, including during `inputFinished()`'s own trailing
+ *    flush. This is a real, documented property of beam-search transducer
+ *    decoding, not an EyeOnPit bug — but it was NOT the mechanism this round
+ *    fixed: the delivery-race explanation above is independently sufficient
+ *    on its own, is a genuine code defect (not an inherent ASR property),
+ *    and is directly, deterministically fixable, whereas "silently trust
+ *    beam-search re-ranking less" has no deterministic fix and was
+ *    explicitly out of bounds ("do not simply promote arbitrary interim
+ *    text to final"). If truncation is ever reproduced AFTER this fix in a
+ *    real follow-up mic session, that would be real evidence this second
+ *    mechanism is also contributing, and is the next thing to investigate —
+ *    not assumed or patched preemptively here.
+ *
+ * FINALIZATION DRAIN POLICY (the actual fix): `stop()` now AWAITS one real
+ * event-loop tick (`drainPendingAudio`) BEFORE calling `inputFinished()` —
+ * giving any already-captured-but-not-yet-delivered audio-worklet message a
+ * chance to reach `handleAudioChunk` and be fed into the stream first. This
+ * is a strictly ADDITIVE ordering guarantee: it can only ever let MORE real,
+ * already-spoken audio be incorporated into the final result before it's
+ * declared — it never fabricates, edits, or promotes any interim text
+ * itself into the final (the actual `getResult()` read still happens
+ * exactly once, after the real decode, exactly as before). Extracted as the
+ * pure, independently-testable `finalizeSherpaStream` below specifically so
+ * this ordering guarantee has a real, deterministic unit test (see
+ * sherpaOnnxProvider.test.ts) — the AudioWorkletNode/postMessage timing
+ * itself still cannot be reproduced without a real browser/microphone (see
+ * every other "WHAT WAS NOT RE-VERIFIED" note in this file), so what's
+ * proven here is the ordering logic, not the literal race window.
+ * ============================================================
  * SAFETY BOUNDARY — UNCHANGED. This provider, like every SpeechProvider,
  * only ever replaces AUDIO -> TRANSCRIPT. It has no access to and makes
  * no calls into normalization, narration parsing, N-best resolution, the
@@ -445,6 +513,43 @@ const DEFAULT_ASSET_BASE_URL = resolveDefaultAssetBaseUrl({
  */
 export function classifySherpaStartError(message: string): string {
   return /404|failed to load/i.test(message) ? `assets-not-found: ${message}` : message;
+}
+
+/**
+ * The FINALIZATION DRAIN POLICY (see this module's own top-of-file doc
+ * comment for the full 2026-08-20 investigation) — pure, independently
+ * testable, no WASM/DOM dependency: takes the actual audio-delivery/
+ * decode/read primitives as plain injected functions rather than closing
+ * over real WASM/AudioWorkletNode state, so the ordering guarantee itself
+ * — any audio already captured before `stop()` was called must be given a
+ * chance to reach the stream BEFORE the final result is read — can be
+ * proven deterministically without a real browser/microphone. `stop()`
+ * below is the one real call site; it supplies the real WASM primitives
+ * and a real one-event-loop-tick `drainPendingAudio`.
+ *
+ * This function does NOT decide what counts as "final" by inspecting or
+ * comparing text — it never looks at interim text at all, and never
+ * chooses to prefer a longer/earlier reading over the real decode. It only
+ * ever changes WHEN `getResult()` is read relative to in-flight audio
+ * delivery, never WHAT is read. That is the deliberate, narrow scope of
+ * this fix — see the module doc comment's explicit "do not simply promote
+ * arbitrary interim text to final" instruction.
+ */
+export async function finalizeSherpaStream(deps: {
+  /** Resolves once any audio already captured before this call was made has had a real chance to be delivered and fed into the stream (see the module's own delivery-race finding). */
+  drainPendingAudio: () => Promise<void>;
+  inputFinished: () => void;
+  isReady: () => boolean;
+  decode: () => void;
+  getResultText: () => string;
+}): Promise<string | null> {
+  await deps.drainPendingAudio();
+  deps.inputFinished();
+  while (deps.isReady()) {
+    deps.decode();
+  }
+  const text = deps.getResultText();
+  return text.length > 0 ? text : null;
 }
 
 export interface SherpaOnnxProviderOptions extends SpeechProviderOptions {
@@ -768,22 +873,38 @@ export function createSherpaOnnxProvider(options: SherpaOnnxProviderOptions): Sp
 
   /**
    * The ONLY place a final result is ever declared for this provider (see
-   * handleAudioChunk's own doc comment). Explicitly flushes the stream
-   * with `inputFinished()` and drains any remaining decode before reading
-   * the result, so stop() reliably captures whatever was actually said —
-   * including a short utterance shorter than the (now-disabled) automatic
-   * endpoint's own trailing-silence window would have required.
+   * handleAudioChunk's own doc comment). Awaits the FINALIZATION DRAIN
+   * (see this module's own 2026-08-20 doc comment and
+   * `finalizeSherpaStream`) before flushing the stream with
+   * `inputFinished()` and draining any remaining decode, so stop()
+   * reliably captures whatever was actually said — including audio already
+   * captured but not yet delivered to this thread at the exact instant the
+   * caller invoked stop(), and a short utterance shorter than the
+   * (now-disabled) automatic endpoint's own trailing-silence window would
+   * have required. Async now (previously synchronous) specifically so the
+   * drain can be awaited; every real call site (this file's own return
+   * value, the Lab page, VoiceControl's SpeechProvider usage) already
+   * calls `stop()` without depending on a return value, so this is not a
+   * breaking change to any caller. Recognizer/stream are private to THIS
+   * closure — a later `start()` for a new phrase always builds a brand-new
+   * provider instance (see the Lab page's own `buildProvider` doc comment),
+   * so an in-flight drain from a previous instance can never observe or
+   * affect a different instance's state.
    */
-  function stop(): void {
+  async function stop(): Promise<void> {
     running = false;
     if (recognizer && stream) {
+      const currentRecognizer = recognizer;
+      const currentStream = stream;
       try {
-        stream.inputFinished();
-        while (recognizer.isReady(stream)) {
-          recognizer.decode(stream);
-        }
-        const finalText = recognizer.getResult(stream).text;
-        if (finalText.length > 0) {
+        const finalText = await finalizeSherpaStream({
+          drainPendingAudio: () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+          inputFinished: () => currentStream.inputFinished(),
+          isReady: () => currentRecognizer.isReady(currentStream),
+          decode: () => currentRecognizer.decode(currentStream),
+          getResultText: () => currentRecognizer.getResult(currentStream).text,
+        });
+        if (finalText !== null) {
           emitResult(finalText, true, options.onFinalResult);
         }
       } catch {

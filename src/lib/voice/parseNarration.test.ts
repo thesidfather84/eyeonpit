@@ -460,6 +460,50 @@ describe("parseNarration — REAL DEVICE FIX: natural leading-seat shorthand (nu
   });
 });
 
+describe("parseNarration — SAFETY: real Sherpa-ONNX A/B/C mic session, 2026-08-20 — 'FIVE IN THE THREE' must never become a false SEAT5:3", () => {
+  it('"five in the three" (Sherpa\'s real misrecognition of "has a five and a three") is NOT read as a Seat 5 shorthand claim — it stays two unscoped cards (5, 3), resolved at commit time against whatever is currently active, never a fabricated explicit seat target', () => {
+    const result = parseNarration("five in the three", { allowUnscopedContinuation: true });
+    expect(result.kind).toBe("ops");
+    if (result.kind !== "ops") return;
+    // Critically: no selectTarget op at all — "five" must never become Seat 5.
+    expect(result.ops.some((op) => op.kind === "selectTarget")).toBe(false);
+    expect(result.ops).toEqual([
+      { kind: "card", rank: "5" },
+      { kind: "card", rank: "3" },
+    ]);
+  });
+
+  it('without a genuinely live active target (allowUnscopedContinuation false), "five in the three" fails closed — rejected outright, never guesses a target OR silently drops a card', () => {
+    expect(parseNarration("five in the three", { allowUnscopedContinuation: false }).kind).toBe("reject");
+  });
+
+  it('the identical false-positive shape with "and" recognized correctly (no ASR substitution) is refused the same way — "five and the three" is never Seat 5 either', () => {
+    const result = parseNarration("five and the three", { allowUnscopedContinuation: true });
+    expect(result.kind).toBe("ops");
+    if (result.kind !== "ops") return;
+    expect(result.ops.some((op) => op.kind === "selectTarget")).toBe(false);
+  });
+
+  it('"five as the three" (the "as"-for-"has" ASR alias) is refused identically — never a Seat 5 claim', () => {
+    const result = parseNarration("five as the three", { allowUnscopedContinuation: true });
+    expect(result.kind).toBe("ops");
+    if (result.kind !== "ops") return;
+    expect(result.ops.some((op) => op.kind === "selectTarget")).toBe(false);
+  });
+
+  it('legitimate shorthand ("three has a ten") is completely unaffected by the tightened trigger — still Seat 3: 10', () => {
+    expect(cardOps(parseNarration("three has a ten"))).toEqual([{ kind: "card", target: { kind: "seat", seat: 3 }, rank: "10" }]);
+  });
+
+  it('legitimate explicit-prefix form ("Player five has a three") remains valid and lands on Seat 5 — this fix only narrows the BARE-NUMBER shorthand, never the "player"/"spot"/"seat"-prefixed form', () => {
+    expect(resolvedCard("Player five has a three")).toEqual({ seat: 5, rank: "3" });
+  });
+
+  it("an incomplete utterance ending mid-connector (\"dealer has a\" — the interim BEFORE the real word \"king\" ever arrives) still rejects outright, never producing a partial/wrong card", () => {
+    expect(parseNarration("dealer has a").kind).toBe("reject");
+  });
+});
+
 describe("EyeOnPit 1.3 — natural seat/player/spot phrasing, including a natural connector between the prefix and the number", () => {
   it.each([
     ["player one has a seven", 1, "7"],

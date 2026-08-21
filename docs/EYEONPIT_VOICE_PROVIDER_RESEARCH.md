@@ -507,3 +507,196 @@ correctly through the Blob-hosted assets in production has not been
 measured and requires the user's own real-microphone session against the
 deployed page — this provider remains experimental, Lab-only, and not
 production-ready.
+
+## 11. Real production A/B/C mic session (2026-08-20) — results, two real
+defects found and fixed, Sherpa still NOT production-approved
+
+The user ran the actual A/B/C comparison §10 (and §9.4 before it) built but
+could not itself execute — a real microphone, against the real
+Blob-deployed assets, through all three configurations. This section
+records that session's real findings and this round's remediation. **Sherpa
+remains an EXPERIMENTAL, Lab-only provider. Production EyeOnPit
+(`VoiceControl.tsx`/`useVoiceRecognition.ts`) still uses Browser Web Speech
+exclusively and was not touched.**
+
+### 11.1 Headline result — C preferred, on phrase quality, not just rate
+
+| Config | Completed records | Accepted rate | Would-produce-CardEvent rate |
+|---|---|---|---|
+| A — hotwords OFF | 26 | 23.1% | 15.4% |
+| B — shipped (cjkchar, lowercase) | 27 | 44.4% | 25.9% |
+| C — tuned (bpe + uppercase) | 25 | 44.0% | 28.0% |
+
+**A is clearly inferior** to both B and C. **B and C are close in aggregate
+rate** (44.4% vs. 44.0% accepted) — but **C is preferred anyway**, because
+the real basis for that decision is phrase-LEVEL blackjack recognition
+quality, not the aggregate percentage: C correctly recovered specific real
+Dealer/Player phrases that A and B both missed. An aggregate-rate-only
+reading would have called B and C a wash; it isn't, once the actual missed
+phrases are the criterion the task explicitly asked to prioritize.
+
+**Important caveat, stated plainly and never hidden in the numbers above:**
+the three configurations do **not** have equal completed-record counts (26 /
+27 / 25) — see §11.4. These percentages are **descriptive of what was
+actually captured in each run, not a controlled, equal-N accuracy
+comparison** between A, B, and C. No number here has been reweighted,
+padded, or otherwise adjusted to make the three runs look comparable.
+
+### 11.2 SAFETY DEFECT — false `SEAT5:3` from config B, root-caused and fixed
+
+**What happened:** the operator said "Has a five and a three" (an ordinary
+target-omitted continuation utterance — no seat named at all). Sherpa (config
+B) recognized it as **"FIVE IN THE THREE"**. EyeOnPit's own classification
+pipeline then produced `SEAT5:3` — an ACCEPTED result that would have
+written a real CardEvent to Seat 5, even though the spoken phrase never
+named any seat.
+
+**Root cause — confirmed by reading the actual code, not guessed:**
+`parseNarration.ts`'s "leading-seat shorthand" rule (added for legitimate
+phrases like "three has a ten") treats a bare number at the start of a
+clause, immediately followed by ANY of `HAND_CONNECTOR_WORDS` (`has`, `as`,
+`and`, `with`, `gets`, `got`, `shows`, `in`), as unambiguous evidence the
+number is a NEW seat target. Two of those connector words — `in` and `as` —
+are themselves already documented, elsewhere in the same file, as
+ASR-MISRECOGNITION-RECOVERY ALIASES ONLY (`in` for a misheard `and`, `as`
+for a misheard `has`) — no operator ever deliberately opens a fresh
+seat-claim by saying "five in..." Sherpa's real transcript dropped the true
+leading "has a" and misheard "and" as "in," leaving exactly the bare-number
++ "in" shape the shorthand rule (wrongly) treats as a deterministic Seat 5
+claim.
+
+**This is a defect in generic production parser logic
+(`src/lib/voice/parseNarration.ts`), not something Sherpa-specific, and not
+something introduced to accommodate Sherpa.** The exact same false positive
+is reachable from ANY provider (including Browser Web Speech) that ever
+produces this token shape — Sherpa's real session is simply what surfaced
+it first. Browser Web Speech's own behavior was not weakened to fix this;
+the fix makes the shared parser strictly safer for both providers.
+
+**The fix:** the leading-shorthand trigger now requires the immediate
+connector to be exactly `"has"` — the ONLY connector any existing test or
+real transcript ever actually exercises in that position (every existing
+passing test — "three has a ten," "2 has 5 7," "one has a king and an
+ace" — already uses "has"). `in`/`as`/`and`/`with`/`gets`/`got`/`shows`
+remain fully recognized as CONTINUATION connectors once a target is already
+established, or via the existing `allowUnscopedContinuation` mechanism —
+only the "invent a brand-new seat target from a bare number" trigger was
+narrowed. Legitimate forms are unaffected and regression-tested: "three has
+a ten" (Seat 3), "Player five has a three" (Seat 5 — an explicit
+seat-prefixed phrase, never routed through the shorthand rule at all).
+"five in the three" now resolves as two ordinary unscoped cards (5, 3),
+correctly deferring to whatever target is genuinely active — the same
+outcome the operator's actual words always meant — or rejects outright when
+no such target evidence exists, never guessing a seat. See
+`src/lib/voice/parseNarration.ts` and its own test file for the full fix
+and regression coverage.
+
+### 11.3 Finalization truncation — investigated, real delivery-race defect found and fixed
+
+The session repeatedly showed cases where an INTERIM already contained the
+complete, correct phrase, but the declared FINAL transcript was missing the
+last word — "Dealer has a king" → "Dealer has a"; "Player three hits, gets a
+four" / "Player three hits a four" → missing "four."
+
+**Investigated per instruction, before touching any grammar/hotwords.**
+Two candidate mechanisms were considered (both real properties of this
+pipeline — full detail in `sherpaOnnxProvider.ts`'s own doc comment):
+
+1. **A genuine, confirmed, deterministic delivery race in `stop()` — this is
+   what was fixed.** Audio is captured on the AudioWorkletProcessor's
+   real-time rendering thread and delivered to the main thread
+   asynchronously via `port.onmessage`. The prior `stop()` called
+   `stream.inputFinished()` and read the result SYNCHRONOUSLY, in the same
+   tick as the "End Phrase" click. Any audio chunk already captured but not
+   yet delivered to `handleAudioChunk` at that exact instant was never fed
+   into the stream before finalization, and was then silently dropped
+   entirely once `stop()`'s cleanup nulled `recognizer`/`stream`. An
+   operator who finishes speaking and clicks "End Phrase" promptly — the
+   natural field-test cadence — reliably lands in this window, and it is
+   always the TRAILING word that's lost, matching every real example above.
+2. **A real, but not-yet-observed-as-the-cause, property of
+   `modified_beam_search`** (the decoding method hotwords require, used by
+   both B and C): its top-ranked hypothesis can, in principle, change as
+   more audio is decoded, including during `inputFinished()`'s own trailing
+   flush. This is a documented characteristic of beam-search transducer
+   decoding, not an EyeOnPit bug — it was NOT what this round fixed, since
+   the delivery race above is independently sufficient, is a genuine
+   deterministic code defect, and is the only one of the two with an actual
+   deterministic fix available.
+
+**The fix — a finalization DRAIN, not a promotion of interim text:** `stop()`
+now awaits one real event-loop tick before calling `inputFinished()`, giving
+any already-captured-but-undelivered audio a chance to reach the stream
+first. This is purely additive ordering — it can only let MORE real,
+already-spoken audio be incorporated before the final is declared. It never
+inspects, compares against, or falls back to interim text; the actual
+`getResult()` read still happens exactly once, after the real decode, same
+as before. Extracted as a pure, independently unit-tested function,
+`finalizeSherpaStream` (`sherpaOnnxProvider.ts`), specifically so this
+ordering guarantee has real regression coverage without needing a real
+microphone. **If truncation is reproduced again in a future real-mic session
+after this fix ships, that is real evidence mechanism 2 (beam-search
+re-ranking) is also contributing — the next thing to investigate then, not
+assumed or patched preemptively now.**
+
+### 11.4 Lab UX fix — config switch left the phrase run stuck; unequal totals explained
+
+**Reported bug:** changing the A/B/C selector left the operator at wherever
+the PREVIOUS configuration's phrase run had reached, forcing a page reload
+to get back to Phrase 1.
+
+**Root cause, confirmed by reading the Lab page's own state management:**
+`abConfig`/`providerChoice` changes never reset `phraseIndex` — only the
+existing manual "Restart list from phrase 1" link did. Forgetting that one
+click meant the newly-selected configuration's captured records silently
+started mid-corpus (or, if the prior run had reached the last phrase, could
+capture almost nothing at all) instead of a fresh Phrase-1 pass.
+
+**This directly explains part of §11.1's unequal completed-record totals
+(A=26, B=27, C=25 vs. the intended 29-phrase corpus):** some of the gap is
+ordinary, by-design "Skip Phrase" usage (which deliberately produces no
+record at all — not a bug), and some is very plausibly this exact
+carried-over-phraseIndex defect if a config switch ever happened without
+the manual restart click. Both are real, legitimate contributors —
+determined by reading the actual state flow, not guessed — and neither is
+"fabricated" by padding the numbers in §11.1 to look equal; they're reported
+exactly as captured.
+
+**The fix:** switching `abConfig` or `providerChoice` now resets the phrase
+run to Phrase 1 and clears the current run's transient session state
+(model/session load time, last error, connection status, last completed
+record) automatically, with no page reload required. Historical `records`
+are deliberately never cleared by this — that data is the actual
+cross-configuration comparison this tool exists to produce. The active
+recording configuration is now also shown as a persistent, unmistakable
+banner directly above the phrase controls (not just the button row in
+section 1, which scrolls out of view once phrases are underway), and the
+aggregate table now shows an explicit "unequal phrase counts, not a
+controlled comparison" notice whenever the per-configuration totals differ.
+See `src/lib/voice/sherpaAbTestHarness.ts` (the extracted, unit-tested
+grouping/config-mapping logic) and the Lab page's own regression tests.
+
+### 11.5 Configuration decision — C is now the Lab's default research configuration
+
+Per §11.1's phrase-level finding, **config C (tuned BPE + uppercase
+hotwords) is now the DEFAULT selection when `/lab/sherpa-voice-test` loads**
+(`DEFAULT_AB_CONFIG` in `sherpaAbTestHarness.ts`). A and B remain fully
+selectable for ongoing research comparison — nothing about A/B's own
+configuration values changed. **This is isolated entirely to the Lab
+research page.** Production EyeOnPit does not reference Sherpa-ONNX
+anywhere (`VoiceControl.tsx`/`useVoiceRecognition.ts` are untouched, still
+Browser Web Speech only) — this default has zero effect on any operator-
+facing behavior.
+
+### 11.6 Status — Sherpa remains NOT production-approved
+
+Nothing in this section changes Sherpa-ONNX's status: it is still an
+EXPERIMENTAL, Lab-only provider, gated behind the `/lab` passcode, never
+wired into `VoiceControl.tsx`. This round fixed two real, confirmed defects
+(a generic parser safety bug and a Sherpa-specific finalization delivery
+race) and one Lab UX bug — it did not, and was not asked to, change that
+production gate. The concrete next step remains further real-mic sessions:
+confirming the finalization drain fix actually eliminates the truncation
+pattern in practice, and continuing to build phrase-level evidence for
+config C (or a future config) before any different production decision is
+ever considered.

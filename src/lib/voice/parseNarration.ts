@@ -515,11 +515,40 @@ export function parseNarration(rawTranscript: string, opts?: { allowUnscopedCont
     // `currentTarget` happened to still be unset — even though "5" sits
     // well after "has" was already consumed as a continuation connector,
     // nowhere near the true start of the utterance).
+    //
+    // SAFETY (2026-08-20, real Sherpa-ONNX A/B/C mic session — "FIVE IN THE
+    // THREE" false SEAT5:3): the lookahead used to accept ANY of
+    // HAND_CONNECTOR_WORDS here, including "in" and "as" — but those two
+    // are documented ELSEWHERE IN THIS FILE (see HAND_CONNECTOR_WORDS's own
+    // doc comment) as ASR-MISRECOGNITION-RECOVERY ALIASES ONLY ("in" for a
+    // misheard "and", "as" for a misheard "has") — no operator ever
+    // deliberately opens a fresh seat-claim by saying "five in..." or "five
+    // as...". A real captured Sherpa transcript of "Has a five and a three"
+    // (an ordinary target-omitted CONTINUATION utterance — no seat named at
+    // all) came back as "five in the three": the recognizer dropped the
+    // true leading "has a" and misheard "and" as "in", leaving a bare
+    // number immediately followed by "in" — which this branch then
+    // (wrongly) read as deterministic evidence of a NEW "Seat 5" claim,
+    // producing a false `SEAT5:3` CardEvent from a phrase that never named
+    // any seat. Restricting the trigger word to exactly "has" — the ONLY
+    // connector any existing shorthand test/real transcript ever actually
+    // exercises in this leading position — removes that false-positive
+    // class (and the identical risk from "and"/"with"/"gets"/"got"/"shows"
+    // dropping the same leading "has a") without weakening anything real:
+    // every existing shorthand phrase ("three has a ten", "2 has 5 7", "one
+    // has a king and an ace") already uses "has" here. This is generic
+    // parser logic — it applies identically regardless of which
+    // SpeechProvider (Browser Web Speech or Sherpa-ONNX) produced the
+    // transcript; it is not a Sherpa-specific gate. "in"/"as"/"and" etc.
+    // remain fully recognized as CONTINUATION connectors once a target is
+    // already established or via `allowUnscopedContinuation` — only this
+    // one "invent a brand-new seat target from a bare number" trigger is
+    // narrowed.
     if (
       !currentTarget &&
       isClauseStart &&
       SEAT_NUMBER_BY_WORD[token] != null &&
-      HAND_CONNECTOR_WORDS.has(tokens[i + 1] ?? "")
+      tokens[i + 1] === "has"
     ) {
       recognizedAnything = true;
       sawNonLegacyTargetForm = true; // legacy has no shorthand grammar at all — see the flag's own doc comment

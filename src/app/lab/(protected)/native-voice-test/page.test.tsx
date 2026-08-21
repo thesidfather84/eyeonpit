@@ -92,4 +92,31 @@ describe("Native Voice Prototype Lab page", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Skip$/ }));
     expect(isDisabled(screen.getByRole("button", { name: /Export JSON/ }))).toBe(false);
   });
+
+  it("Native Voice Expanded English Test switches to the v0.2 grammar, showing a category badge and a bounded phrase count", () => {
+    render(<NativeVoiceTestPage />);
+    fireEvent.click(screen.getByRole("button", { name: /Native Voice Expanded English Test/ }));
+    expect(expectedPhraseText()).toBe("Dealer has an ace.");
+    expect(screen.getByText(/Phrase 1 of \d+/)).toBeTruthy();
+    expect(screen.getByText("Dealer / Card")).toBeTruthy();
+  });
+
+  it("FALSE CARDEVENTS summary is always visible once a phrase is recorded, and reads 0 for a clean skipped-only session", () => {
+    render(<NativeVoiceTestPage />);
+    fireEvent.click(screen.getByRole("button", { name: /^Skip$/ }));
+    expect(screen.getByTestId("false-cardevents-summary").textContent).toBe("FALSE CARDEVENTS: 0");
+  });
+
+  it("Noise rejection set label reflects the currently active grammar", () => {
+    render(<NativeVoiceTestPage />);
+    expect(screen.getByRole("button", { name: /Noise rejection set \(vs\. quick grammar\)/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Native Voice Expanded English Test/ }));
+    expect(screen.getByRole("button", { name: /Noise rejection set \(vs\. expanded grammar\)/ })).toBeTruthy();
+  });
+
+  it("links to the Mic Check tool", () => {
+    render(<NativeVoiceTestPage />);
+    const link = screen.getByRole("link", { name: /Mic Check/ });
+    expect(link.getAttribute("href")).toBe("/lab/mic-check");
+  });
 });

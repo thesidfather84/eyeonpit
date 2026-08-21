@@ -74,6 +74,8 @@
  * ============================================================
  */
 import type { KaldiRecognizer, Model } from "vosk-browser";
+import { NATIVE_VOICE_EXPANDED_PHRASES } from "./nativeVoicePrototype";
+import { normalizeTranscript } from "./normalizeTranscript";
 import type { SpeechProvider, SpeechProviderOptions, SpeechProviderResult } from "./speechProvider";
 
 export const VOSK_PROVIDER_ID = "vosk";
@@ -103,6 +105,22 @@ export const VOSK_PROTOTYPE_GRAMMAR_PHRASES: readonly string[] = [
   "end count",
   "[unk]",
 ];
+
+/**
+ * NATIVE VOICE v0.2 — the expanded grammar, built from
+ * `NATIVE_VOICE_EXPANDED_PHRASES` (nativeVoicePrototype.ts's own catalog of
+ * existing, already-supported command shapes — see that module's own doc
+ * comment) via `normalizeTranscript`, the EXACT SAME normalization the real
+ * classifier applies to whatever a provider returns. Deriving the grammar
+ * this way (rather than hand-maintaining a second, parallel lowercase list)
+ * means the grammar and the display/expected-phrase text can never silently
+ * drift apart — a lesson directly drawn from Prototype 0.1's own separately
+ * hand-typed `VOSK_PROTOTYPE_GRAMMAR_PHRASES` below, which stays as its own
+ * small, independent list (the Quick Smoke Test's 7 phrases) since it
+ * predates this pattern and reordering/deriving it now would be a
+ * behavior-risking change for no real benefit at that size.
+ */
+export const VOSK_EXPANDED_GRAMMAR_PHRASES: readonly string[] = [...NATIVE_VOICE_EXPANDED_PHRASES.map((p) => normalizeTranscript(p)), "[unk]"];
 
 /** The exact `grammar` string passed to `new model.KaldiRecognizer(sampleRate, grammar)` — a JSON array, per Vosk's own documented grammar API. */
 export function buildVoskGrammarString(phrases: readonly string[] = VOSK_PROTOTYPE_GRAMMAR_PHRASES): string {
@@ -190,11 +208,25 @@ export function __resetVoskModelForTests(): void {
   modelLoadPromise = null;
 }
 
+/** Real, per-phrase instrumentation — see this module's own PHRASE DIAGNOSTICS doc comment. Diagnostic-only: never consulted by any parsing/dispatch/safety decision. */
+export interface VoskPhraseDiagnostics {
+  /** Count of real AudioWorklet chunks actually forwarded to `acceptWaveformFloat` this phrase — zero means the capture pipeline never fed the recognizer any audio at all (a mic/pipeline issue, not acoustic/grammar). */
+  audioChunksReceived: number;
+  /** How many "partialresult" events the recognizer emitted this phrase. Zero, with audioChunksReceived > 0, is real evidence the decoder never produced ANY hypothesis for what was spoken. */
+  partialResultCount: number;
+  /** The last (possibly empty) partial text seen before the final result — null if no partial ever arrived. */
+  lastPartialText: string | null;
+  /** "endpointer" — Vosk's own internal endpoint detector produced the final spontaneously, before End Phrase was clicked. "forced" — this provider's own `retrieveFinalResult()` call (on End Phrase) produced it. "never" — no final result arrived at all this phrase (should not happen in normal operation; recorded defensively). */
+  finalizedBy: "endpointer" | "forced" | "never";
+}
+
 export interface VoskProviderOptions extends SpeechProviderOptions {
   /** Overrides the default same-origin model URL. Defaults to `resolveDefaultVoskModelUrl(process.env)`. */
   voskModelUrl?: string;
   /** Overrides the default 7-phrase-plus-`[unk]` grammar constraint. Defaults to `VOSK_PROTOTYPE_GRAMMAR_PHRASES`. Exposed for tests exercising an unconstrained/different-grammar comparison — production Lab usage always uses the default. */
   grammarPhrases?: readonly string[];
+  /** Real per-phrase diagnostics — see VoskPhraseDiagnostics's own doc comment. Fires once, from inside the "result" handler, whenever a final result (spontaneous or forced) is actually produced. Optional; diagnostic-only. */
+  onPhraseDiagnostics?: (diagnostics: VoskPhraseDiagnostics) => void;
 }
 
 /**
@@ -218,6 +250,51 @@ export interface VoskProviderOptions extends SpeechProviderOptions {
  * result (`resultReceivedThisPhrase`), exactly like whisperCppProvider.ts's
  * own VAD-may-fire-early handling — never silently dropped, never double-
  * counted as two results for one spoken phrase.
+ *
+ * ============================================================
+ * PHRASE DIAGNOSTICS, 2026-08-21 (follow-up) — real-mic "Dealer has a
+ * five" investigation
+ * ============================================================
+ * A real Sidney mic session found "Dealer has a king" recognized
+ * correctly but "Dealer has a five" produced NO transcript at all (not a
+ * misrecognition — genuinely empty). Investigated directly:
+ *   - Both "five" and "king" ARE present in the committed model's compiled
+ *     grammar FST (verified by scanning `public/vosk-lab/`'s extracted
+ *     `graph/Gr.fst` for length-prefixed OpenFST symbol-table entries —
+ *     each word appears twice, once per symbol table, identically) — a
+ *     missing-vocabulary-word explanation is RULED OUT, not assumed.
+ *   - Neither word occupies a different grammatical slot ("has a
+ *     <rank>" — same position in both phrases) — sentence-position is
+ *     RULED OUT too.
+ *   - No prior EyeOnPit ASR round (Chrome, Sherpa, Whisper — see
+ *     docs/EYEONPIT_NATIVE_VOICE_SPEC.md §1.3/§1.4) has ever flagged
+ *     "five" as a problem word; every documented confusion is about
+ *     "dealer" itself or connector words. This makes a genuinely small-
+ *     model/one-session acoustic or endpointing issue (not a
+ *     structurally hard word) the more likely explanation.
+ *   - This environment has no live microphone and the Lab never retains
+ *     raw audio (by design — see the OFFLINE/privacy requirements), so
+ *     the exact original utterance cannot be replayed to confirm which of
+ *     "the recognizer never even produced a partial hypothesis" vs "the
+ *     endpointer cut the utterance off before 'five' was captured" is the
+ *     real cause. Per explicit instruction, NO fuzzy-matching/guessing was
+ *     added to paper over this — a missed phrase is an acceptable outcome
+ *     (REPEAT/no-event) under this app's own hard safety gate.
+ *
+ * What WAS added: `onPhraseDiagnostics`, real per-phrase instrumentation
+ * (audio chunks actually forwarded to the recognizer, partial-result count
+ * and the last partial text seen, and whether the eventual final result
+ * came from Vosk's own spontaneous endpointer or this provider's forced
+ * `retrieveFinalResult()`) — reported from inside the "result" handler
+ * itself (not synchronously after calling `retrieveFinalResult()`, which
+ * only POSTS a message to the worker; the actual result arrives later,
+ * asynchronously). This turns the NEXT occurrence of this failure from "no
+ * transcript, no further evidence" into a real, inspectable trace: zero
+ * partials + audio chunks received points to a genuine acoustic/decoding
+ * miss; a non-empty `lastPartialText` with `finalizedBy: "endpointer"`
+ * would instead point to premature endpoint cutoff. Exposed in the Lab's
+ * Result panel and JSON export, never used to change dispatch/safety
+ * behavior.
  */
 export function createVoskProvider(options: VoskProviderOptions): SpeechProvider {
   const modelUrl = options.voskModelUrl ?? DEFAULT_VOSK_MODEL_URL;
@@ -232,10 +309,25 @@ export function createVoskProvider(options: VoskProviderOptions): SpeechProvider
   let running = false;
   let suppressed = false;
   let resultReceivedThisPhrase = false;
+  // PHRASE DIAGNOSTICS state — see this module's own doc comment. Reset at
+  // the top of every start(), reported exactly once (from the "result"
+  // handler) per phrase.
+  let audioChunksReceived = 0;
+  let partialResultCount = 0;
+  let lastPartialText: string | null = null;
+  let finalizedBy: VoskPhraseDiagnostics["finalizedBy"] = "never";
+  let forcingFinal = false;
+  let diagnosticsReportedThisPhrase = false;
 
   function emitResult(text: string, isFinal: boolean, cb?: (r: SpeechProviderResult) => void) {
     if (!text) return;
     cb?.({ transcript: text, confidence: null, isFinal, alternatives: [{ transcript: text, confidence: null }] });
+  }
+
+  function reportDiagnosticsOnce() {
+    if (diagnosticsReportedThisPhrase) return;
+    diagnosticsReportedThisPhrase = true;
+    options.onPhraseDiagnostics?.({ audioChunksReceived, partialResultCount, lastPartialText, finalizedBy });
   }
 
   function teardownAudio() {
@@ -256,17 +348,27 @@ export function createVoskProvider(options: VoskProviderOptions): SpeechProvider
     if (running) return;
     running = true;
     resultReceivedThisPhrase = false;
+    audioChunksReceived = 0;
+    partialResultCount = 0;
+    lastPartialText = null;
+    finalizedBy = "never";
+    forcingFinal = false;
+    diagnosticsReportedThisPhrase = false;
     try {
       const model = await loadModel(modelUrl);
       recognizer = new model.KaldiRecognizer(VOSK_MODEL_SAMPLE_RATE, buildVoskGrammarString(grammarPhrases));
       recognizer.setWords(true);
       recognizer.on("result", (message) => {
         if (suppressed || message.event !== "result") return;
+        if (!resultReceivedThisPhrase) finalizedBy = forcingFinal ? "forced" : "endpointer";
         resultReceivedThisPhrase = true;
         emitResult(message.result.text, true, options.onFinalResult);
+        reportDiagnosticsOnce();
       });
       recognizer.on("partialresult", (message) => {
         if (suppressed || message.event !== "partialresult") return;
+        partialResultCount++;
+        lastPartialText = message.result.partial;
         emitResult(message.result.partial, false, options.onInterimResult);
       });
       recognizer.on("error", (message) => {
@@ -290,6 +392,7 @@ export function createVoskProvider(options: VoskProviderOptions): SpeechProvider
           spokeThisSession = true;
           options.onSpeechStart?.();
         }
+        audioChunksReceived++;
         recognizer.acceptWaveformFloat(event.data, audioContext!.sampleRate);
       };
       source.connect(workletNode);
@@ -314,7 +417,19 @@ export function createVoskProvider(options: VoskProviderOptions): SpeechProvider
       // legitimately produces an empty-text "result", which emitResult
       // above never forwards to onFinalResult (matches EMPTY_TRANSCRIPT
       // handling everywhere else in this app — see classifyVoiceTranscript).
+      // `retrieveFinalResult()` only POSTS a message to the worker — the
+      // actual "result" event (which reports diagnostics, see
+      // reportDiagnosticsOnce) arrives later, asynchronously; `forcingFinal`
+      // is read there, not here, so it must be set before the recognizer is
+      // torn down but doesn't need to be awaited.
+      forcingFinal = true;
       recognizer.retrieveFinalResult();
+    } else if (!recognizer) {
+      // Defensive — should not happen in normal operation (stop() only
+      // reaches here while `running`, which implies start() succeeded and
+      // constructed a recognizer), but never leaves a caller's
+      // onPhraseDiagnostics permanently unfired if it somehow does.
+      reportDiagnosticsOnce();
     }
     recognizer?.remove();
     recognizer = null;

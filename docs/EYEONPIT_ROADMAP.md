@@ -12,6 +12,34 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### Whisper Field Result — Real Safety Failure, Documented Only, No Further Patching (2026-08-21)
+
+**Problem:** a new real-mic Whisper session (independent of the Native Voice v0.2 round below) found a genuine safety-critical misrecognition: expected `"Player one has a five and a three"` transcribed as `"As an Ace."`, which EyeOnPit's own real, unmodified classifier correctly-per-its-input but dangerously resolved to `ACTIVE:A` with `wouldProduceCardEvent: true` — a false CardEvent risk, not a mere transcription miss. Occurred three times in the same session. Other issues in the same round: duplicate records, repeated partial `"dealer."` results, no-speech failures, and an iframe End Phrase timeout.
+
+**Explicitly not investigated or patched** — per direct instruction, Whisper stays frozen as research/reference only; this entry is documentation, not a fix. Recorded here as concrete, real evidence supporting the Native Voice (Vosk, grammar-constrained) direction below: an unconstrained general-purpose transcriber can turn an ordinary card narration into a plausible-looking but wrong short phrase with no vocabulary guardrail to catch it, exactly the failure class a closed, grammar-constrained decoder (§5 of `docs/EYEONPIT_NATIVE_VOICE_SPEC.md`) is designed to make structurally harder to reach.
+
+**Status:** documentation only. No Whisper source file touched.
+
+### Native Voice v0.2 — Expanded English Grammar + Dealer-Has-a-Five Investigation (2026-08-21)
+
+**Problem:** Prototype 0.1's real-mic results came back (6/7 valid phrases correct, 0 false CardEvents; 5/5 noise phrases safely blocked, 0 false CardEvents) — a successful proof of concept, with one real miss: `"Dealer has a five"` produced no transcript at all (not a misrecognition) while `"Dealer has a king"` succeeded.
+
+**Dealer-has-a-five investigation:** confirmed directly (not assumed) that both "five" and "king" exist identically in the committed model's compiled grammar FST (a length-prefixed OpenFST symbol-table scan of `public/vosk-lab/`'s `graph/Gr.fst`), and that both words occupy the identical grammatical slot — ruling out a missing-vocabulary or sentence-position explanation. No prior EyeOnPit ASR round (Chrome/Sherpa/Whisper) has ever flagged "five" as a problem word, making a one-session acoustic/endpointing issue more likely than a structurally hard word — but this environment has no live microphone and the Lab never retains raw audio, so the exact cause (no hypothesis at all vs. a premature endpoint cutoff) can't be confirmed from here. Per explicit instruction, no fuzzy-matching was added — a missed phrase is an acceptable outcome under this app's own safety gate. Instead, real per-phrase diagnostics (`onPhraseDiagnostics` in `voskProvider.ts`: audio chunks received, partial-result count/text, whether the final came from Vosk's own endpointer or this provider's forced finalization) were added so the next occurrence produces real evidence instead of "no transcript, no further information."
+
+**English v0.2 grammar:** a "carefully controlled" 41-phrase expanded grammar (`NATIVE_VOICE_EXPANDED_GROUPS` in `nativeVoicePrototype.ts`) built ONLY from vocabulary/command shapes already real in production — full 13-rank coverage on the dealer target, representative seat×rank player coverage, and 19 control phrases (count control, workflow, target-selection, 1.10 split/double, read-only queries, table-change). Hit/Stand/Surrender/Insurance deliberately excluded — already inert no-ops in production, adding them would only add acoustic-collision surface for zero functional gain. Every phrase individually verified against the real, unmodified classifier before being committed (not assumed from reading parser source). `UniversalCommand` mapping needed zero changes — the generic canonical-step/lifecycle/query/table-change/split-double mapping built in Prototype 0.1 already covered every new phrase's source category.
+
+**Adversarial safety testing:** 18 new tests targeting dealer-vs-unrelated-word, player-vs-play, seat-number confusion, rank near-misses (fine/tin vs. five/ten), and unrelated sentences containing player/dealer/number words — zero false CardEvents found. A real, honest correctness check (`isFalseCardEvent` in `nativeVoiceCorpus.ts`) now compares what a displayed phrase's own known-correct command is against whatever the classifier actually produced from a provider's transcript, catching a valid-looking-but-wrong recognition, not just any unexpected CardEvent.
+
+**Lab UX:** Quick Smoke Test (7 phrases) preserved; new Native Voice Expanded English Test (41 phrases, grouped dealer/card, player/card, controls); a permanent, always-visible "FALSE CARDEVENTS: N" summary. Sidney's real Prototype 0.1 session results (both the 7-phrase valid-command run and the 5-phrase noise-rejection run) imported as permanent corpus fixtures (`NATIVE_VOICE_REAL_SESSION_VALID_COMMANDS`/`NATIVE_VOICE_REAL_SESSION_NOISE_REJECTION`).
+
+**Mic Check:** a new, permanent, provider-independent Lab tool (`/lab/mic-check`) testing the raw browser microphone directly — permission status, device/track/AudioContext state, live level meter, a local-only ~3-second playback test. Zero dependency on any SpeechProvider; no upload, no export, no persistence beyond the session.
+
+**Tests:** 61 new this round (adversarial, expanded-grammar, corpus, diagnostics, Mic Check). Full suite green, `tsc --noEmit` clean, `eslint` clean. `counting-engine/`, Browser Web Speech, Sherpa, Whisper, and 1.10 Split/Double all confirmed untouched.
+
+**Status:** committed, pushed, deployed. See this round's own final report for the full gate results, commit hash, and Sidney's next small real-mic test.
+
+
+
 ### Whisper Lab — Serving Architecture Found (Static Hosting Outside Next.js); Transcription Blocked by a Separate, Real Constraint (2026-08-21, follow-up)
 
 **Problem:** the prior round proved Whisper's pthread bootstrap works standalone but fails specifically when served through EyeOnPit's own Next.js stack (dev or production). Per explicit instruction, evaluated serving the runtime outside Next.js entirely rather than continuing to test around it.

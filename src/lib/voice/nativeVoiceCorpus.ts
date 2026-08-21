@@ -32,7 +32,12 @@
  * via `buildNativeVoiceCorpusEntry` always populates both fields for real,
  * from `navigator.userAgent` — see that function's own doc comment.
  */
-import { evaluateNativeVoiceTranscript, NATIVE_VOICE_NOISE_PHRASES, NATIVE_VOICE_PROTOTYPE_PHRASES } from "./nativeVoicePrototype";
+import {
+  evaluateNativeVoiceTranscript,
+  NATIVE_VOICE_EXPANDED_PHRASES,
+  NATIVE_VOICE_NOISE_PHRASES,
+  NATIVE_VOICE_PROTOTYPE_PHRASES,
+} from "./nativeVoicePrototype";
 import type { UniversalCommand } from "./universalCommand";
 import { VOICE_BENCHMARK_CORPUS } from "./voiceBenchmarkCorpus";
 
@@ -97,9 +102,7 @@ export function buildNativeVoiceCorpusEntry(input: {
   return {
     id: `native-voice:${input.recordedAt}:${input.providerId}`,
     expectedPhrase: input.expectedPhrase,
-    expectedUniversalCommand: NATIVE_VOICE_PROTOTYPE_PHRASES.includes(input.expectedPhrase)
-      ? EXPECTED_COMMANDS_BY_PHRASE[input.expectedPhrase]
-      : { rejects: true, reason: "Not one of the 7 prototype phrases." },
+    expectedUniversalCommand: EXPECTED_COMMANDS_BY_PHRASE[input.expectedPhrase] ?? { rejects: true, reason: "Not a known Native Voice grammar phrase." },
     spokenLanguage: "en-US",
     speakerAnonymousId: input.speakerAnonymousId,
     device: input.device,
@@ -123,7 +126,18 @@ export function buildNativeVoiceCorpusEntry(input: {
   };
 }
 
-/** Expected UniversalCommand per prototype phrase — see universalCommand.ts's own KNOWN DEVIATION doc comment for phrases 5/7. */
+/**
+ * Expected UniversalCommand per KNOWN Native Voice grammar phrase — the 7
+ * Prototype 0.1 phrases (hand-specified — see universalCommand.ts's own
+ * KNOWN DEVIATION doc comment for phrases 5/7) plus every v0.2 expanded
+ * phrase (derived by evaluating each once against the real classifier —
+ * safe to treat as ground truth here since every one of those phrases is
+ * independently verified correct by nativeVoiceExpandedGrammar.test.ts;
+ * this is a LOOKUP TABLE keyed by the DISPLAYED phrase, not a live
+ * re-evaluation of whatever a provider transcribed — see
+ * `isFalseCardEvent` below for why that distinction is exactly what makes
+ * this a real misrecognition check, not a tautology).
+ */
 const EXPECTED_COMMANDS_BY_PHRASE: Record<string, UniversalCommand[]> = {
   "Dealer has a five.": [{ op: "DEAL_CARD", target: { kind: "dealer" }, rank: "5" }],
   "Dealer has a king.": [{ op: "DEAL_CARD", target: { kind: "dealer" }, rank: "10" }],
@@ -132,7 +146,28 @@ const EXPECTED_COMMANDS_BY_PHRASE: Record<string, UniversalCommand[]> = {
   "Player three hits.": [{ op: "SELECT_TARGET", target: { kind: "seat", seat: 3 } }],
   "Start count.": [{ op: "COUNT_CONTROL", action: "START" }],
   "End count.": [{ op: "COUNT_CONTROL", action: "PAUSE" }],
+  ...Object.fromEntries(NATIVE_VOICE_EXPANDED_PHRASES.map((phrase) => [phrase, evaluateNativeVoiceTranscript(phrase).commands])),
 };
+
+/**
+ * THE real false-CardEvent check for a Lab session: compares what the
+ * DISPLAYED/expected phrase's own known-correct command is against what
+ * the ACTUAL classifier output was for whatever the provider transcribed
+ * (which may be a genuine misrecognition — e.g. Vosk hearing "nine" when
+ * "five" was said, itself a perfectly valid, correctly-parsed rank from
+ * the classifier's own point of view). A false CardEvent is specifically:
+ * the actual result WOULD write a CardEvent, AND it doesn't exactly match
+ * what the displayed phrase should have produced. An expected/unknown
+ * phrase with no known mapping (e.g. a noise phrase) is false the instant
+ * ANY CardEvent would be produced — nothing should ever be expected there.
+ */
+export function isFalseCardEvent(expectedPhrase: string, actualCommands: UniversalCommand[]): boolean {
+  const wouldWrite = actualCommands.some((c) => c.op === "DEAL_CARD");
+  if (!wouldWrite) return false;
+  const expected = EXPECTED_COMMANDS_BY_PHRASE[expectedPhrase];
+  if (!expected) return true; // no known-safe mapping for this phrase (e.g. a noise phrase) — any CardEvent here is false by definition
+  return JSON.stringify(actualCommands) !== JSON.stringify(expected);
+}
 
 /**
  * Real confusion cases already on record in `voiceBenchmarkCorpus.ts`,
@@ -169,6 +204,102 @@ export const NATIVE_VOICE_REFERENCE_CASES: VoiceCorpusEntry[] = VOICE_BENCHMARK_
     ],
     capturedFrom: item.capturedFrom === "real-mic" ? "real-mic-owner-session" : "documented-grammar",
     recordedAt: "2026-08-20",
+  };
+});
+
+/**
+ * REAL Prototype 0.1 real-mic session results (Vosk, first real-microphone
+ * round) — Sidney's own summary, imported here as permanent fixtures per
+ * explicit instruction: "Import the two real prototype exports into the
+ * permanent Native Voice corpus... Do not require Sidney to repeat large
+ * tests." No raw JSON export file was available to this round (only the
+ * chat-summarized results), so per-phrase timing/confidence are honestly
+ * left `null` rather than invented — `device`/`browserPlatform` are
+ * likewise omitted (see this module's own DEVIATION doc comment). Every
+ * transcript/outcome pair below WAS independently re-verified against the
+ * real, unmodified classifier before being recorded (never assumed from
+ * the summary alone) — see this round's own report for the verification
+ * trail.
+ *
+ * VALID COMMAND SESSION: 6 of 7 correctly recognized, 0 false CardEvents.
+ * The one miss, "Dealer has a five" -> no transcript at all, is recorded
+ * honestly as a miss (REJECT/EMPTY_TRANSCRIPT), not silently dropped from
+ * the corpus — see voskProvider.ts's own PHRASE DIAGNOSTICS doc comment
+ * for the investigation this same miss triggered.
+ */
+export const NATIVE_VOICE_REAL_SESSION_VALID_COMMANDS: VoiceCorpusEntry[] = [
+  { phrase: "Dealer has a five.", transcript: "" }, // the real miss — no transcript produced
+  { phrase: "Dealer has a king.", transcript: "dealer has a king" },
+  { phrase: "Player one has a five.", transcript: "player one has a five" },
+  { phrase: "Player three has a king.", transcript: "player three has a king" },
+  { phrase: "Player three hits.", transcript: "player three hits" },
+  { phrase: "Start count.", transcript: "start count" },
+  { phrase: "End count.", transcript: "end count" },
+].map(({ phrase, transcript }, i) => {
+  const result = evaluateNativeVoiceTranscript(transcript);
+  return {
+    id: `real-session:2026-08-21:valid-commands:${i + 1}`,
+    expectedPhrase: phrase,
+    expectedUniversalCommand: EXPECTED_COMMANDS_BY_PHRASE[phrase] ?? { rejects: true, reason: "Not a known Native Voice grammar phrase." },
+    spokenLanguage: "en-US",
+    speakerAnonymousId: "owner-session-native-voice-v0.1",
+    providerResults: [
+      {
+        providerId: "vosk",
+        transcript: transcript || null,
+        confidence: null,
+        timingMs: { firstInterim: null, final: null },
+        parserOutcome: result.verdict,
+        cardEventOutcome: result.wouldProduceCardEvent ? "would-write" : "no-event",
+        correctness: transcript === "" ? "incorrect" : "correct",
+        rejectionReason: result.reason,
+        knownConfusionTags: result.appliedRuleIds,
+      },
+    ],
+    capturedFrom: "real-mic-owner-session",
+    recordedAt: "2026-08-21",
+  };
+});
+
+/**
+ * REAL Prototype 0.1 noise-rejection session — 5 of 5 safely blocked, 0
+ * false CardEvents. Two exact transcripts were reported ("Spotify is
+ * dead." heard as "[unk] dealer"; "Play Drake music." heard as "player
+ * [unk]"); the remaining three were summarized as "other unrelated
+ * phrases -> [unk] -> REJECT" — recorded honestly as the bare "[unk]"
+ * transcript actually reported, mapped to the remaining three noise
+ * phrases in the existing corpus's own order, rather than inventing
+ * distinct transcript text for each that was never actually reported.
+ */
+export const NATIVE_VOICE_REAL_SESSION_NOISE_REJECTION: VoiceCorpusEntry[] = [
+  { phrase: "Spotify is dead.", transcript: "[unk] dealer" },
+  { phrase: "Play Drake music.", transcript: "player [unk]" },
+  { phrase: "It's 3:55.", transcript: "[unk]" },
+  { phrase: "What time does the buffet close.", transcript: "[unk]" },
+  { phrase: "Can you send security to table twelve.", transcript: "[unk]" },
+].map(({ phrase, transcript }, i) => {
+  const result = evaluateNativeVoiceTranscript(transcript);
+  return {
+    id: `real-session:2026-08-21:noise-rejection:${i + 1}`,
+    expectedPhrase: phrase,
+    expectedUniversalCommand: { rejects: true, reason: "Noise/unrelated-speech phrase — must never produce a CardEvent." },
+    spokenLanguage: "en-US",
+    speakerAnonymousId: "owner-session-native-voice-v0.1",
+    providerResults: [
+      {
+        providerId: "vosk",
+        transcript,
+        confidence: null,
+        timingMs: { firstInterim: null, final: null },
+        parserOutcome: result.verdict,
+        cardEventOutcome: result.wouldProduceCardEvent ? "would-write" : "no-event",
+        correctness: "correct", // safely blocked, matching the real reported outcome
+        rejectionReason: result.reason,
+        knownConfusionTags: result.appliedRuleIds,
+      },
+    ],
+    capturedFrom: "real-mic-owner-session",
+    recordedAt: "2026-08-21",
   };
 });
 

@@ -91,9 +91,15 @@ export default function LabHomePage() {
     },
     {
       href: "/lab/native-voice-test",
-      label: "Native Voice Prototype 0.1",
+      label: "Native Voice Prototype",
       icon: Mic,
-      description: "Prototype 0.1 — Vosk, grammar-constrained, offline. 7 English phrases -> UniversalCommand. Never writes a CardEvent.",
+      description: "Vosk, grammar-constrained, offline. Quick (7 phrases) and Expanded English tests -> UniversalCommand. Never writes a CardEvent.",
+    },
+    {
+      href: "/lab/mic-check",
+      label: "🎤 Mic Check",
+      icon: Mic,
+      description: "Provider-independent raw microphone diagnostic — permission, live level meter, local playback test. No upload, no persistence.",
     },
   ];
 

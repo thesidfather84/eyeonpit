@@ -200,3 +200,164 @@ describe("createVoskProvider — model load failure, never permanently wedged (m
     expect(createModel).toHaveBeenCalledTimes(2);
   });
 });
+
+// Real onPhraseDiagnostics verification — see voskProvider.ts's own PHRASE
+// DIAGNOSTICS doc comment (added to investigate the real "Dealer has a
+// five" mic miss). Requires a fuller fake Web Audio harness (getUserMedia,
+// AudioContext, AudioWorkletNode all lack any jsdom implementation) so
+// start() can proceed all the way through to a real, controllable
+// recognizer instance instead of short-circuiting at loadModel() like the
+// tests above.
+describe("createVoskProvider — onPhraseDiagnostics (real Dealer-has-a-five investigation instrumentation)", () => {
+  class FakeRecognizer {
+    static instances: FakeRecognizer[] = [];
+    listeners: Record<string, (msg: unknown) => void> = {};
+    removed = false;
+    constructor(
+      public sampleRate: number,
+      public grammar?: string
+    ) {
+      FakeRecognizer.instances.push(this);
+    }
+    setWords() {}
+    on(event: string, cb: (msg: unknown) => void) {
+      this.listeners[event] = cb;
+    }
+    acceptWaveformFloat() {}
+    retrieveFinalResult() {
+      // Real vosk-browser semantics: this only POSTS a message; the reply
+      // arrives asynchronously — simulated here via a microtask, matching
+      // this module's own doc comment on why diagnostics are reported from
+      // inside the "result" handler, never synchronously after this call.
+      queueMicrotask(() => this.listeners["result"]?.({ event: "result", recognizerId: "fake", result: { text: "", result: [] } }));
+    }
+    remove() {
+      this.removed = true;
+    }
+  }
+
+  class FakeAudioWorkletNode {
+    static instances: FakeAudioWorkletNode[] = [];
+    port = { onmessage: null as ((e: MessageEvent) => void) | null, close: vi.fn() };
+    disconnect = vi.fn();
+    constructor() {
+      FakeAudioWorkletNode.instances.push(this);
+    }
+  }
+
+  class FakeAudioContext {
+    sampleRate = 48000;
+    audioWorklet = { addModule: vi.fn().mockResolvedValue(undefined) };
+    createMediaStreamSource() {
+      return { connect: vi.fn() };
+    }
+    close() {
+      return Promise.resolve();
+    }
+  }
+
+  beforeEach(() => {
+    FakeRecognizer.instances = [];
+    FakeAudioWorkletNode.instances = [];
+    vi.resetModules();
+    vi.stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    if (!URL.createObjectURL) URL.createObjectURL = vi.fn();
+    if (!URL.revokeObjectURL) URL.revokeObjectURL = vi.fn();
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fake");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }) },
+    });
+    vi.doMock("vosk-browser", () => ({ createModel: vi.fn().mockResolvedValue({ KaldiRecognizer: FakeRecognizer }) }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.doUnmock("vosk-browser");
+    vi.resetModules();
+    vi.restoreAllMocks();
+  });
+
+  it("zero partials + real audio chunks received is real evidence of a genuine decode miss (the 'Dealer has a five' scenario) — never silently unreported", async () => {
+    const { createVoskProvider: createProvider } = await import("./voskProvider");
+    const onPhraseDiagnostics = vi.fn();
+    const onFinalResult = vi.fn();
+    const provider = createProvider({ onFinalResult, onPhraseDiagnostics });
+
+    await provider.start();
+    const recognizer = FakeRecognizer.instances[0];
+    const worklet = FakeAudioWorkletNode.instances[0];
+    expect(recognizer).toBeDefined();
+    expect(worklet).toBeDefined();
+
+    // Real audio chunks reach the recognizer...
+    worklet.port.onmessage?.({ data: new Float32Array(128) } as MessageEvent);
+    worklet.port.onmessage?.({ data: new Float32Array(128) } as MessageEvent);
+    // ...but the decoder never produces even one partial hypothesis, and
+    // the eventual result is empty text — exactly what a genuine acoustic
+    // miss looks like from this provider's perspective.
+    recognizer.listeners["result"]?.({ event: "result", recognizerId: "fake", result: { text: "", result: [] } });
+
+    expect(onPhraseDiagnostics).toHaveBeenCalledTimes(1);
+    expect(onPhraseDiagnostics).toHaveBeenCalledWith({
+      audioChunksReceived: 2,
+      partialResultCount: 0,
+      lastPartialText: null,
+      finalizedBy: "endpointer",
+    });
+    // Empty text is never forwarded as a real final result — matches
+    // EMPTY_TRANSCRIPT handling everywhere else in this app.
+    expect(onFinalResult).not.toHaveBeenCalled();
+  });
+
+  it("a non-empty partial followed by an endpointer-produced final distinguishes 'premature cutoff' from 'no hypothesis at all'", async () => {
+    const { createVoskProvider: createProvider } = await import("./voskProvider");
+    const onPhraseDiagnostics = vi.fn();
+    const provider = createProvider({ onFinalResult: vi.fn(), onPhraseDiagnostics });
+
+    await provider.start();
+    const recognizer = FakeRecognizer.instances[0];
+    recognizer.listeners["partialresult"]?.({ event: "partialresult", recognizerId: "fake", result: { partial: "dealer has a" } });
+    recognizer.listeners["result"]?.({ event: "result", recognizerId: "fake", result: { text: "", result: [] } });
+
+    expect(onPhraseDiagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({ partialResultCount: 1, lastPartialText: "dealer has a", finalizedBy: "endpointer" })
+    );
+  });
+
+  it("End Phrase with no prior result forces finalization — finalizedBy: 'forced', reported exactly once", async () => {
+    const { createVoskProvider: createProvider } = await import("./voskProvider");
+    const onPhraseDiagnostics = vi.fn();
+    const provider = createProvider({ onFinalResult: vi.fn(), onPhraseDiagnostics });
+
+    await provider.start();
+    provider.stop();
+    // retrieveFinalResult()'s reply is asynchronous (see FakeRecognizer's
+    // own doc comment) — flush microtasks before asserting.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onPhraseDiagnostics).toHaveBeenCalledTimes(1);
+    expect(onPhraseDiagnostics).toHaveBeenCalledWith(expect.objectContaining({ finalizedBy: "forced" }));
+  });
+
+  it("a real (non-empty) final result IS forwarded to onFinalResult exactly once — one utterance, one command, never duplicated", async () => {
+    const { createVoskProvider: createProvider } = await import("./voskProvider");
+    const onFinalResult = vi.fn();
+    const provider = createProvider({ onFinalResult, onPhraseDiagnostics: vi.fn() });
+
+    await provider.start();
+    const recognizer = FakeRecognizer.instances[0];
+    recognizer.listeners["result"]?.({ event: "result", recognizerId: "fake", result: { text: "dealer has a five", result: [] } });
+    // A stray second "result" event (should not happen in real operation,
+    // but defensively verified) must never produce a second onFinalResult.
+    provider.stop();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onFinalResult).toHaveBeenCalledTimes(1);
+    expect(onFinalResult).toHaveBeenCalledWith(expect.objectContaining({ transcript: "dealer has a five", isFinal: true }));
+  });
+});

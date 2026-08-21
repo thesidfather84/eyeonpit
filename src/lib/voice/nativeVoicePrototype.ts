@@ -42,6 +42,100 @@ export const NATIVE_VOICE_NOISE_PHRASES: readonly string[] = [
   "Can you send security to table twelve.",
 ] as const;
 
+/**
+ * NATIVE VOICE v0.2 — "carefully controlled English Native Voice" built
+ * ONLY from vocabulary/command shapes already real and shipped in
+ * production (parseVoiceCommand.ts's RANK_WORDS/SEAT_PREFIX_WORDS,
+ * lifecyclePhrases.ts, parseReadOnlyQuery.ts, parseTableChangeCommand.ts,
+ * parseSplitDoubleCommand.ts, parseSetActiveTargetIntent.ts) — no invented
+ * product behavior. Deliberately does NOT include Hit/Stand/Surrender/
+ * Insurance: those already exist only as INERT no-op filler in production
+ * (see parseNarration.ts's INERT_ACTION_WORDS) and adding them here would
+ * add acoustic-collision surface for zero functional gain, per explicit
+ * instruction not to represent them as new behavior.
+ *
+ * Grouped exactly as requested — dealer/card, player/card, controls — each
+ * phrase verified (see nativeVoicePrototype.test.ts) to actually ACCEPT
+ * through the real, unmodified classifier with the expected UniversalCommand,
+ * not merely assumed from reading the parser source.
+ */
+export interface NativeVoicePhraseGroup {
+  id: "dealer-card" | "player-card" | "controls";
+  label: string;
+  phrases: readonly string[];
+}
+
+export const NATIVE_VOICE_EXPANDED_GROUPS: readonly NativeVoicePhraseGroup[] = [
+  {
+    id: "dealer-card",
+    label: "Dealer / Card",
+    // Every one of the 13 canonical ranks (RANK_WORDS' own distinct target
+    // values: A,2-10 with J/Q/K collapsing to 10) on the dealer target —
+    // proves full rank-word coverage on a single, unambiguous target.
+    phrases: [
+      "Dealer has an ace.",
+      "Dealer has a two.",
+      "Dealer has a three.",
+      "Dealer has a four.",
+      "Dealer has a five.",
+      "Dealer has a six.",
+      "Dealer has a seven.",
+      "Dealer has an eight.",
+      "Dealer has a nine.",
+      "Dealer has a ten.",
+      "Dealer has a jack.",
+      "Dealer has a queen.",
+      "Dealer has a king.",
+    ],
+  },
+  {
+    id: "player-card",
+    label: "Player / Card",
+    // Representative seats (1, 3, 5) x representative ranks — proves the
+    // same grammar generalizes across targets without a full 7-seat x
+    // 13-rank combinatorial explosion (kept to a "practical size" per
+    // instruction).
+    phrases: [
+      "Player one has a five.",
+      "Player one has a king.",
+      "Player one has an ace.",
+      "Player three has a king.",
+      "Player three has a nine.",
+      "Player three has a seven.",
+      "Player five has a queen.",
+      "Player five has a ten.",
+    ],
+  },
+  {
+    id: "controls",
+    label: "Controls",
+    phrases: [
+      "Start count.",
+      "End count.",
+      "Pause investigation.",
+      "Resume investigation.",
+      "Next hand.",
+      "Next.",
+      "Undo.",
+      "Current player is player one.",
+      "Watching dealer.",
+      "Spot three split.",
+      "Spot three double.",
+      "Status.",
+      "Running count.",
+      "True count.",
+      "Aces.",
+      "Decks remaining.",
+      "Player sat down at spot one.",
+      "Seat two left the table.",
+      "Player three hits.",
+    ],
+  },
+] as const;
+
+/** Flattened, in group order — the full v0.2 phrase catalog. */
+export const NATIVE_VOICE_EXPANDED_PHRASES: readonly string[] = NATIVE_VOICE_EXPANDED_GROUPS.flatMap((g) => g.phrases);
+
 export interface NativeVoiceResult {
   transcript: string;
   verdict: UniversalCommandVerdict["verdict"];

@@ -1,42 +1,64 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { FlaskConical, Mic, Square, SkipForward, RotateCcw, Download } from "lucide-react";
-import { createVoskProvider, VOSK_PROTOTYPE_GRAMMAR_PHRASES, VOSK_PROVENANCE } from "@/lib/voice/voskProvider";
+import {
+  createVoskProvider,
+  VOSK_EXPANDED_GRAMMAR_PHRASES,
+  VOSK_PROTOTYPE_GRAMMAR_PHRASES,
+  VOSK_PROVENANCE,
+  type VoskPhraseDiagnostics,
+} from "@/lib/voice/voskProvider";
 import { createBrowserWebSpeechProvider } from "@/lib/voice/browserWebSpeechProvider";
-import { evaluateNativeVoiceTranscript, NATIVE_VOICE_NOISE_PHRASES, NATIVE_VOICE_PROTOTYPE_PHRASES, type NativeVoiceResult } from "@/lib/voice/nativeVoicePrototype";
+import {
+  evaluateNativeVoiceTranscript,
+  NATIVE_VOICE_EXPANDED_GROUPS,
+  NATIVE_VOICE_NOISE_PHRASES,
+  NATIVE_VOICE_PROTOTYPE_PHRASES,
+  type NativeVoiceResult,
+} from "@/lib/voice/nativeVoicePrototype";
+import { isFalseCardEvent } from "@/lib/voice/nativeVoiceCorpus";
 import type { SpeechProvider, SpeechProviderResult } from "@/lib/voice/speechProvider";
 
 /**
- * NATIVE VOICE PROTOTYPE 0.1 — LAB ONLY, CLEARLY LABELED. See
- * docs/EYEONPIT_NATIVE_VOICE_SPEC.md and the milestone brief this page
- * implements. This is NOT production voice, NOT multilingual, NOT a
- * general speech recognizer — it exercises exactly the 7 representative
- * phrases (plus the existing noise-rejection set) against Vosk, the first
- * grammar-constrained offline acoustic-model candidate (see
- * voskProvider.ts), through EyeOnPit's real, unmodified
- * `classifyVoiceTranscript` -> `mapClassificationToUniversalCommand`
- * pipeline (see nativeVoicePrototype.ts) — never a parallel/shortcut path.
+ * NATIVE VOICE PROTOTYPE — LAB ONLY, CLEARLY LABELED. See
+ * docs/EYEONPIT_NATIVE_VOICE_SPEC.md and the milestone briefs this page
+ * implements (Prototype 0.1, then v0.2's "carefully controlled English
+ * grammar built only from existing production vocabulary"). NOT production
+ * voice, NOT multilingual, NOT a general speech recognizer.
  *
  * SAFETY: this page NEVER writes a CardEvent. It imports nothing from the
  * CardEvent ledger, the counting engine, or InvestigationContext — every
  * result shown here is read-only display, exactly like the Sherpa/Whisper
  * Lab pages. `wouldProduceCardEvent` tells the operator what WOULD happen
- * if this were wired into production, nothing more.
+ * if this were wired into production, nothing more. `isFalseCardEvent`
+ * (nativeVoiceCorpus.ts) is the REAL misrecognition check — it compares the
+ * DISPLAYED phrase's known-correct command against whatever the provider
+ * actually transcribed, so a wrong-but-valid-looking recognition (e.g.
+ * hearing "nine" when "five" was said) is correctly caught, not just any
+ * CardEvent on an unexpected phrase.
  *
  * Does NOT replace Browser Web Speech (production), Sherpa-ONNX, or
  * Whisper.cpp — Browser Web Speech is offered here only as a REFERENCE
- * comparison provider (same existing production code, reused read-only),
- * so "provider switching" is a real, testable scenario without adding a
- * second acoustic engine.
+ * comparison provider (same existing production code, reused read-only).
+ *
+ * TWO SIZES, per explicit instruction ("do not force Sidney through a huge
+ * corpus"): Quick Smoke Test stays the original 7 phrases; Native Voice
+ * Expanded English Test is the v0.2 grammar (NATIVE_VOICE_EXPANDED_GROUPS —
+ * dealer/card, player/card, controls), a practical, bounded size built
+ * ONLY from vocabulary already real in production. The Noise rejection set
+ * tests whichever grammar is currently active (quick or expanded).
  */
 
 type ProviderChoice = "vosk" | "browser-web-speech";
 type PhraseState = "idle" | "listening" | "done" | "skipped";
+type TestMode = "quick" | "expanded" | "noise";
 
 interface PhraseRecord {
   index: number;
   phrase: string;
+  group: string | null;
   provider: ProviderChoice;
   transcript: string | null;
   confidence: number | null;
@@ -45,9 +67,17 @@ interface PhraseRecord {
   error: string | null;
   skipped: boolean;
   result: NativeVoiceResult | null;
+  voskDiagnostics: VoskPhraseDiagnostics | null;
 }
 
-const QUICK_SMOKE_TEST_PHRASES = NATIVE_VOICE_PROTOTYPE_PHRASES;
+interface PhraseEntry {
+  phrase: string;
+  group: string | null;
+}
+
+const QUICK_ENTRIES: PhraseEntry[] = NATIVE_VOICE_PROTOTYPE_PHRASES.map((phrase) => ({ phrase, group: null }));
+const EXPANDED_ENTRIES: PhraseEntry[] = NATIVE_VOICE_EXPANDED_GROUPS.flatMap((g) => g.phrases.map((phrase) => ({ phrase, group: g.label })));
+const NOISE_ENTRIES: PhraseEntry[] = NATIVE_VOICE_NOISE_PHRASES.map((phrase) => ({ phrase, group: "Ambiguity / Noise" }));
 
 function verdictBadgeClass(verdict: NativeVoiceResult["verdict"] | null): string {
   if (verdict === "ACCEPT") return "bg-status-green/15 text-status-green";
@@ -58,7 +88,9 @@ function verdictBadgeClass(verdict: NativeVoiceResult["verdict"] | null): string
 
 export default function NativeVoiceTestPage() {
   const [providerChoice, setProviderChoice] = useState<ProviderChoice>("vosk");
-  const [activePhrases, setActivePhrases] = useState<readonly string[]>(QUICK_SMOKE_TEST_PHRASES);
+  const [testMode, setTestMode] = useState<TestMode>("quick");
+  const [grammarMode, setGrammarMode] = useState<"quick" | "expanded">("quick");
+  const [activeEntries, setActiveEntries] = useState<PhraseEntry[]>(QUICK_ENTRIES);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [phraseState, setPhraseState] = useState<PhraseState>("idle");
   const [providerStatus, setProviderStatus] = useState<"idle" | "loading" | "listening" | "error" | "stopped">("idle");
@@ -69,10 +101,13 @@ export default function NativeVoiceTestPage() {
   const startedAtRef = useRef<number | null>(null);
   const firstInterimAtRef = useRef<number | null>(null);
   const lastResultRef = useRef<{ transcript: string; confidence: number | null } | null>(null);
+  const lastDiagnosticsRef = useRef<VoskPhraseDiagnostics | null>(null);
 
-  const currentPhrase = activePhrases[currentIndex] ?? null;
+  const currentEntry = activeEntries[currentIndex] ?? null;
+  const currentPhrase = currentEntry?.phrase ?? null;
+
   const falseCardEventCount = useMemo(
-    () => records.filter((r) => r.result && r.result.wouldProduceCardEvent && !QUICK_SMOKE_TEST_PHRASES.includes(r.phrase)).length,
+    () => records.filter((r) => !r.skipped && r.result && isFalseCardEvent(r.phrase, r.result.commands)).length,
     [records]
   );
 
@@ -99,12 +134,13 @@ export default function NativeVoiceTestPage() {
 
   const finishPhrase = useCallback(
     (skipped: boolean) => {
-      const phrase = activePhrases[currentIndex];
+      const entry = activeEntries[currentIndex];
       const finalMs = startedAtRef.current != null ? performance.now() - startedAtRef.current : null;
       const captured = lastResultRef.current;
       const record: PhraseRecord = {
         index: currentIndex,
-        phrase,
+        phrase: entry.phrase,
+        group: entry.group,
         provider: providerChoice,
         transcript: skipped ? null : (captured?.transcript ?? null),
         confidence: skipped ? null : (captured?.confidence ?? null),
@@ -113,14 +149,16 @@ export default function NativeVoiceTestPage() {
         error: lastError,
         skipped,
         result: !skipped && captured ? evaluateNativeVoiceTranscript(captured.transcript) : null,
+        voskDiagnostics: skipped ? null : lastDiagnosticsRef.current,
       };
       setRecords((prev) => [...prev, record]);
       setPhraseState(skipped ? "skipped" : "done");
       startedAtRef.current = null;
       firstInterimAtRef.current = null;
       lastResultRef.current = null;
+      lastDiagnosticsRef.current = null;
     },
-    [activePhrases, currentIndex, lastError, providerChoice]
+    [activeEntries, currentIndex, lastError, providerChoice]
   );
 
   const startPhrase = useCallback(() => {
@@ -131,6 +169,7 @@ export default function NativeVoiceTestPage() {
     startedAtRef.current = performance.now();
     firstInterimAtRef.current = null;
     lastResultRef.current = null;
+    lastDiagnosticsRef.current = null;
 
     const onFinalResult = (r: SpeechProviderResult) => {
       lastResultRef.current = { transcript: r.transcript, confidence: r.confidence };
@@ -154,6 +193,10 @@ export default function NativeVoiceTestPage() {
             onError,
             onAudioStart: () => setProviderStatus("listening"),
             onAudioEnd: () => setProviderStatus("stopped"),
+            grammarPhrases: grammarMode === "expanded" ? VOSK_EXPANDED_GRAMMAR_PHRASES : VOSK_PROTOTYPE_GRAMMAR_PHRASES,
+            onPhraseDiagnostics: (d) => {
+              lastDiagnosticsRef.current = d;
+            },
           })
         : createBrowserWebSpeechProvider({
             onFinalResult,
@@ -164,7 +207,7 @@ export default function NativeVoiceTestPage() {
           });
     providerRef.current = provider;
     provider.start();
-  }, [currentPhrase, providerChoice]);
+  }, [currentPhrase, providerChoice, grammarMode]);
 
   const endPhrase = useCallback(() => {
     providerRef.current?.stop();
@@ -178,14 +221,25 @@ export default function NativeVoiceTestPage() {
   }, [finishPhrase, teardownProvider]);
 
   const nextPhrase = useCallback(() => {
-    setCurrentIndex((i) => Math.min(i + 1, activePhrases.length - 1));
+    setCurrentIndex((i) => Math.min(i + 1, activeEntries.length - 1));
     setPhraseState("idle");
-  }, [activePhrases.length]);
+  }, [activeEntries.length]);
 
-  const restartSet = useCallback(
-    (phrases: readonly string[]) => {
+  const applyTestMode = useCallback(
+    (mode: TestMode) => {
       teardownProvider();
-      setActivePhrases(phrases);
+      setTestMode(mode);
+      if (mode === "quick") {
+        setActiveEntries(QUICK_ENTRIES);
+        setGrammarMode("quick");
+      } else if (mode === "expanded") {
+        setActiveEntries(EXPANDED_ENTRIES);
+        setGrammarMode("expanded");
+      } else {
+        // Noise tests whichever grammar is currently active — see this
+        // page's own top-of-file doc comment.
+        setActiveEntries(NOISE_ENTRIES);
+      }
       setCurrentIndex(0);
       setPhraseState("idle");
       setLastError(null);
@@ -197,8 +251,10 @@ export default function NativeVoiceTestPage() {
   const exportJson = useCallback(() => {
     const payload = {
       provider: providerChoice,
+      testMode,
+      grammarMode,
       voskProvenance: providerChoice === "vosk" ? VOSK_PROVENANCE : null,
-      grammar: providerChoice === "vosk" ? VOSK_PROTOTYPE_GRAMMAR_PHRASES : null,
+      grammar: providerChoice === "vosk" ? (grammarMode === "expanded" ? VOSK_EXPANDED_GRAMMAR_PHRASES : VOSK_PROTOTYPE_GRAMMAR_PHRASES) : null,
       records,
       falseCardEventCount,
       exportedAt: new Date().toISOString(),
@@ -207,20 +263,25 @@ export default function NativeVoiceTestPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `native-voice-prototype-${Date.now()}.json`;
+    a.download = `native-voice-${testMode}-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [falseCardEventCount, providerChoice, records]);
+  }, [falseCardEventCount, providerChoice, records, testMode, grammarMode]);
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <FlaskConical className="h-6 w-6 text-accent" aria-hidden />
-        <h1 className="text-lg font-bold text-foreground">Native Voice Prototype 0.1</h1>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <FlaskConical className="h-6 w-6 text-accent" aria-hidden />
+          <h1 className="text-lg font-bold text-foreground">Native Voice Prototype</h1>
+        </div>
+        <Link href="/lab/mic-check" className="flex items-center gap-1 rounded-full bg-surface-raised px-3 py-1 text-xs font-semibold text-foreground hover:bg-accent/20">
+          <Mic className="h-3 w-3" aria-hidden /> Mic Check
+        </Link>
       </div>
       <div className="rounded-lg border border-pending/40 bg-pending/10 p-3 text-xs text-pending">
-        <strong>LAB PROTOTYPE — NOT PRODUCTION VOICE.</strong> English only, 7 representative phrases. Never writes a
-        CardEvent. Does not replace Browser Web Speech, Sherpa, Whisper, or production VoiceControl.
+        <strong>LAB PROTOTYPE — NOT PRODUCTION VOICE.</strong> English only. Never writes a CardEvent. Does not replace
+        Browser Web Speech, Sherpa, Whisper, or production VoiceControl.
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -244,17 +305,24 @@ export default function NativeVoiceTestPage() {
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={() => restartSet(QUICK_SMOKE_TEST_PHRASES)}
-          className="flex items-center gap-1 rounded-full bg-surface-raised px-3 py-1 text-xs font-semibold text-foreground hover:bg-accent/20"
+          onClick={() => applyTestMode("quick")}
+          className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold hover:bg-accent/20 ${testMode === "quick" ? "bg-accent text-accent-foreground" : "bg-surface-raised text-foreground"}`}
         >
           <RotateCcw className="h-3 w-3" aria-hidden /> Quick Smoke Test (7 phrases)
         </button>
         <button
           type="button"
-          onClick={() => restartSet(NATIVE_VOICE_NOISE_PHRASES)}
-          className="flex items-center gap-1 rounded-full bg-surface-raised px-3 py-1 text-xs font-semibold text-foreground hover:bg-accent/20"
+          onClick={() => applyTestMode("expanded")}
+          className={`rounded-full px-3 py-1 text-xs font-semibold hover:bg-accent/20 ${testMode === "expanded" ? "bg-accent text-accent-foreground" : "bg-surface-raised text-foreground"}`}
         >
-          Noise rejection set
+          Native Voice Expanded English Test ({EXPANDED_ENTRIES.length} phrases)
+        </button>
+        <button
+          type="button"
+          onClick={() => applyTestMode("noise")}
+          className={`rounded-full px-3 py-1 text-xs font-semibold hover:bg-accent/20 ${testMode === "noise" ? "bg-accent text-accent-foreground" : "bg-surface-raised text-foreground"}`}
+        >
+          Noise rejection set (vs. {grammarMode} grammar)
         </button>
         <button
           type="button"
@@ -268,7 +336,8 @@ export default function NativeVoiceTestPage() {
 
       <div className="rounded-xl border border-border bg-surface p-4">
         <p className="text-xs font-semibold text-muted-foreground">
-          Phrase {currentIndex + 1} of {activePhrases.length}
+          Phrase {currentIndex + 1} of {activeEntries.length}
+          {currentEntry?.group && <span className="ml-2 rounded-full bg-surface-raised px-2 py-0.5 text-[10px] text-muted-foreground">{currentEntry.group}</span>}
         </p>
         <p className="mt-1 text-xl font-bold text-foreground" data-testid="expected-phrase">
           {currentPhrase ?? "(set complete)"}
@@ -304,7 +373,7 @@ export default function NativeVoiceTestPage() {
           <button
             type="button"
             onClick={nextPhrase}
-            disabled={phraseState === "idle" || currentIndex >= activePhrases.length - 1}
+            disabled={phraseState === "idle" || currentIndex >= activeEntries.length - 1}
             className="rounded-lg bg-surface-raised px-3 py-2 text-xs font-semibold text-foreground disabled:opacity-40"
           >
             Next Phrase
@@ -321,18 +390,23 @@ export default function NativeVoiceTestPage() {
           <p className="text-xs font-semibold text-foreground">
             Session results — {records.length} phrase{records.length === 1 ? "" : "s"} recorded
           </p>
-          <p className={`mt-1 text-xs font-semibold ${falseCardEventCount > 0 ? "text-destructive" : "text-status-green"}`}>
-            False CardEvents on noise/rejection phrases: {falseCardEventCount}
+          <p
+            className={`mt-1 text-sm font-bold ${falseCardEventCount > 0 ? "text-destructive" : "text-status-green"}`}
+            data-testid="false-cardevents-summary"
+          >
+            FALSE CARDEVENTS: {falseCardEventCount}
           </p>
           <div className="mt-2 overflow-x-auto">
             <table className="w-full text-left text-[11px]">
               <thead>
                 <tr className="text-muted-foreground">
                   <th className="p-1">#</th>
+                  <th className="p-1">Group</th>
                   <th className="p-1">Expected</th>
                   <th className="p-1">Transcript</th>
                   <th className="p-1">Verdict</th>
                   <th className="p-1">Would CardEvent?</th>
+                  <th className="p-1">False?</th>
                   <th className="p-1">Latency (ms)</th>
                 </tr>
               </thead>
@@ -340,6 +414,7 @@ export default function NativeVoiceTestPage() {
                 {records.map((r, i) => (
                   <tr key={i} className="border-t border-border/60">
                     <td className="p-1">{r.index + 1}</td>
+                    <td className="p-1">{r.group ?? "—"}</td>
                     <td className="p-1">{r.phrase}</td>
                     <td className="p-1">{r.skipped ? "(skipped)" : (r.transcript ?? "(none)")}</td>
                     <td className="p-1">
@@ -348,6 +423,7 @@ export default function NativeVoiceTestPage() {
                       </span>
                     </td>
                     <td className="p-1">{r.result?.wouldProduceCardEvent ? "YES" : "no"}</td>
+                    <td className="p-1">{!r.skipped && r.result && isFalseCardEvent(r.phrase, r.result.commands) ? "FALSE" : "—"}</td>
                     <td className="p-1">{r.finalMs != null ? Math.round(r.finalMs) : "—"}</td>
                   </tr>
                 ))}
@@ -383,6 +459,13 @@ function ResultPanel({ record }: { record: PhraseRecord }) {
             Would produce a CardEvent: {record.result.wouldProduceCardEvent ? "YES" : "no"}
           </p>
         </>
+      )}
+      {record.voskDiagnostics && (
+        <p className="mt-1 text-muted-foreground" data-testid="vosk-diagnostics">
+          Vosk: {record.voskDiagnostics.audioChunksReceived} audio chunks · {record.voskDiagnostics.partialResultCount} partial(s)
+          {record.voskDiagnostics.lastPartialText ? ` (last: "${record.voskDiagnostics.lastPartialText}")` : ""} · finalized by{" "}
+          {record.voskDiagnostics.finalizedBy}
+        </p>
       )}
       <p className="mt-1 text-muted-foreground">
         First interim: {record.firstInterimMs != null ? `${Math.round(record.firstInterimMs)}ms` : "—"} · Final:{" "}

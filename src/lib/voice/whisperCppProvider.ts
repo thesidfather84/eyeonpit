@@ -194,8 +194,8 @@ export function isTrustedWhisperMessageOrigin(eventOrigin: string, configuredOri
  * provider already sent.
  */
 export type WhisperInboundMessage =
-  | { type: "whisper:error"; message: string }
-  | { type: "whisper:final"; text: string }
+  | { type: "whisper:error"; message: string; diag?: string }
+  | { type: "whisper:final"; text: string; diag?: string }
   | { type: "whisper:status"; status: string };
 
 /**
@@ -204,16 +204,28 @@ export type WhisperInboundMessage =
  * match a known type, or is missing/mis-typed a required field, is
  * treated as not-a-Whisper-message and ignored (returns null) rather than
  * guessed at.
+ *
+ * `diag`, on whisper:final/whisper:error, is a TEMPORARY diagnostic
+ * addition (2026-08-21) — real production report: 29/29 consecutive
+ * real-speech phrases returned "no speech detected". It carries the
+ * isolated origin's own audio-path instrumentation (mic/track/
+ * AudioContext state, sample counts, peak/RMS amplitude on both the JS
+ * and WASM sides — see index.html's own endPhrase() and
+ * emscripten.cpp's own command_get_diagnostics()) so the failure can be
+ * diagnosed from the Lab record/error text directly, without DevTools.
+ * Still just a plain string field within the existing narrow protocol —
+ * no new message type, no audio/waveform data.
  */
 export function parseWhisperInboundMessage(data: unknown): WhisperInboundMessage | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
   if (typeof d.type !== "string") return null;
+  const diag = typeof d.diag === "string" ? d.diag : undefined;
   switch (d.type) {
     case "whisper:error":
-      return typeof d.message === "string" ? { type: "whisper:error", message: d.message } : null;
+      return typeof d.message === "string" ? { type: "whisper:error", message: d.message, ...(diag ? { diag } : {}) } : null;
     case "whisper:final":
-      return typeof d.text === "string" ? { type: "whisper:final", text: d.text } : null;
+      return typeof d.text === "string" ? { type: "whisper:final", text: d.text, ...(diag ? { diag } : {}) } : null;
     case "whisper:status":
       return typeof d.status === "string" ? { type: "whisper:status", status: d.status } : null;
     default:
@@ -478,10 +490,20 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
     if (phase !== "listening" && phase !== "stopping") return;
     if (msg.type === "whisper:final") {
       resultReceivedThisPhrase = true;
+      // TEMPORARY DIAGNOSTIC (2026-08-21) — see WhisperInboundMessage's
+      // own doc comment on `diag`. Logged rather than appended to the
+      // transcript itself, which stays clean for real display/
+      // classification; a successful final has no "error" field to
+      // surface it in the way a failure does.
+      if (msg.diag) console.log("[whisper diag]", msg.diag);
       emitFinal(msg.text);
     } else if (msg.type === "whisper:error") {
       resultReceivedThisPhrase = true;
-      options.onError?.(msg.message);
+      // TEMPORARY DIAGNOSTIC — appended to the surfaced error text itself
+      // so it lands directly in the Lab record's own `error` field
+      // (visible in the export/UI without DevTools), per this round's
+      // explicit instrumentation requirement.
+      options.onError?.(msg.diag ? `${msg.message} | ${msg.diag}` : msg.message);
     }
   }
 

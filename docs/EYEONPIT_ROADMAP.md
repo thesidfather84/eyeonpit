@@ -12,6 +12,38 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### Whisper Lab — Serving Architecture Found (Static Hosting Outside Next.js); Transcription Blocked by a Separate, Real Constraint (2026-08-21, follow-up)
+
+**Problem:** the prior round proved Whisper's pthread bootstrap works standalone but fails specifically when served through EyeOnPit's own Next.js stack (dev or production). Per explicit instruction, evaluated serving the runtime outside Next.js entirely rather than continuing to test around it.
+
+**Architecture:** a second, independent, static-only Vercel project (`whisper-static-lab`, `https://whisper-static-lab.vercel.app`) — same account, free Hobby tier, zero new infrastructure. Not a custom `eyeonpit.com` subdomain (DNS is third-party-managed; changing it wasn't taken without explicit confirmation). A plain static Vercel project is a different serving primitive than the Next.js app, with real custom-header support (`vercel.json`: COOP `same-origin`, COEP `require-corp`, CORP `same-origin`) — no service-worker header workaround needed. The harness page and all WASM/model assets share this one origin, satisfying the Worker constructor's same-origin requirement architecturally, not via configuration.
+
+**Standalone verification on the real deployed origin — proven:** `crossOriginIsolated: true`; module ready in 1,204ms; `init()` returned a real context handle; real audio (whisper.cpp's own bundled `samples/jfk.wav`, MIT-licensed, ~11s) was fed via `set_audio()` and genuinely processed by the engine.
+
+**A real bug found and fixed this round, unrelated to hosting:** the harness's own `let Module = null;` collided with Emscripten's `var Module = ...` declaration (JS forbids `var` for a name already `let`-bound in the same global scope, even across script tags) — this briefly, misleadingly reproduced a `SyntaxError` that looked like the same "serving stack" failure before being correctly diagnosed as this round's own new naming bug. Fixed by renaming to `whisperModule`.
+
+**Full transcription — not proven, for a genuine separate reason:** `examples/command.wasm`'s own C++ source hardcodes a "voice assistant" enrollment gate — it won't recognize any command until it first hears "Ok Whisper, start listening for commands." (fuzzy-matched, ≥0.8 similarity). `jfk.wav` doesn't contain that phrase, so no transcript was produced — confirmed via `get_status()` still reporting the wake-phrase wait, exactly matching the source. This is real, disclosed, and unrelated to hosting/pthreads.
+
+**Explicitly not done:** no iframe/postMessage integration into the EyeOnPit Lab — the task's own gate ("prove transcription, then integrate") wasn't met. No EyeOnPit repository code was changed this round (only these two doc files) — the entire investigation lived in the separate Vercel project.
+
+**Status:** the serving-architecture question is resolved with real, positive proof — a free, same-account static host reproduces standalone-successful pthread bootstrap that Next.js's own stack could never achieve. Remaining gap to a usable Lab integration: either provide real audio containing the exact enrollment phrase, or make a small, disclosed change to the example's own wake-word gate (not its threading code) — then re-verify transcription on this same proven origin before any Lab integration. See `docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md` §12.5e.
+
+### Whisper Lab — Fresh From-Source Build, Standalone Proof, EyeOnPit-Integration Still Fails (2026-08-21, follow-up)
+
+**Problem:** the prior round's live-demo-extracted `command.wasm` asset was proven defective (a real pthread worker-pool bootstrap failure). Per explicit instruction, rebuilt from source rather than patching around it.
+
+**Investigated upstream first:** checked recent whisper.cpp commits touching Emscripten/pthread/command.wasm — nothing recent addresses this. Confirmed via the GitHub API that commit `339f2b4e` (same commit the defective asset came from) already IS `master` HEAD — no newer whisper.cpp revision exists to pin. The real lever was the Emscripten SDK version.
+
+**Toolchain installed (authorized):** Emscripten SDK **6.0.8**, CMake 4.4.2, Ninja 1.13.0. Built `examples/command.wasm`'s `libcommand` target with `WHISPER_WASM_SINGLE_FILE=OFF` (a real, documented upstream CMake option — `SINGLE_FILE=ON` hit a different, genuine SDK-version-specific WASM-corruption defect during this build, confirmed not a transfer artifact).
+
+**Standalone verification — passed conclusively**, before any EyeOnPit integration, per instruction: a minimal, independent harness confirmed all 8 pthread pool workers construct and exchange messages with zero errors, module ready in 9,498ms, real model load, `init()` returned a real context handle in 107ms.
+
+**EyeOnPit-integration verification — failed.** The byte-identical, standalone-proven asset, served BY EyeOnPit's own server (dev or production), reproduces the same failure class. Systematically ruled out: file corruption (sha256-identical), COEP mode (both `credentialless`/`require-corp` fail identically), Next.js dev-mode overhead (a genuine production build fails identically), React/page complexity (a bare static HTML harness served from EyeOnPit's own origin still fails). The one remaining variable: which HTTP server answers the request — a trivial Node server succeeds every time; Next.js's own serving stack (either mode) fails every time, for the exact same bytes. Consistent with the underlying Emscripten pthread race (a real, still-unresolved upstream issue, emscripten-core/emscripten#12223) being timing-sensitive to server response latency/concurrency — not re-investigated further or patched, per the explicit "do not invent custom pthread patches" instruction.
+
+**Explicitly not done:** no custom pthread workaround attempted. No production wiring. No real-microphone session requested — construction itself remains unconfirmed in the actual product.
+
+**Status: NOT committed.** The improved build (real provenance, real toolchain, genuinely fixes the prior asset's own defect, proven working in isolation) remains as real forward progress in the working tree, but the task's own gate ("verify in EyeOnPit locally" before "commit, push, deploy") was not met — Whisper still does not construct successfully when served by EyeOnPit itself. Full suite/tsc/eslint all confirmed green against the current working-tree state regardless. See `docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md` §12.5d for the complete investigation and evidence table.
+
 ### Whisper Lab — Real Root Cause of the Production Hang Found; Timeout/Diagnostics Fix Shipped (2026-08-21)
 
 **Problem:** Sidney's real production session (`modelLoadMs: null`, `records: []`, `aggregatesByConfig: []`) showed Whisper never reaching a usable state and creating zero phrase records — a silent, indefinite hang with no diagnostic.

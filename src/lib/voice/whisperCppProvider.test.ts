@@ -88,8 +88,8 @@ describe("isTrustedWhisperMessageOrigin — the ONE real security boundary for i
 });
 
 describe("parseWhisperInboundMessage — validates the narrow protocol; no audio/waveform shape exists to parse, by design", () => {
-  it("parses a valid whisper:ready message", () => {
-    expect(parseWhisperInboundMessage({ type: "whisper:ready", moduleReadyMs: 670 })).toEqual({ type: "whisper:ready", moduleReadyMs: 670 });
+  it('rejects "whisper:ready" — deliberately not part of the protocol (see MESSAGE ORDERING doc comment: whisper:status "listening" is the real readiness signal, sent only as a reply)', () => {
+    expect(parseWhisperInboundMessage({ type: "whisper:ready", moduleReadyMs: 670 })).toBeNull();
   });
 
   it("parses a valid whisper:error message", () => {
@@ -109,7 +109,7 @@ describe("parseWhisperInboundMessage — validates the narrow protocol; no audio
 
   it("rejects null/non-object data", () => {
     expect(parseWhisperInboundMessage(null)).toBeNull();
-    expect(parseWhisperInboundMessage("whisper:ready")).toBeNull();
+    expect(parseWhisperInboundMessage("whisper:status")).toBeNull();
     expect(parseWhisperInboundMessage(42)).toBeNull();
   });
 
@@ -118,8 +118,8 @@ describe("parseWhisperInboundMessage — validates the narrow protocol; no audio
   });
 
   it("rejects a known type with a missing/mis-typed required field — never coerces", () => {
-    expect(parseWhisperInboundMessage({ type: "whisper:ready" })).toBeNull();
-    expect(parseWhisperInboundMessage({ type: "whisper:ready", moduleReadyMs: "670" })).toBeNull();
+    expect(parseWhisperInboundMessage({ type: "whisper:status" })).toBeNull();
+    expect(parseWhisperInboundMessage({ type: "whisper:error", message: 123 })).toBeNull();
     expect(parseWhisperInboundMessage({ type: "whisper:final" })).toBeNull();
   });
 
@@ -147,7 +147,7 @@ describe("classifyWhisperStartError", () => {
   });
 });
 
-describe("withWhisperReadyTimeout — bounds the wait for whisper:ready, mirrors the prior in-process provider's own hang-prevention fix", () => {
+describe("withWhisperReadyTimeout — bounds the wait for the iframe to confirm it started listening, mirrors the prior in-process provider's own hang-prevention fix", () => {
   it("resolves normally when the underlying promise resolves before the timeout", async () => {
     await expect(withWhisperReadyTimeout(Promise.resolve(670), DEFAULT_WHISPER_READY_TIMEOUT_MS)).resolves.toBe(670);
   });

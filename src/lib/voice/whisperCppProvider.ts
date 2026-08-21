@@ -185,9 +185,15 @@ export function isTrustedWhisperMessageOrigin(eventOrigin: string, configuredOri
   return eventOrigin === configuredOrigin;
 }
 
-/** Every shape this provider will ever act on from the iframe — see the module doc comment: no audio, no waveform, ever. */
+/**
+ * Every shape this provider will ever act on from the iframe — see the
+ * module doc comment: no audio, no waveform, ever. Deliberately no
+ * separate "ready"/handshake message type — see MESSAGE ORDERING below:
+ * `whisper:status` with `status: "listening"` doubles as the real
+ * readiness signal, sent only as a reply to a `whisper:start-phrase` this
+ * provider already sent.
+ */
 export type WhisperInboundMessage =
-  | { type: "whisper:ready"; moduleReadyMs: number }
   | { type: "whisper:error"; message: string }
   | { type: "whisper:final"; text: string }
   | { type: "whisper:status"; status: string };
@@ -204,8 +210,6 @@ export function parseWhisperInboundMessage(data: unknown): WhisperInboundMessage
   const d = data as Record<string, unknown>;
   if (typeof d.type !== "string") return null;
   switch (d.type) {
-    case "whisper:ready":
-      return typeof d.moduleReadyMs === "number" ? { type: "whisper:ready", moduleReadyMs: d.moduleReadyMs } : null;
     case "whisper:error":
       return typeof d.message === "string" ? { type: "whisper:error", message: d.message } : null;
     case "whisper:final":
@@ -223,10 +227,26 @@ export function classifyWhisperStartError(message: string): string {
   return /404|failed to load|NetworkError/i.test(message) ? `iframe-unreachable: ${message}` : message;
 }
 
+/**
+ * MESSAGE ORDERING, 2026-08-21 (real production fix): this provider
+ * ALWAYS speaks first, never waits for an unsolicited announcement from
+ * the iframe. An earlier version waited for the iframe to proactively
+ * send a "whisper:ready" ping as soon as its own module finished loading
+ * — that produced a real, reproducible bug in a live browser test: the
+ * iframe's own reply-target resolution depended on `document.referrer`,
+ * which is not guaranteed to survive every Referrer-Policy configuration,
+ * and even when it does, there was no reliable signal for THIS side to
+ * know the iframe's message listener was actually attached yet (a message
+ * sent before that happens is simply lost, not queued). This timeout now
+ * bounds the FULL real sequence — iframe navigation, module+model load,
+ * mic permission, audio pipeline setup — ending only when the iframe
+ * replies to a `whisper:start-phrase` THIS provider sent, with either
+ * `whisper:status: "listening"` or `whisper:error`.
+ */
 export const WHISPER_IFRAME_READY_TIMEOUT_MESSAGE =
-  "whisper iframe did not send whisper:ready in time — the isolated Whisper origin may be unreachable, blocked, or its own module init failed";
+  "whisper iframe did not confirm it started listening in time — the isolated Whisper origin may be unreachable, blocked, or its own module/model init failed";
 
-/** Generous default — the isolated origin's own model download + WASM/pthread init took ~1.2s in real verified testing, but a slow connection or cold Vercel edge could legitimately take longer; this only bounds an otherwise-infinite hang. */
+/** Generous default — covers real end-to-end setup (iframe load, WASM/model init, a mic permission prompt, audio pipeline setup), not just module load; a slow connection, cold Vercel edge, or a operator taking a moment to grant mic permission could legitimately take a while. Only bounds an otherwise-infinite hang. */
 export const DEFAULT_WHISPER_READY_TIMEOUT_MS = 20000;
 
 /**
@@ -271,7 +291,8 @@ type WhisperMessageListener = (msg: WhisperInboundMessage) => void;
 interface WhisperIframeSession {
   origin: string;
   iframeEl: HTMLIFrameElement;
-  readyPromise: Promise<number>;
+  /** Resolves once the iframe's own `load` event fires — confirms its script has run and its message listener is attached, so a message sent any earlier would simply be lost (see this module's own MESSAGE ORDERING doc comment). Never rejects; a dead/unreachable origin just never resolves, which is why every caller wraps this in `withWhisperReadyTimeout`. */
+  loadPromise: Promise<void>;
   listeners: Set<WhisperMessageListener>;
   postToIframe: (message: { type: "whisper:start-phrase" } | { type: "whisper:end-phrase" }) => void;
 }
@@ -287,12 +308,11 @@ interface WhisperIframeSession {
 // ~31MB model on every phrase.
 let session: WhisperIframeSession | null = null;
 
-function ensureSession(origin: string, readyTimeoutMs: number): WhisperIframeSession {
+function ensureSession(origin: string): WhisperIframeSession {
   if (session && session.origin === origin) return session;
   session?.iframeEl.remove();
 
   const iframeEl = document.createElement("iframe");
-  iframeEl.src = `${origin}/`;
   // Grants the cross-origin iframe real getUserMedia access — required
   // because a cross-origin frame's own microphone permission request is
   // denied by the browser unless the embedder explicitly allows it here.
@@ -303,6 +323,15 @@ function ensureSession(origin: string, readyTimeoutMs: number): WhisperIframeSes
   // work inside display:none iframes. Zero-sized and non-interactive
   // instead, which keeps real-time audio processing unthrottled.
   Object.assign(iframeEl.style, { position: "fixed", width: "0", height: "0", border: "0", opacity: "0", pointerEvents: "none" });
+
+  const loadPromise = new Promise<void>((resolve) => {
+    iframeEl.addEventListener("load", () => resolve(), { once: true });
+  });
+  // Set src and attach to the DOM only AFTER the load listener above —
+  // navigation cannot begin (and therefore `load` cannot fire) until this
+  // element is actually in the document, but ordering it this way avoids
+  // any dependency on exactly when the browser starts navigating.
+  iframeEl.src = `${origin}/`;
   document.body.appendChild(iframeEl);
 
   const listeners = new Set<WhisperMessageListener>();
@@ -316,38 +345,10 @@ function ensureSession(origin: string, readyTimeoutMs: number): WhisperIframeSes
   }
   window.addEventListener("message", handleWindowMessage);
 
-  const readyPromise = withWhisperReadyTimeout(
-    new Promise<number>((resolve, reject) => {
-      const onReadyOrError: WhisperMessageListener = (msg) => {
-        if (msg.type === "whisper:ready") {
-          listeners.delete(onReadyOrError);
-          resolve(msg.moduleReadyMs);
-        } else if (msg.type === "whisper:error") {
-          listeners.delete(onReadyOrError);
-          reject(new Error(msg.message));
-        }
-      };
-      listeners.add(onReadyOrError);
-    }),
-    readyTimeoutMs
-  ).catch((err) => {
-    // A failed/timed-out session must never be cached permanently — same
-    // reasoning as the prior in-process provider's own moduleLoadPromise
-    // reset (see git history). Without this, a transient failure (a slow
-    // Vercel cold start, a momentary network blip) would wedge EVERY later
-    // phrase in the same Lab session behind the same already-rejected
-    // promise forever, with no way to recover short of a full page reload.
-    if (session === newSession) {
-      session.iframeEl.remove();
-      session = null;
-    }
-    throw err;
-  });
-
   const newSession: WhisperIframeSession = {
     origin,
     iframeEl,
-    readyPromise,
+    loadPromise,
     listeners,
     postToIframe(message) {
       iframeEl.contentWindow?.postMessage(message, origin);
@@ -357,10 +358,18 @@ function ensureSession(origin: string, readyTimeoutMs: number): WhisperIframeSes
   return newSession;
 }
 
+/** A session that failed to become ready must never be cached permanently — a transient failure (slow Vercel cold start, a momentary network blip, a denied mic prompt) would otherwise wedge EVERY later phrase in the same Lab session behind the same dead iframe, with no way to recover short of a full page reload. Called from `start()`'s own catch handler. */
+function discardSessionOnFailure(sess: WhisperIframeSession) {
+  if (session === sess) {
+    session.iframeEl.remove();
+    session = null;
+  }
+}
+
 export interface WhisperCppProviderOptions extends SpeechProviderOptions {
   /** Origin (scheme + host, no path/trailing slash) of the isolated Whisper runtime. Defaults to `resolveDefaultWhisperOrigin(process.env)`. */
   whisperOrigin?: string;
-  /** Bounds the wait for the iframe's own `whisper:ready` message. Defaults to `DEFAULT_WHISPER_READY_TIMEOUT_MS`. */
+  /** Bounds the wait for the iframe to confirm it started listening (or report an error) after `whisper:start-phrase` is sent. Defaults to `DEFAULT_WHISPER_READY_TIMEOUT_MS`. */
   readyTimeoutMs?: number;
 }
 
@@ -369,16 +378,18 @@ export interface WhisperCppProviderOptions extends SpeechProviderOptions {
  * described in this module's own top-of-file doc comment.
  *
  * START PHRASE / END PHRASE MAPPING: `start()` ensures the shared iframe
- * session exists (creating + waiting for `whisper:ready` on first use,
- * reused thereafter), then sends `whisper:start-phrase` — the isolated
- * origin's own `startPhrase()` begins real getUserMedia capture and feeds
- * the whisper.cpp WASM runtime. `stop()` sends `whisper:end-phrase`,
- * which tears down that capture session on the iframe side. Every
- * `whisper:final` message received while this provider instance is active
- * is treated as a COMPLETE, FINAL result — this engine has its own
- * internal VAD deciding when a command is complete, not a caller-driven
- * force-finalize primitive, so `onInterimResult` is never called (same
- * disclosed limitation the prior in-process version had).
+ * session exists (creating it and waiting for its `load` event on first
+ * use, reused thereafter), sends `whisper:start-phrase`, and waits for the
+ * iframe's reply — `whisper:status: "listening"` (real getUserMedia
+ * capture began and is feeding the whisper.cpp WASM runtime) or
+ * `whisper:error`. See MESSAGE ORDERING above for why this provider always
+ * sends first rather than waiting for an unsolicited announcement. `stop()`
+ * sends `whisper:end-phrase`, which tears down that capture session on the
+ * iframe side. Every `whisper:final` message received while this provider
+ * instance is active is treated as a COMPLETE, FINAL result — this engine
+ * has its own internal VAD deciding when a command is complete, not a
+ * caller-driven force-finalize primitive, so `onInterimResult` is never
+ * called (same disclosed limitation the prior in-process version had).
  */
 export function createWhisperCppProvider(options: WhisperCppProviderOptions): SpeechProvider {
   const whisperOrigin = (options.whisperOrigin ?? DEFAULT_WHISPER_ORIGIN).replace(/\/+$/, "");
@@ -420,15 +431,36 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
     if (running) return;
     running = true;
     audioStartFired = false;
+    const sess = ensureSession(whisperOrigin);
+    sess.listeners.add(onSessionMessage);
+    activeSession = sess;
+    activeListener = onSessionMessage;
     try {
-      const sess = ensureSession(whisperOrigin, readyTimeoutMs);
-      await sess.readyPromise;
-      sess.listeners.add(onSessionMessage);
-      activeSession = sess;
-      activeListener = onSessionMessage;
-      sess.postToIframe({ type: "whisper:start-phrase" });
+      await withWhisperReadyTimeout(
+        (async () => {
+          await sess.loadPromise;
+          await new Promise<void>((resolve, reject) => {
+            const onFirstReply: WhisperMessageListener = (msg) => {
+              if (msg.type === "whisper:status" && msg.status === "listening") {
+                sess.listeners.delete(onFirstReply);
+                resolve();
+              } else if (msg.type === "whisper:error") {
+                sess.listeners.delete(onFirstReply);
+                reject(new Error(msg.message));
+              }
+            };
+            sess.listeners.add(onFirstReply);
+            sess.postToIframe({ type: "whisper:start-phrase" });
+          });
+        })(),
+        readyTimeoutMs
+      );
     } catch (err) {
       running = false;
+      discardSessionOnFailure(sess);
+      sess.listeners.delete(onSessionMessage);
+      activeSession = null;
+      activeListener = null;
       const message = err instanceof Error ? err.message : String(err);
       options.onError?.(classifyWhisperStartError(message));
     }

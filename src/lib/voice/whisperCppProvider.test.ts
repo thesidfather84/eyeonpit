@@ -9,7 +9,7 @@
 // which has NOT been performed this round (disclosed explicitly in the
 // module's own top-of-file doc comment, unlike sherpa-onnx's real-audio
 // verification).
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   createWhisperCppProvider,
   WHISPER_CPP_PROVIDER_ID,
@@ -17,10 +17,13 @@ import {
   WHISPER_CPP_ASSET_MANIFEST,
   WHISPER_CPP_MODELS,
   DEFAULT_WHISPER_MODEL,
+  DEFAULT_MODULE_INIT_TIMEOUT_MS,
+  MODULE_INIT_TIMEOUT_MESSAGE,
   WHISPER_MODEL_FS_PATH,
   detectWhisperCppSupport,
   resolveDefaultWhisperAssetBaseUrl,
   classifyWhisperStartError,
+  withModuleInitTimeout,
 } from "./whisperCppProvider";
 
 describe("detectWhisperCppSupport — pure feature detection, identical structure to Sherpa's own", () => {
@@ -212,5 +215,56 @@ describe("WHISPER_CPP_MODELS — real sizes confirmed from the live official dem
   it("quantized variants are smaller than their non-quantized counterparts", () => {
     expect(WHISPER_CPP_MODELS["tiny.en-q5_1"].approxSizeBytes).toBeLessThan(WHISPER_CPP_MODELS["tiny.en"].approxSizeBytes);
     expect(WHISPER_CPP_MODELS["base.en-q5_1"].approxSizeBytes).toBeLessThan(WHISPER_CPP_MODELS["base.en"].approxSizeBytes);
+  });
+});
+
+describe("withModuleInitTimeout — REGRESSION (2026-08-21 real production finding): a hung module init must never hang the caller forever", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("resolves normally when the underlying promise resolves before the timeout", async () => {
+    const inner = Promise.resolve("real module");
+    const result = withModuleInitTimeout(inner, DEFAULT_MODULE_INIT_TIMEOUT_MS);
+    await expect(result).resolves.toBe("real module");
+  });
+
+  it("rejects with the real underlying error when the promise rejects before the timeout — never masks a real error as a timeout", async () => {
+    const inner = Promise.reject(new Error("script load failed"));
+    const result = withModuleInitTimeout(inner, DEFAULT_MODULE_INIT_TIMEOUT_MS);
+    await expect(result).rejects.toThrow("script load failed");
+  });
+
+  it("REGRESSION: rejects with MODULE_INIT_TIMEOUT_MESSAGE when the underlying promise never settles — the exact real production symptom (stuck on 'Loading…' forever, modelLoadMs null, no record ever created)", async () => {
+    const neverSettles = new Promise<string>(() => {});
+    const result = withModuleInitTimeout(neverSettles, 20000);
+    const assertion = expect(result).rejects.toThrow(MODULE_INIT_TIMEOUT_MESSAGE);
+    await vi.advanceTimersByTimeAsync(20000);
+    await assertion;
+  });
+
+  it("does not fire the timeout if the promise resolves just before the deadline", async () => {
+    let resolveInner: (v: string) => void;
+    const inner = new Promise<string>((resolve) => {
+      resolveInner = resolve;
+    });
+    const result = withModuleInitTimeout(inner, 20000);
+    await vi.advanceTimersByTimeAsync(19000);
+    resolveInner!("just in time");
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(result).resolves.toBe("just in time");
+  });
+
+  it("the timeout error message never gets misclassified as assets-not-found by classifyWhisperStartError — a hung worker pool is a different, distinct failure from a missing file", () => {
+    expect(classifyWhisperStartError(MODULE_INIT_TIMEOUT_MESSAGE)).toBe(MODULE_INIT_TIMEOUT_MESSAGE);
+  });
+});
+
+describe("createWhisperCppProvider — module init timeout surfaces as a real onError, never a silent hang (Node/vitest environment)", () => {
+  it("accepts moduleInitTimeoutMs without throwing at construction time", () => {
+    expect(() => createWhisperCppProvider({ onFinalResult: vi.fn(), moduleInitTimeoutMs: 5000 })).not.toThrow();
   });
 });

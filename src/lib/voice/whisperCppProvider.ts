@@ -395,6 +395,80 @@ async function fetchModel(url: string): Promise<Uint8Array> {
 // load, identical reasoning to sherpaOnnxProvider's moduleLoadPromise.
 let moduleLoadPromise: Promise<WhisperCommandModule> | null = null;
 
+/**
+ * REAL PRODUCTION FINDING, 2026-08-21 — the confirmed root cause of
+ * "Start Phrase gets stuck on Loading… forever, modelLoadMs stays null,
+ * no record is ever created, the export is silently empty."
+ *
+ * Confirmed via real browser testing (a real production BUILD run
+ * locally — `next build && next start`, no dev-mode tooling involved —
+ * reproducing Sidney's real deployed-production report exactly):
+ * `command.js`'s own internal pthread worker-pool bootstrap
+ * (`PThread.allocateUnusedWorker`, which does
+ * `new Worker(pthreadMainJs, {workerData:"em-pthread",name:"em-pthread"})`
+ * using the SAME compiled `command.js` as each worker's own entry
+ * script) fails immediately for every pool worker, with a content-free
+ * `ErrorEvent` (`message`/`filename`/`lineno` all `undefined` — a
+ * genuinely opaque browser-level failure, not something this file's own
+ * code can extract more detail from). Directly isolated: a minimal
+ * `new Worker("<...>/command.js")` — the exact same file, as a worker's
+ * own top-level script — reproduces the identical instant, contentless
+ * error with ZERO message exchange ever occurring first; the SAME file
+ * content loaded via `importScripts()` from WITHIN an already-running
+ * separate worker succeeds without error. Ruled out as causes, each
+ * confirmed directly: cross-origin asset hosting (same-origin, this
+ * round's own earlier fix), `crossOriginIsolated` (confirmed `true` on
+ * both the main thread AND inside a real worker), COEP mode (`credentialless`
+ * and `require-corp` both reproduce identically), Next.js dev-mode
+ * tooling (a genuine production build reproduces identically). This
+ * points to a real defect/incompatibility in the OFFICIAL whisper.cpp
+ * command.wasm build's (commit 339f2b4e) own pthread-worker bootstrap in
+ * this browser environment — not something fixable via EyeOnPit's own
+ * headers, asset hosting, or provider code. See the round's own final
+ * report for the recommended next step (a from-source Emscripten
+ * rebuild, or a different/newer upstream build, is required to actually
+ * fix pthread-worker startup — out of scope for this round).
+ *
+ * THE FIX THIS ROUND ACTUALLY SHIPS: with no timeout, `initModule()`'s
+ * wait for `postRun()` hangs forever when this happens — `start()`
+ * never resolves OR rejects, `onError` is never called, and the
+ * operator is left on "Loading…" indefinitely with a completely empty,
+ * silent diagnostic export. `withModuleInitTimeout` below bounds that
+ * wait so a failed/hung init ALWAYS surfaces a real, actionable
+ * `onError` (and therefore a real captured record with the failure
+ * reason) instead of hanging — this does not fix the underlying WASM
+ * defect, but it turns "silent, indefinite hang" into "clear, prompt,
+ * diagnosable failure," which is what a Lab tool exists to surface.
+ */
+export const MODULE_INIT_TIMEOUT_MESSAGE =
+  "whisper.cpp module init timed out — the compiled worker pool likely failed to start (see browser console for \"worker sent an error\" messages)";
+
+/** Generous default — real asset download (~33MB total) plus WASM instantiation could legitimately take several seconds on a slow connection; this only exists to bound an otherwise-infinite hang, not to rush a genuinely slow-but-working load. */
+export const DEFAULT_MODULE_INIT_TIMEOUT_MS = 20000;
+
+/**
+ * Pure, independently testable (via fake timers) — bounds `readyPromise`
+ * with a real timeout, rejecting with `MODULE_INIT_TIMEOUT_MESSAGE` if it
+ * neither resolves nor rejects in time. Never resolves/rejects twice
+ * (the loser of the race is a no-op via `clearTimeout`/an already-settled
+ * promise).
+ */
+export function withModuleInitTimeout<T>(readyPromise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(MODULE_INIT_TIMEOUT_MESSAGE)), timeoutMs);
+    readyPromise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 export interface WhisperCppProviderOptions extends SpeechProviderOptions {
   /** Base URL `command.js`/`helpers.js`/`coi-serviceworker.js`/the model file are served from. Defaults to `resolveDefaultWhisperAssetBaseUrl(process.env)`. */
   assetBaseUrl?: string;
@@ -402,6 +476,8 @@ export interface WhisperCppProviderOptions extends SpeechProviderOptions {
   modelId?: WhisperCppModelId;
   /** How often (ms) to poll `get_transcribed()`/`get_status()` AND re-feed the full accumulated audio buffer via `set_audio()` — see the module's own doc comment on why this must be the FULL buffer, matching the real reference implementation's own ~250ms cadence exactly. */
   feedIntervalMs?: number;
+  /** Bounds the wait for the compiled module's `postRun()` — see `MODULE_INIT_TIMEOUT_MESSAGE`'s own doc comment for the real production hang this prevents. Defaults to `DEFAULT_MODULE_INIT_TIMEOUT_MS`. */
+  moduleInitTimeoutMs?: number;
 }
 
 /**
@@ -425,6 +501,7 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
   const assetBaseUrl = (options.assetBaseUrl ?? DEFAULT_ASSET_BASE_URL).replace(/\/?$/, "/");
   const modelId = options.modelId ?? DEFAULT_WHISPER_MODEL;
   const feedIntervalMs = options.feedIntervalMs ?? 250;
+  const moduleInitTimeoutMs = options.moduleInitTimeoutMs ?? DEFAULT_MODULE_INIT_TIMEOUT_MS;
   const detection = detectAmbientWhisperCppSupport();
   const supported = detection.webAssembly && detection.audioWorklet && detection.getUserMedia;
 
@@ -452,22 +529,32 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
 
   async function initModule(): Promise<WhisperCommandModule> {
     if (!moduleLoadPromise) {
-      moduleLoadPromise = (async () => {
-        const win = getWhisperWindow();
-        win.Module = {
-          locateFile: (path: string) => `${assetBaseUrl}${path}`,
-        };
-        await loadScript(`${assetBaseUrl}command.js`);
-        await new Promise<void>((resolve) => {
-          const mod = win.Module!;
-          const priorPostRun = mod.postRun;
-          mod.postRun = () => {
-            priorPostRun?.();
-            resolve();
+      moduleLoadPromise = withModuleInitTimeout(
+        (async () => {
+          const win = getWhisperWindow();
+          win.Module = {
+            locateFile: (path: string) => `${assetBaseUrl}${path}`,
           };
-        });
-        return win.Module!;
-      })();
+          await loadScript(`${assetBaseUrl}command.js`);
+          await new Promise<void>((resolve) => {
+            const mod = win.Module!;
+            const priorPostRun = mod.postRun;
+            mod.postRun = () => {
+              priorPostRun?.();
+              resolve();
+            };
+          });
+          return win.Module!;
+        })(),
+        moduleInitTimeoutMs
+      ).catch((err) => {
+        // A failed/timed-out load must never be cached permanently — see
+        // MODULE_INIT_TIMEOUT_MESSAGE's own doc comment. A later start()
+        // attempt (a retry, or the next phrase) gets a genuinely fresh
+        // attempt instead of the same rejected promise forever.
+        moduleLoadPromise = null;
+        throw err;
+      });
     }
     return moduleLoadPromise;
   }

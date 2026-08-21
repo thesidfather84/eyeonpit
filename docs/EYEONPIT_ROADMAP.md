@@ -12,6 +12,22 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### Whisper Lab — Real Root Cause of the Production Hang Found; Timeout/Diagnostics Fix Shipped (2026-08-21)
+
+**Problem:** Sidney's real production session (`modelLoadMs: null`, `records: []`, `aggregatesByConfig: []`) showed Whisper never reaching a usable state and creating zero phrase records — a silent, indefinite hang with no diagnostic.
+
+**Root cause, isolated via direct browser testing:** reproduced exactly in a genuine local production build (`next build && next start`, no dev-mode tooling — ruling that out as a confound). `command.js`'s own internal pthread worker-pool bootstrap fails immediately for every pool worker with a completely content-free `ErrorEvent`. Directly isolated: a minimal `new Worker("<...>/command.js")` — the SAME file, as a worker's own entry script — reproduces the identical instant failure with zero message ever exchanged; the same file loaded via `importScripts()` from within an already-running worker succeeds fine. This is a real defect in the official whisper.cpp `command.wasm` build's (commit `339f2b4e`) own pthread-worker bootstrap — not fixable via EyeOnPit's headers, asset hosting, or provider code.
+
+**Ruled out, each directly confirmed:** cross-origin hosting (already same-origin), `crossOriginIsolated` (true everywhere, including inside a real worker), COEP mode (both `credentialless` and `require-corp` fail identically), Next.js dev-mode tooling (a real production build reproduces identically), asset reachability/integrity (all HTTP 200, correct sizes).
+
+**Fix shipped:** `initModule()`'s wait for the module's `postRun()` had no timeout — when it never fires, the hang was infinite and silent. `withModuleInitTimeout` (`whisperCppProvider.ts`) now bounds it to 20s, after which a real, actionable `onError` fires — which the Lab page's existing error handler already turns into a real captured record and a visible "Last error" field. This does NOT fix the underlying WASM defect (Whisper still cannot construct in this environment) — it turns an indefinite silent hang into a clear, prompt, exportable failure.
+
+**Explicitly not done:** did not rebuild whisper.cpp from source with Emscripten (a substantial undertaking, out of scope this round though authorized); no changes to EyeOnPit grammar, Browser Web Speech, Sherpa behavior, or `counting-engine/` (all confirmed untouched).
+
+**Tests:** 6 new in `whisperCppProvider.test.ts` covering the timeout logic (resolves normally, rejects real errors without masking, times out on a genuinely hung promise, doesn't fire early, doesn't get misclassified as assets-not-found). Full suite green (1565 passed, 1 pre-existing skip), `tsc --noEmit` clean, `eslint` clean.
+
+**Status:** committed, pushed, deployed to Vercel production (Ready). **Whisper still does not work** — this fix makes failure fast and visible, not successful. Next real step: either build `command.wasm` from source with a corrected/newer Emscripten toolchain, or evaluate a different upstream whisper.cpp WASM artifact. Do not attempt a real-microphone session until construction actually succeeds.
+
 ### Whisper Lab Provider — Real Assets Deployed, Two Real Construction Blockers Found and Fixed (2026-08-20 follow-up)
 
 **Problem:** the Whisper provider architecture (previous entry) was real, working code, but no real WASM/model assets existed anywhere, so it could never actually load.

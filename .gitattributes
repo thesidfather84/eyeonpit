@@ -1,0 +1,6 @@
+# Vendored, unmodified third-party whisper.cpp command.wasm build — never
+# line-ending-converted or diffed. Committed as real binary blobs so the
+# bytes on disk always match the sha256 values recorded in
+# WHISPER_CPP_ASSET_MANIFEST (src/lib/voice/whisperCppProvider.ts) exactly,
+# regardless of any local git core.autocrlf setting.
+public/whisper-cpp-lab/* binary

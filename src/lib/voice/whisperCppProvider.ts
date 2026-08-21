@@ -130,20 +130,52 @@
  * ============================================================
  *
  * ============================================================
- * ASSET DEPLOYMENT
+ * ASSET DEPLOYMENT — SAME-ORIGIN, NOT a cross-origin CDN (unlike sherpa-onnx)
  * ============================================================
- * Local dev: place the 4 extracted files (`command.js`, `helpers.js`,
- * `coi-serviceworker.js`, `whisper.bin`) in the gitignored
- * `public/whisper-cpp-lab/` directory (see `.gitignore`) — never
- * committed, ~33MB total, the same treatment as sherpa-onnx's own
- * gitignored local asset directory. `assetBaseUrl`/
- * `NEXT_PUBLIC_WHISPER_ASSET_BASE_URL` default to `/whisper-cpp-lab/`
- * when unset.
- * Production: the SAME Vercel Blob strategy that fixed sherpa-onnx's own
- * "assets-not-found" production incident — public-read, version-pinned by
- * the commit hash above so a future, genuinely different whisper.cpp build
- * lives at a different path rather than silently overwriting this one. See
- * the round's own final report for the exact deployed Blob path.
+ * A real, compelling, DIRECTLY TESTED reason this provider's assets are
+ * committed to git and served SAME-ORIGIN from `public/whisper-cpp-lab/`,
+ * rather than an external CDN like sherpa-onnx's own Vercel Blob strategy:
+ *
+ * `command.js`'s own internal pthread worker-pool bootstrap
+ * (`allocateUnusedWorker`) calls `new Worker(mainScriptUrl)` DIRECTLY on
+ * its own script URL — and the Worker CONSTRUCTOR (unlike `fetch()`,
+ * `<script src>`, or `importScripts()` called from WITHIN an
+ * already-running worker) enforces same-origin for its initial script
+ * argument at the BROWSER level, unconditionally — no CORS header, no
+ * COEP/COOP configuration, and no Vercel Blob setting can satisfy this.
+ * CONFIRMED directly, 2026-08-20: pointing this provider's `assetBaseUrl`
+ * at a real, working, public-read Vercel Blob URL produced a real, fatal,
+ * uncaught `SecurityError: Failed to construct 'Worker': Script ... cannot
+ * be accessed from origin ...` every time, in a real browser, via real
+ * browser automation — not a hypothetical. (Separately confirmed sherpa-onnx
+ * itself does not hit this — its own WASM build doesn't spawn workers this
+ * way — so its Blob-based strategy remains correct for IT; this is a
+ * genuine, asset-specific difference, not a contradiction of that prior
+ * work.)
+ *
+ * Given that hard constraint, and given the full asset bundle here
+ * (~33MB — `command.js` 1.73MB, `helpers.js`/`coi-serviceworker.js`
+ * ~13KB combined, `whisper.bin` ~31MB) is comfortably under Vercel's
+ * documented 100MB (Hobby) / 1GB (Pro) source-upload limit — unlike
+ * sherpa-onnx's ~204MB bundle, which is what actually forced Blob usage
+ * there — committing these files directly to `public/whisper-cpp-lab/`
+ * and letting Vercel serve them same-origin (its ordinary static-asset
+ * path, not a special case) is the correct, simplest, and only option
+ * that satisfies the Worker same-origin requirement. `assetBaseUrl`/
+ * `NEXT_PUBLIC_WHISPER_ASSET_BASE_URL` both default to `/whisper-cpp-lab/`
+ * — a real, relative, same-origin path in every environment, dev or
+ * production — no environment-specific override is needed or set.
+ *
+ * `coi-serviceworker.js` is deployed alongside the others (matching the
+ * live reference bundle exactly) but is NOT currently wired into the Lab
+ * page's own `<head>` — cross-origin isolation is instead achieved via
+ * real `Cross-Origin-Opener-Policy`/`Cross-Origin-Embedder-Policy`
+ * response headers scoped to `/lab/sherpa-voice-test` in `next.config.ts`
+ * (confirmed sufficient: `self.crossOriginIsolated` reads `true` with
+ * this in place, real browser test). The file is kept deployed for
+ * provenance/fidelity with the official bundle and as a documented
+ * fallback path a future round could wire in if the header-based approach
+ * ever proves insufficient in some environment.
  *
  * ============================================================
  * SAFETY BOUNDARY — IDENTICAL to every other SpeechProvider. This provider

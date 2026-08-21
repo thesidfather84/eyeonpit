@@ -51,8 +51,11 @@ next-env.d.ts
 # too large for version control, and never meant to ship to operators.
 /public/sherpa-onnx-lab/
 
-# EXPERIMENTAL whisper.cpp command.wasm WASM/model assets (~33MB) —
-# lab/dev-only, per whisperCppProvider.ts's own ASSET DEPLOYMENT doc
-# comment. Never committed: too large for version control, never meant to
-# ship to operators.
-/public/whisper-cpp-lab/
+# whisper.cpp command.wasm WASM/model assets (~33MB) ARE committed —
+# see whisperCppProvider.ts's own ASSET DEPLOYMENT doc comment for the
+# compelling, documented reason (browser-level `new Worker(url)` same-
+# origin security cannot be satisfied by a cross-origin CDN like Vercel
+# Blob for this specific multi-threaded WASM build, confirmed by direct
+# testing 2026-08-20 — unlike sherpa-onnx, which has no such requirement).
+# 33MB is comfortably under Vercel's 100MB Hobby/1GB Pro source-upload
+# limit, unlike sherpa-onnx's ~204MB bundle.

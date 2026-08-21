@@ -12,6 +12,26 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### Whisper Lab Provider — Real Assets Deployed, Two Real Construction Blockers Found and Fixed (2026-08-20 follow-up)
+
+**Problem:** the Whisper provider architecture (previous entry) was real, working code, but no real WASM/model assets existed anywhere, so it could never actually load.
+
+**Real assets extracted:** the exact compiled `command.js`/`helpers.js`/`coi-serviceworker.js` from whisper.cpp's official live demo (ggml.ai/whisper.cpp/command.wasm/), pinned to the exact upstream commit the demo's own footer discloses (`339f2b4e`), plus the real `ggml-tiny.en-q5_1.bin` model from Hugging Face. All sha256-recorded.
+
+**Real API bugs found and fixed** by reading the live reference's own inline script: model must be written to the fixed path `"whisper.bin"` via `FS_createDataFile`/`FS_unlink` (not `FS.writeFile`); `set_audio()` replaces the engine's buffer every call, so audio must be accumulated and re-fed in full (~250ms cadence) rather than fed incrementally — the previous version would have only ever shown the engine ~2.9ms of audio at a time; the compiled glue needs the literal global `Module`, colliding with sherpa-onnx's own use of the same name (TypeScript caught this — fixed with a local cast, no changes to sherpa-onnx's code).
+
+**Two real construction blockers found via real browser testing, both fixed:**
+1. Cross-origin isolation required (`SharedArrayBuffer transfer requires self.crossOriginIsolated`) — fixed with COOP/COEP response headers scoped only to `/lab/sherpa-voice-test`.
+2. Cross-origin CDN hosting (the same Vercel Blob strategy that works for sherpa-onnx) is fundamentally incompatible with this specific build — its worker-pool bootstrap calls `new Worker()` directly on its own cross-origin URL, which the browser blocks unconditionally at the Worker-constructor level (confirmed via a real `SecurityError` in a real browser). Resolved by committing the ~33MB asset bundle directly to `public/whisper-cpp-lab/` and serving it same-origin — a compelling, directly-tested, documented exception to "don't commit large binaries," justified by the bundle being well under Vercel's 100MB limit (unlike sherpa-onnx's ~204MB) and by cross-origin hosting being provably unworkable for this asset.
+
+**What remains unverified:** full end-to-end construction (module ready, model loaded, real context handle from `init()`) was not completed this round. Same-origin script loading, tested locally, hit a separate issue — concurrent worker `importScripts()` requests for the same file returning 503 after the first succeeds — that direct `curl` could not reproduce, strong evidence it's a local dev-server serving quirk rather than a code defect, but not confirmed against real Vercel production static hosting. Interactive verification against the deployed Lab page itself was not completed either, since the production Lab passcode wasn't available this round (correctly not guessed/brute-forced).
+
+**Explicitly not done:** no production wiring, no ASR ensemble, no accuracy claims. `counting-engine/`, `VoiceControl.tsx`, Browser Web Speech, and sherpa-onnx's own Blob deployment all confirmed untouched.
+
+**Tests:** existing `whisperCppProvider.test.ts` suite (28 tests) re-verified passing after the API/asset corrections. Full suite green (1559 passed, 1 pre-existing skip), `tsc --noEmit` clean, `eslint` clean (added a `public/whisper-cpp-lab/**` exclusion mirroring the existing sherpa one, since these are vendored third-party files now committed for a real, documented reason).
+
+**Status:** committed, pushed, deployed to Vercel production (Ready). **Not field-validated, not even construction-validated end-to-end.** See `docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md` §12.5b for the full investigation. Next step: confirm same-origin asset loading actually completes construction against real Vercel static hosting (not the local dev server), then proceed to Sidney's real-microphone session once that's confirmed.
+
 ### Whisper.cpp Added as Third Lab Research Provider (2026-08-20)
 
 **Problem:** too much time was being spent tuning Sherpa-ONNX without

@@ -330,7 +330,19 @@ function ensureSession(origin: string, readyTimeoutMs: number): WhisperIframeSes
       listeners.add(onReadyOrError);
     }),
     readyTimeoutMs
-  );
+  ).catch((err) => {
+    // A failed/timed-out session must never be cached permanently — same
+    // reasoning as the prior in-process provider's own moduleLoadPromise
+    // reset (see git history). Without this, a transient failure (a slow
+    // Vercel cold start, a momentary network blip) would wedge EVERY later
+    // phrase in the same Lab session behind the same already-rejected
+    // promise forever, with no way to recover short of a full page reload.
+    if (session === newSession) {
+      session.iframeEl.remove();
+      session = null;
+    }
+    throw err;
+  });
 
   const newSession: WhisperIframeSession = {
     origin,

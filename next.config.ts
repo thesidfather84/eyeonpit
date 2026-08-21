@@ -42,24 +42,34 @@ const nextConfig: NextConfig = {
           { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
         ],
       },
-      // REMOVED 2026-08-21: this route used to need crossOriginIsolated
-      // (COOP/COEP) because whisper.cpp's compiled command.js — loaded
-      // in-process, directly into THIS page — used SharedArrayBuffer-backed
-      // worker threads. That architecture is gone (see
-      // whisperCppProvider.ts's own top-of-file ARCHITECTURE doc comment):
-      // the WASM runtime now lives entirely on its own isolated origin
-      // (whisper-static-lab.vercel.app, embedded via <iframe>), which
-      // carries its OWN COOP/COEP headers for its OWN crossOriginIsolated
-      // need. This page no longer runs any SharedArrayBuffer-dependent code
-      // itself. Keeping COEP here was actively HARMFUL, not just
-      // unnecessary: a page with COEP enabled additionally enforces
-      // Cross-Origin-Resource-Policy on every iframe it embeds, and
-      // whisper-static-lab's own CORP: same-origin (needed for its WASM
-      // Worker's same-origin requirement — see that project's own
-      // vercel.json) made the browser silently refuse to load the Whisper
-      // iframe at all — confirmed directly: the iframe never sent
-      // `whisper:ready`, reproducing exactly the real production failure
-      // this fix resolves.
+      // RESTORED 2026-08-21 after being briefly (and INCORRECTLY) removed
+      // earlier the same day. The mistaken reasoning: since whisper.cpp's
+      // WASM runtime no longer runs in-process on THIS page (it moved to
+      // its own isolated origin, whisper-static-lab.vercel.app, embedded
+      // via <iframe> — see whisperCppProvider.ts's own ARCHITECTURE doc
+      // comment), it looked like this page no longer needed
+      // crossOriginIsolated itself. Real, direct testing proved that
+      // reasoning wrong: `self.crossOriginIsolated` inside a NESTED iframe
+      // requires COEP on the ENTIRE ancestor chain, not just the iframe's
+      // own document — removing COEP here made the Whisper iframe's own
+      // crossOriginIsolated read `false` despite its own COOP/COEP headers,
+      // silently breaking its SharedArrayBuffer-backed pthread worker pool
+      // (module init hung forever on `debug:awaiting-module`, confirmed via
+      // real instrumentation). The ACTUAL bug removing this had been meant
+      // to fix — whisper-static-lab's own `Cross-Origin-Resource-Policy:
+      // same-origin` blocking this COEP-enabled page from embedding it at
+      // all — is fixed on the OTHER side instead: that project's
+      // vercel.json now sends `Cross-Origin-Resource-Policy: cross-origin`,
+      // which satisfies COEP's requirement without EyeOnPit giving up its
+      // own COEP. Both fixes are required together, verified end-to-end in
+      // a real browser: real transcription, zero wake phrase.
+      {
+        source: "/lab/sherpa-voice-test",
+        headers: [
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+          { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
+        ],
+      },
     ];
   },
 };

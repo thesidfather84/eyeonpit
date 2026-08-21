@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FlaskConical, Mic, Square, SkipForward, ArrowRight, Download, Copy, Check, X } from "lucide-react";
 import { createSherpaOnnxProvider, resolveDefaultAssetBaseUrl } from "@/lib/voice/sherpaOnnxProvider";
 import { createBrowserWebSpeechProvider } from "@/lib/voice/browserWebSpeechProvider";
+import { createWhisperCppProvider, resolveDefaultWhisperAssetBaseUrl } from "@/lib/voice/whisperCppProvider";
 import { buildHotwordList } from "@/lib/voice/casinoVoiceContext";
 import { classifyVoiceTranscript } from "@/lib/voice/classifyVoiceTranscript";
 import type { SpeechProvider, SpeechProviderResult } from "@/lib/voice/speechProvider";
@@ -108,7 +109,7 @@ const NOISE_PHRASES = [
 
 const ALL_PHRASES = [...DEALER_STRESS_PHRASES, ...PLAYER_PHRASES, ...NOISE_PHRASES];
 
-type ProviderChoice = "sherpa-onnx" | "browser-web-speech";
+type ProviderChoice = "sherpa-onnx" | "browser-web-speech" | "whisper-cpp";
 /** Provider-connection-level status — separate from PhraseState, which tracks the CURRENT phrase's own start/end cycle. */
 type ProviderStatus = "idle" | "loading" | "listening" | "error" | "stopped";
 type PhraseState = "idle" | "listening" | "done" | "skipped";
@@ -133,6 +134,13 @@ const ASSET_BASE_URL = resolveDefaultAssetBaseUrl({
   NEXT_PUBLIC_SHERPA_ASSET_BASE_URL: process.env.NEXT_PUBLIC_SHERPA_ASSET_BASE_URL,
 }).replace(/\/?$/, "/");
 const BPE_VOCAB_URL = `${ASSET_BASE_URL}bpe.vocab`;
+
+// Identical reasoning/pattern to ASSET_BASE_URL above, for the new Whisper
+// provider — see whisperCppProvider.ts's own ASSET DEPLOYMENT doc comment
+// for why nothing is provisioned at this path in any environment yet.
+const WHISPER_ASSET_BASE_URL = resolveDefaultWhisperAssetBaseUrl({
+  NEXT_PUBLIC_WHISPER_ASSET_BASE_URL: process.env.NEXT_PUBLIC_WHISPER_ASSET_BASE_URL,
+}).replace(/\/?$/, "/");
 
 interface InterimSnapshot {
   atMs: number;
@@ -350,8 +358,11 @@ export default function SherpaVoiceTestPage() {
         utteranceT0Ref.current = performance.now();
       },
     };
-    if (providerChoice !== "sherpa-onnx") {
+    if (providerChoice === "browser-web-speech") {
       return createBrowserWebSpeechProvider(commonOptions);
+    }
+    if (providerChoice === "whisper-cpp") {
+      return createWhisperCppProvider({ ...commonOptions, assetBaseUrl: WHISPER_ASSET_BASE_URL });
     }
     return createSherpaOnnxProvider({
       ...commonOptions,
@@ -488,7 +499,7 @@ export default function SherpaVoiceTestPage() {
     <div className="flex flex-col gap-4 pb-8">
       <div className="flex items-center gap-2">
         <FlaskConical className="h-5 w-5 text-accent" aria-hidden />
-        <h1 className="text-lg font-bold text-foreground">Sherpa Dealer A/B/C Field Test</h1>
+        <h1 className="text-lg font-bold text-foreground">Voice Provider Field Test</h1>
       </div>
       <p className="rounded-md border border-pending/40 bg-pending/10 p-2 text-xs font-medium text-pending">
         LAB DIAGNOSTIC. This page never creates a CardEvent and is not connected to any investigation. It shows raw
@@ -520,6 +531,16 @@ export default function SherpaVoiceTestPage() {
           >
             Chrome Web Speech (baseline)
           </button>
+          <button
+            type="button"
+            onClick={() => setProviderChoice("whisper-cpp")}
+            disabled={phraseState === "listening"}
+            className={`tap-target rounded-lg border px-3 text-sm font-semibold ${
+              providerChoice === "whisper-cpp" ? "border-accent bg-accent text-accent-foreground" : "border-border text-foreground"
+            } disabled:opacity-60`}
+          >
+            Whisper (Experimental)
+          </button>
         </div>
 
         {providerChoice === "sherpa-onnx" && (
@@ -542,9 +563,11 @@ export default function SherpaVoiceTestPage() {
           </div>
         )}
         <p className="mt-2 text-xs text-muted-foreground">
-          {providerChoice !== "sherpa-onnx"
+          {providerChoice === "browser-web-speech"
             ? "Chrome baseline — A/B/C only applies to Sherpa."
-            : abConfig === "A"
+            : providerChoice === "whisper-cpp"
+              ? "Experimental, local/offline — runs entirely in the browser, no audio ever sent to a remote service. A/B/C only applies to Sherpa."
+              : abConfig === "A"
               ? "No hotwords file at all."
               : abConfig === "B"
                 ? 'Hotwords ON, modelingUnit="cjkchar" (default) — the exact configuration every prior round shipped. CONFIRMED wrong for this model.'
@@ -564,7 +587,12 @@ export default function SherpaVoiceTestPage() {
           data-testid="active-config-banner"
           className="mb-2 inline-block rounded-full border border-accent bg-accent/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-accent"
         >
-          Recording under: {providerChoice === "sherpa-onnx" ? `Sherpa-ONNX — Config ${abConfig}` : "Chrome Web Speech (baseline)"}
+          Recording under:{" "}
+          {providerChoice === "sherpa-onnx"
+            ? `Sherpa-ONNX — Config ${abConfig}`
+            : providerChoice === "whisper-cpp"
+              ? "Whisper (Experimental)"
+              : "Chrome Web Speech (baseline)"}
         </p>
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-bold text-foreground">
@@ -680,6 +708,11 @@ export default function SherpaVoiceTestPage() {
       {/* Aggregate accuracy per configuration */}
       <section className="rounded-xl border border-border bg-surface p-3">
         <h2 className="mb-2 text-sm font-bold text-foreground">3. Aggregate accuracy by configuration</h2>
+        <p className="mb-2 text-[11px] text-muted-foreground">
+          Read the &quot;Would produce CardEvent rate&quot; column FIRST — a false CardEvent is the most important
+          failure a provider can have, worse than simply rejecting a valid phrase. Do not rank providers by raw
+          accepted/transcript-accuracy rate alone.
+        </p>
         {aggregatesByConfig.some((a) => a.total !== aggregatesByConfig[0]?.total) && (
           <p className="mb-2 rounded-md border border-pending/40 bg-pending/10 p-2 text-[11px] font-medium text-pending">
             Unequal phrase counts per configuration — these rates are descriptive of what was actually captured in
@@ -776,7 +809,9 @@ export default function SherpaVoiceTestPage() {
               {records.map((r) => (
                 <tr key={r.index} className="border-t border-border">
                   <td className="pr-2 text-foreground">{r.index + 1}</td>
-                  <td className="pr-2 text-muted-foreground">{r.provider === "sherpa-onnx" ? r.abConfig : "chrome"}</td>
+                  <td className="pr-2 text-muted-foreground">
+                    {r.provider === "sherpa-onnx" ? r.abConfig : r.provider === "whisper-cpp" ? "whisper" : "chrome"}
+                  </td>
                   <td className="pr-2 text-muted-foreground">{r.expectedPhrase ?? "—"}</td>
                   <td className="pr-2 font-medium text-foreground">{r.finalText ?? "—"}</td>
                   <td className="pr-2 text-foreground">{r.classification?.summary ?? "—"}</td>

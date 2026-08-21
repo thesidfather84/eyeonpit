@@ -57,6 +57,31 @@ describe("Sherpa A/B/C Lab page — REGRESSION (items 7 & 8, 2026-08-20 real mic
     expect(screen.getByText(/Captured results \(0\)/)).toBeTruthy();
   });
 
+  it("Whisper is selectable as a third provider, resets the phrase run on switch, and updates the banner", () => {
+    render(<SherpaVoiceTestPage />);
+    fireEvent.click(screen.getByRole("button", { name: /Skip/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Next Phrase/ }));
+    expect(phraseHeading()).toContain("Phrase 2 of 29");
+
+    fireEvent.click(screen.getByRole("button", { name: /Whisper \(Experimental\)/ }));
+
+    expect(phraseHeading()).toContain("Phrase 1 of 29");
+    expect(screen.getByTestId("active-config-banner").textContent).toContain("Whisper");
+    // The Sherpa-only A/B/C selector must not appear for Whisper.
+    expect(screen.queryByRole("button", { name: /A — Hotwords OFF/ })).toBeNull();
+  });
+
+  it("REGRESSION (safety, Whisper): starting a phrase under Whisper fails closed with a real error, never a fake success — Whisper is unsupported in this test environment exactly like Sherpa (no real AudioWorklet/getUserMedia)", () => {
+    render(<SherpaVoiceTestPage />);
+    fireEvent.click(screen.getByRole("button", { name: /Whisper \(Experimental\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Start Phrase/ }));
+
+    expect(screen.getByText("unsupported-in-this-browser")).toBeTruthy();
+    expect(screen.getByText("error")).toBeTruthy();
+    // No fabricated success and no phantom CardEvent-eligible record either.
+    expect(screen.getByText(/Captured results \(0\)/)).toBeTruthy();
+  });
+
   it("switching the provider (Sherpa -> Chrome baseline) also resets the phrase run and updates the banner", () => {
     render(<SherpaVoiceTestPage />);
     fireEvent.click(screen.getByRole("button", { name: /Skip/ }));

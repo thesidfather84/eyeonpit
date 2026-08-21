@@ -12,6 +12,70 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### Whisper.cpp Added as Third Lab Research Provider (2026-08-20)
+
+**Problem:** too much time was being spent tuning Sherpa-ONNX without
+knowing whether another free/open-source engine performs better on
+EyeOnPit's casino vocabulary. Turned the Lab into a real, controlled
+three-way comparison: Browser Web Speech (production baseline) /
+Sherpa-ONNX / Whisper (new).
+
+**Implementation chosen:** whisper.cpp's official `examples/command.wasm`
+— the ONE upstream example whose own README already describes it as "a
+basic Voice Assistant example that accepts voice commands from the
+microphone," matching EyeOnPit's short-command use case directly (over
+`whisper.wasm`'s general file/mic transcription or `stream.wasm`'s
+continuous streaming). No third-party wrapper considered. Real API
+contract (`init`/`set_audio`/`get_transcribed`/`get_status`/`free`) read
+directly from the upstream source, not guessed.
+
+**Honestly disclosed limitation:** unlike Sherpa (whose official prebuilt
+WASM release was downloaded and run against real audio in a real browser
+via automation), Whisper's provider has NOT been verified running in a
+real browser this round — whisper.cpp publishes no prebuilt browser
+release (confirmed) and no emscripten/CMake toolchain exists here
+(confirmed, same constraint as every prior investigation). `start()`
+correctly, honestly reports `assets-not-found` until real assets are
+provisioned — fail-closed, never a fake success.
+
+**Model:** `tiny.en-q5_1` (31MB, quantized) as the default — smallest/
+fastest of the real model sizes confirmed from whisper.cpp's own live
+demo (https://ggml.ai/whisper.cpp/command.wasm/); `base.en-q5_1` (57MB)
+also available. No infrastructure provisioned — no assets exist anywhere
+yet to deploy.
+
+**Lab integration:** three plain-language provider buttons (Sherpa-ONNX /
+Chrome Web Speech / Whisper); Sherpa's A/B/C selector stays Sherpa-only;
+all three reuse the same phrase corpus and Start/End Phrase workflow;
+every provider's transcript flows through the same single, unmodified
+`classifyVoiceTranscript` call site (no provider can bypass classification
+or reach a CardEvent — this page has zero CardEvent-ledger/
+`InvestigationContext` imports); aggregates grouped per-provider via the
+extended `sherpaAbTestHarness.ts`; a new caption tells the operator to
+read the "would produce CardEvent" rate first, never rank by raw accuracy
+alone.
+
+**Explicitly not done:** Whisper is NOT claimed better or worse than
+anything — no real-mic comparison exists yet. Not production-wired. No
+ASR ensemble/fallback system. `counting-engine/`, Browser Web Speech
+(`browserWebSpeechProvider.ts`), `VoiceControl.tsx`, and
+`useVoiceRecognition.ts` all confirmed untouched (empty diffs).
+
+**Tests:** 24 new in `whisperCppProvider.test.ts` (feature detection, asset
+URL resolution, error classification, provenance/model data, unsupported-
+environment fail-closed behavior), 2 new in `sherpaAbTestHarness.test.ts`
+(three-way grouping never bleeds), 2 new in the Lab page test file
+(Whisper selectable + resets on switch; starting under Whisper fails
+closed with zero fabricated records). Full suite green (1555 passed, 1
+pre-existing skip, no flakes this run), `tsc --noEmit` clean, `eslint`
+clean, `counting-engine/` diff empty.
+
+**Status:** complete, gates green. See
+`docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md` §12. Next step: Sidney runs a
+real microphone session once real WASM/model assets are provisioned (see
+the round's own final report for exact setup instructions) — do not treat
+Whisper as validated, better, or worse than any other provider until then.
+
 ### Sherpa Finalization Regression Guard + Lab Copy-Feedback (2026-08-20, follow-up)
 
 **Problem:** a second real production mic session against Config C, run

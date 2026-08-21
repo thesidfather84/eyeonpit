@@ -68,7 +68,7 @@ export function resolveAbConfigProviderOptions(
 
 /** Minimal shape this module needs from the Lab page's own `UtteranceRecord` — kept narrow and structural rather than importing the page's full type, so this module has zero dependency on the page component. */
 export interface AbTestRecordLike {
-  provider: "sherpa-onnx" | "browser-web-speech";
+  provider: "sherpa-onnx" | "browser-web-speech" | "whisper-cpp";
   abConfig: AbConfig | null;
   classification: { accepted: boolean; wouldProduceCardEvent: boolean } | null;
   correctness: "unmarked" | "correct" | "incorrect";
@@ -97,7 +97,8 @@ export interface AbTestAggregate {
 export function computeAggregatesByConfig(records: AbTestRecordLike[]): AbTestAggregate[] {
   const groups: Record<string, AbTestRecordLike[]> = {};
   for (const r of records) {
-    const key = r.provider === "sherpa-onnx" ? `sherpa-${r.abConfig ?? "?"}` : "chrome";
+    const key =
+      r.provider === "sherpa-onnx" ? `sherpa-${r.abConfig ?? "?"}` : r.provider === "whisper-cpp" ? "whisper" : "chrome";
     (groups[key] ??= []).push(r);
   }
   return Object.entries(groups).map(([key, recs]) => {

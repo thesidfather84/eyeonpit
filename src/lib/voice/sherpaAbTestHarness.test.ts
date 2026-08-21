@@ -75,6 +75,20 @@ describe("computeAggregatesByConfig — REGRESSION (item 8): A/B/C records never
     expect(keys).toEqual(["chrome", "sherpa-C"]);
   });
 
+  it("a Whisper record groups into its own 'whisper' key, separate from both Chrome and every Sherpa config — three-way comparison never bleeds", () => {
+    const records: AbTestRecordLike[] = [
+      record({ provider: "browser-web-speech", abConfig: null }),
+      record({ provider: "sherpa-onnx", abConfig: "C" }),
+      record({ provider: "whisper-cpp", abConfig: null }),
+      record({ provider: "whisper-cpp", abConfig: null }),
+    ];
+    const aggregates = computeAggregatesByConfig(records);
+    const byKey = Object.fromEntries(aggregates.map((a) => [a.key, a.total]));
+    expect(byKey.chrome).toBe(1);
+    expect(byKey["sherpa-C"]).toBe(1);
+    expect(byKey.whisper).toBe(2);
+  });
+
   it("REGRESSION (unequal totals, 2026-08-20 real session): totals are reported exactly as captured, never padded/normalized to a common N", () => {
     // Mirrors the real session's own reported shape: A=26, B=27, C=25 —
     // never fabricated as if they were a controlled equal-N comparison.

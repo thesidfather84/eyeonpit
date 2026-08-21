@@ -47,6 +47,8 @@ export type RejectionCode =
   | "STALE_SESSION"
   /** The active target implied by this utterance's own narration conflicts with the live active target and the safety rule requires an explicit target rather than guessing (see parseNarration's "never guess where the earlier card landed" rule). */
   | "ACTIVE_TARGET_CONFLICT"
+  /** A bare "spot N double" was heard for a seat that has already split — recognized correctly, but which hand (1 or 2) is genuinely ambiguous and never guessed (see parseSplitDoubleCommand.ts, EyeOnPit 1.10 Phase 4). */
+  | "AMBIGUOUS_HAND_TARGET"
   /** A native recognition session ended without ever producing a final result (see useVoiceRecognition's onend/consumedRef). */
   | "ASR_NO_FINAL"
   /** The browser's SpeechRecognition raised a SpeechRecognitionErrorEvent — the verbatim error code is logged alongside this. */
@@ -117,6 +119,7 @@ export const REJECTION_CODE_TEXT: Record<RejectionCode, string> = {
   DUPLICATE_EVENT: "Identical to the immediately preceding result — ignored.",
   STALE_SESSION: "Event belongs to a stale/superseded recognition session.",
   ACTIVE_TARGET_CONFLICT: "This utterance's own target conflicts with the live active target — refusing to guess.",
+  AMBIGUOUS_HAND_TARGET: "Spot has split — Hand 1 or Hand 2 must be named explicitly to double.",
   ASR_NO_FINAL: "Recognition session ended without ever producing a final result.",
   ASR_ERROR: "The browser's speech recognition engine reported an error.",
   RECOGNITION_ENDED_UNEXPECTEDLY: "Recognition session ended.",

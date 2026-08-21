@@ -36,6 +36,7 @@ import { calculateCountSnapshot } from "@/lib/counting-engine/calculateCounts";
 import { eventsInShoe, mostRecentActiveEventForTarget } from "@/lib/counting-engine/ledger";
 import type { CardEvent, CardEventTargetType } from "@/lib/counting-engine/types";
 import { describeLedgerTarget, ledgerTargetFor } from "@/lib/utils/cardEventTarget";
+import { isDoubledWithNoPostDoubleCard, reapplyDouble, resolveSeatTarget, revertDouble } from "@/lib/utils/seatTarget";
 import { diagnostics } from "@/lib/diagnostics/logger";
 import type {
   EventType,
@@ -82,7 +83,16 @@ type HistoryEntry =
       playerGroups: Record<string, PlayerGroup>;
       seatPlayerGroups: Partial<Record<number, string>>;
     }
-  | { kind: "rounds-snapshot"; rounds: Round[] };
+  | { kind: "rounds-snapshot"; rounds: Round[] }
+  /**
+   * EyeOnPit 1.10 Phase 2 — a target-scoped Double reversal, the same
+   * "identity, not a snapshot" shape `target-card` already uses for cards
+   * (see that variant's own reasoning). `doubledAtCardCount` is the value
+   * to restore on Redo — captured once, at undo-time, from the record
+   * being reverted, exactly like `target-card` captures a card's own rank
+   * so Redo can reconstruct it without re-deriving anything.
+   */
+  | { kind: "target-double"; target: number; doubledAtCardCount: number };
 
 function snapshotSeatConfig(investigation: Investigation): HistoryEntry {
   return {
@@ -464,6 +474,34 @@ export function InvestigationProvider({
   const undo = useCallback(async () => {
     if (!investigation || !currentRound) return;
 
+    // EyeOnPit 1.10 Phase 2 — the Double/Undo defect fix. Checked FIRST,
+    // ahead of the context-aware card lookup below: when the active
+    // target's own hand is doubled with no post-double card yet, that
+    // hand's own most recent real action WAS the double, not an earlier
+    // (pre-double) card — so Undo must revert the double, and must never
+    // touch the hand's existing cards. Once a post-double card exists,
+    // this check is false (see isDoubledWithNoPostDoubleCard's own doc
+    // comment) and undo() falls through to the existing card-undo path
+    // exactly as before — removing that one card first, which is what
+    // makes the SECOND Undo correctly reach this branch on its own.
+    if (isDoubledWithNoPostDoubleCard(currentRound, activeTarget)) {
+      const target = activeTarget as number; // isDoubledWithNoPostDoubleCard is false for "dealer"
+      const { record } = resolveSeatTarget(currentRound, target);
+      const doubledAtCardCount = record!.doubledAtCardCount!;
+      setFuture((f) => [{ kind: "target-double", target, doubledAtCardCount }, ...f]);
+      setBusy(true);
+      try {
+        await mutateRound(investigation.localId, currentRound.id, (round) => revertDouble(round, target), {
+          type: "correction",
+          message: `${describeLedgerTarget(target < 0 ? "split" : "seat", Math.abs(target))}: Undo Double`,
+        });
+        await refresh();
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     const ledgerTarget = ledgerTargetFor(activeTarget);
     const roundEvents = cardEvents.filter((e) => e.roundId === currentRound.id);
     const targetEvent = mostRecentActiveEventForTarget(
@@ -525,6 +563,16 @@ export function InvestigationProvider({
           seatPlayerGroups: entry.seatPlayerGroups,
         });
         await refresh();
+      } else if (entry.kind === "target-double") {
+        // Reached only via the generic history fallback — e.g. undoing a
+        // just-redone double while some OTHER target is active. Same
+        // reversal the dedicated early-return branch above performs.
+        setFuture((f) => [entry, ...f]);
+        await mutateRound(investigation.localId, currentRound.id, (round) => revertDouble(round, entry.target), {
+          type: "correction",
+          message: `${describeLedgerTarget(entry.target < 0 ? "split" : "seat", Math.abs(entry.target))}: Undo Double`,
+        });
+        await refresh();
       } else {
         setFuture((f) => [{ kind: "rounds-snapshot", rounds: investigation.rounds }, ...f]);
         await updateInvestigation(investigation.localId, { rounds: entry.rounds });
@@ -574,6 +622,14 @@ export function InvestigationProvider({
         occupiedSeats: entry.occupiedSeats,
         playerGroups: entry.playerGroups,
         seatPlayerGroups: entry.seatPlayerGroups,
+      })
+        .then(refresh)
+        .finally(() => setBusy(false));
+    } else if (entry.kind === "target-double") {
+      setHistory((h) => [...h, entry]);
+      mutateRound(investigation.localId, currentRound.id, (round) => reapplyDouble(round, entry.target, entry.doubledAtCardCount), {
+        type: "correction",
+        message: `${describeLedgerTarget(entry.target < 0 ? "split" : "seat", Math.abs(entry.target))}: Redo Double`,
       })
         .then(refresh)
         .finally(() => setBusy(false));
@@ -968,12 +1024,15 @@ export function InvestigationProvider({
     return <div className="p-4 text-sm text-muted-foreground">Investigation not found.</div>;
   }
 
-  // Mirrors undo()'s own priority: the active target's own most recent
-  // active card, in this round, if it has one — otherwise whatever the
-  // global-last-action fallback would affect. Recomputed every render so
-  // the button always reflects the current active target and ledger state,
-  // not just the session's history stack (a target-specific card can be
-  // undoable here even with an empty `history`, e.g. right after a reload).
+  // Mirrors undo()'s own priority, including the 1.10 Phase 2 double-undo
+  // check added ahead of everything else: the active target's own doubled-
+  // with-no-post-double-card state, then its own most recent active card,
+  // then whatever the global-last-action fallback would affect. Recomputed
+  // every render so the button always reflects the current active target
+  // and ledger state, not just the session's history stack (a target-
+  // specific card — or a doubled hand — can be undoable here even with an
+  // empty `history`, e.g. right after a reload).
+  const isDoubleUndo = isDoubledWithNoPostDoubleCard(currentRound, activeTarget);
   const ledgerTargetForActive = ledgerTargetFor(activeTarget);
   const roundEventsForUndo = cardEvents.filter((e) => e.roundId === currentRound.id);
   const undoTargetEvent = mostRecentActiveEventForTarget(
@@ -983,12 +1042,14 @@ export function InvestigationProvider({
     ledgerTargetForActive.targetId
   );
   const fallbackEntry = history[history.length - 1];
-  const undoLabel = undoTargetEvent
-    ? `Undo ${describeLedgerTarget(undoTargetEvent.targetType, undoTargetEvent.targetId)}`
-    : fallbackEntry?.kind === "target-card"
-      ? `Undo ${describeLedgerTarget(fallbackEntry.targetType, fallbackEntry.targetId)}`
-      : "Undo";
-  const canUndo = undoTargetEvent != null || history.length > 0;
+  const undoLabel = isDoubleUndo
+    ? `Undo ${describeLedgerTarget(typeof activeTarget === "number" && activeTarget < 0 ? "split" : "seat", typeof activeTarget === "number" ? Math.abs(activeTarget) : "dealer")} Double`
+    : undoTargetEvent
+      ? `Undo ${describeLedgerTarget(undoTargetEvent.targetType, undoTargetEvent.targetId)}`
+      : fallbackEntry?.kind === "target-card"
+        ? `Undo ${describeLedgerTarget(fallbackEntry.targetType, fallbackEntry.targetId)}`
+        : "Undo";
+  const canUndo = isDoubleUndo || undoTargetEvent != null || history.length > 0;
 
   return (
     <InvestigationContext.Provider

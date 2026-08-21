@@ -10,11 +10,15 @@ import { useVoiceRecognition, type VoiceLifecycleEvent, type VoiceResult } from 
 import { parseVoiceCommand, type VoiceCommandKind, type VoiceSeat, type VoiceTarget } from "@/lib/voice/parseVoiceCommand";
 import { parseNarration, type NarrationOp } from "@/lib/voice/parseNarration";
 import { parseTableChangeCommand } from "@/lib/voice/parseTableChangeCommand";
+import { parseSplitDoubleCommand } from "@/lib/voice/parseSplitDoubleCommand";
+import { parseSplitHandCardCommand } from "@/lib/voice/parseSplitHandCardCommand";
 import { parseSetActiveTargetIntent } from "@/lib/voice/parseSetActiveTargetIntent";
 import { formatNarrationConfirmation, type ConfirmationEntry } from "@/lib/voice/narrationConfirmation";
 import { normalizeTranscript } from "@/lib/voice/normalizeTranscript";
 import { resolveCardEntryTarget, type CardTarget } from "@/lib/utils/cardEntryResolution";
 import { canCompleteRound } from "@/lib/utils/roundValidation";
+import { resolveSeatTarget, splitTargetFor, updateSeatAtTarget } from "@/lib/utils/seatTarget";
+import { isSeatLocked } from "@/lib/utils/seatLock";
 import {
   addOperatorNote,
   completeInvestigation,
@@ -166,6 +170,29 @@ function fromCardTarget(target: CardTarget): VoiceTarget {
 }
 
 /**
+ * EyeOnPit 1.10 Phase 5, requirement §4 — "Spot 3 has a five" once spot 3
+ * has split must NOT guess Hand 1 vs. Hand 2; this is what §7.1 of the
+ * design doc already locked in ("Bare 'Spot 3' after a split MUST stay
+ * ambiguous... never guess which hand a bare target phrase means"). True
+ * only when a target was EXPLICITLY named as a bare, unqualified seat
+ * (`voiceTarget?.kind === "seat"` — never for a card with no target at all,
+ * which is the already-disambiguated continuation-against-active-target
+ * case, untouched by this check) AND that seat currently has a split hand.
+ * A hand-qualified command never reaches this check at all — it's fully
+ * handled by its own dedicated parseSplitHandCardCommand.ts dispatch block
+ * before either of this function's two call sites (the legacy `card`
+ * command path and preflightNarration) is ever reached.
+ */
+function isAmbiguousSplitSeatCardTarget(round: Round, voiceTarget: VoiceTarget | undefined, resolvedCardTarget: CardTarget): boolean {
+  return (
+    voiceTarget?.kind === "seat" &&
+    typeof resolvedCardTarget === "number" &&
+    resolvedCardTarget > 0 &&
+    Boolean(round.splitHands[resolvedCardTarget])
+  );
+}
+
+/**
  * One already-resolved, ready-to-execute action produced by
  * `preflightNarration` — carries everything `commitNarration` needs to
  * actually perform the op without recomputing anything against (possibly
@@ -259,6 +286,16 @@ function preflightNarration(
 
     if (op.kind === "card") {
       const targetToUse = op.target ? toCardTarget(op.target) : (liveTarget ?? activeTarget);
+      // EyeOnPit 1.10 Phase 5 §4 — see isAmbiguousSplitSeatCardTarget's own
+      // doc comment. Checked before resolveCardEntryTarget (which has no
+      // way to distinguish "explicitly named this bare seat" from "just
+      // using whatever's active" — both produce the identical positive
+      // number) and before the card is folded into `simRound`, so a
+      // multi-card narration naming a split seat's bare target rejects the
+      // WHOLE utterance, never a partial commit of the cards before it.
+      if (isAmbiguousSplitSeatCardTarget(simRound, op.target, targetToUse)) {
+        return { ok: false, reason: `Spot ${targetToUse} is split — say "hand 1" or "hand 2"` };
+      }
       const resolution = resolveCardEntryTarget(investigation, simRound, targetToUse, busy);
       if (resolution.disabled) {
         return { ok: false, reason: `${resolution.targetLabel} isn't available right now` };
@@ -383,6 +420,8 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
     pause,
     resume,
     startNewShoe,
+    mutate,
+    splitSeat,
   } = useInvestigationContext();
   const { enterCard, disabled: cardDisabled, locked: cardLocked, notEnabled: cardNotEnabled, targetLabel } = useCardEntry();
   const { handleDone, handleNext, handleUndo, doneDisabled, nextDisabled, undoDisabled } = useRoundControls(floorMode);
@@ -1395,6 +1434,215 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         return;
       }
 
+      // SPLIT / DOUBLE (EyeOnPit 1.10 Phase 4) — "spot 3 split" / "split
+      // spot 3" / "spot 3 double" / "spot 3 hand 2 double". Checked here,
+      // before narration/legacy dispatch, for the exact same reason as
+      // table-change/read-only-query above: parseNarration.ts's own
+      // INERT_ACTION_WORDS already treats bare "split"/"double" as no-op
+      // filler (see its doc comment) — without this block intercepting
+      // first, "spot 3 split" would silently collapse to nothing but a
+      // seat-selection narration op. Dispatches through the EXACT SAME
+      // `splitSeat`/`mutate` primitives PlayerActionsRow.tsx's manual
+      // Split/Double buttons already call — never a parallel commit path,
+      // per the design doc's explicit §7.2 instruction — so voice
+      // Split/Double inherit every Phase 2 Undo/Redo guarantee for free,
+      // and neither ever creates a CardEvent or touches the running count.
+      const splitDouble = parseSplitDoubleCommand(winningTranscript);
+      if (splitDouble?.kind === "blocked") {
+        // See SplitDoubleParse's own doc comment — a malformed split/
+        // double attempt (e.g. an out-of-range hand number) is rejected
+        // outright here rather than falling through to narration, which
+        // would otherwise silently absorb "double"/"split" as inert filler
+        // and could misread a leftover token as an ordinary card.
+        diagnostics.info("voice", "rejected — malformed split/double command", { transcript: winningNormalized });
+        appendLog("REJECTED", `"${winningNormalized}" — malformed split/double command`);
+        setStatus({ kind: "unrecognized", transcript: winningNormalized });
+        finishUtterance("REJECTED", "split/double", "UNKNOWN_COMMAND");
+        scheduleReset();
+        return;
+      }
+      if (splitDouble) {
+        const controlDisabled = busy || investigation.status !== "active" || currentRound.completed;
+        const isAlreadySplit = Boolean(currentRound.splitHands[splitDouble.seat]);
+
+        if (controlDisabled) {
+          const reason = "Round isn't active for entry right now";
+          appendLog("REJECTED", `"${winningNormalized}" — ${reason}`);
+          setStatus({ kind: "disabled", transcript: winningNormalized, reason });
+          finishUtterance(
+            "REJECTED",
+            splitDouble.kind === "split" ? `Spot ${splitDouble.seat} split` : `Spot ${splitDouble.seat} double`,
+            "CONTROL_DISABLED"
+          );
+          scheduleReset();
+          return;
+        }
+
+        if (splitDouble.kind === "split") {
+          const primaryRecord = currentRound.seats[splitDouble.seat];
+          if (primaryRecord == null || isAlreadySplit || isSeatLocked(primaryRecord)) {
+            const reason =
+              primaryRecord == null
+                ? `Spot ${splitDouble.seat} has no hand to split`
+                : isAlreadySplit
+                  ? `Spot ${splitDouble.seat} is already split`
+                  : `Spot ${splitDouble.seat}'s hand can't be split right now`;
+            appendLog("REJECTED", `"${winningNormalized}" — ${reason}`);
+            setStatus({ kind: "disabled", transcript: winningNormalized, reason });
+            finishUtterance("REJECTED", `Spot ${splitDouble.seat} split`, "CONTROL_DISABLED");
+            scheduleReset();
+            return;
+          }
+          void (async () => {
+            const newHandTarget = splitTargetFor(splitDouble.seat);
+            await splitSeat(splitDouble.seat);
+            setActiveTarget(newHandTarget);
+            const text = `Spot ${splitDouble.seat} split`;
+            diagnostics.info("voice", "split", { seat: splitDouble.seat });
+            appendLog("ACCEPTED", text);
+            setStatus({ kind: "accepted", label: text });
+            if (voiceAudioFeedback) speak(text);
+            finishUtterance("ACCEPTED", text, undefined, newHandTarget);
+            scheduleReset();
+          })();
+          return;
+        }
+
+        // splitDouble.kind === "double"
+        if (isAlreadySplit && splitDouble.hand == null) {
+          const reason = `Spot ${splitDouble.seat} is split — say "hand 1" or "hand 2" to double`;
+          appendLog("REJECTED", `"${winningNormalized}" — ${reason}`);
+          setStatus({ kind: "disabled", transcript: winningNormalized, reason });
+          finishUtterance("REJECTED", `Spot ${splitDouble.seat} double`, "AMBIGUOUS_HAND_TARGET");
+          scheduleReset();
+          return;
+        }
+
+        const doubleTarget: CardTarget = splitDouble.hand === 2 ? splitTargetFor(splitDouble.seat) : splitDouble.seat;
+        const { record, isSplit } = resolveSeatTarget(currentRound, doubleTarget);
+
+        if (record == null) {
+          const reason =
+            splitDouble.hand === 2
+              ? `Spot ${splitDouble.seat} has no Hand 2 yet`
+              : `Spot ${splitDouble.seat} has no hand yet`;
+          appendLog("REJECTED", `"${winningNormalized}" — ${reason}`);
+          setStatus({ kind: "disabled", transcript: winningNormalized, reason });
+          finishUtterance("REJECTED", `Spot ${splitDouble.seat} double`, "CONTROL_DISABLED");
+          scheduleReset();
+          return;
+        }
+
+        if (isSeatLocked(record) || Boolean(record.doubled)) {
+          const reason = `Spot ${splitDouble.seat}${isAlreadySplit ? (isSplit ? " Hand 2" : " Hand 1") : ""} can't be doubled right now`;
+          appendLog("REJECTED", `"${winningNormalized}" — ${reason}`);
+          setStatus({ kind: "disabled", transcript: winningNormalized, reason });
+          finishUtterance("REJECTED", `Spot ${splitDouble.seat} double`, "CONTROL_DISABLED");
+          scheduleReset();
+          return;
+        }
+
+        void (async () => {
+          const label = `Spot ${splitDouble.seat}${isAlreadySplit ? (isSplit ? " Hand 2" : " Hand 1") : ""} doubled`;
+          // Byte-identical updater to PlayerActionsRow.tsx's handleDouble —
+          // see that file for why this never touches the CardEvent ledger
+          // or the count, and how Phase 2's Undo fix
+          // (isDoubledWithNoPostDoubleCard/revertDouble) applies to this
+          // exact same doubled/doubledAtCardCount shape regardless of
+          // whether Double was pressed or spoken.
+          await mutate(
+            (round) =>
+              updateSeatAtTarget(round, doubleTarget, (seat) => ({
+                ...seat,
+                betAmount: seat.betAmount != null ? seat.betAmount * 2 : seat.betAmount,
+                doubled: true,
+                doubledAtCardCount: seat.playerCards.length,
+                actions: [...seat.actions, "double"],
+              })),
+            {
+              type: "action",
+              message: `Spot ${splitDouble.seat}${isSplit ? " (split)" : ""}: Double — wager doubled, one card (voice)`,
+            }
+          );
+          setActiveTarget(doubleTarget);
+          diagnostics.info("voice", "double", { seat: splitDouble.seat, hand: splitDouble.hand });
+          appendLog("ACCEPTED", label);
+          setStatus({ kind: "accepted", label });
+          if (voiceAudioFeedback) speak(label);
+          finishUtterance("ACCEPTED", label, undefined, doubleTarget);
+          scheduleReset();
+        })();
+        return;
+      }
+
+      // SPLIT-HAND CARD TARGETING (EyeOnPit 1.10 Phase 5) — "spot 3 hand 1
+      // has a five" / "spot 3 hand 2 has a king". Checked here, before
+      // narration/legacy dispatch, for the exact same reason as Phase 4's
+      // split/double block just above: parseNarration.ts has no vocabulary
+      // for "hand" at all — without this intercepting first, "hand"/"1"
+      // would just be counted as stray noise tokens around a card, a real
+      // risk of misreading the actual rank. Resolves to the EXACT SAME
+      // `resolveCardEntryTarget`/`addCard` production path every other card
+      // entry (manual or voice) already uses — the split/positive-vs-
+      // negative CardTarget convention is what makes "which logical hand"
+      // and "how many physical CardEvents" completely separate concerns:
+      // exactly one `addCard` call, exactly one CardEvent, exactly one
+      // count change, regardless of which hand it's for.
+      const splitHandCard = parseSplitHandCardCommand(winningTranscript);
+      if (splitHandCard?.kind === "blocked") {
+        // See SplitHandCardParse's own doc comment — a malformed attempt
+        // (bad hand number, or a tail that isn't exactly one card) is
+        // rejected outright here, never deferred to narration.
+        diagnostics.info("voice", "rejected — malformed split-hand card command", { transcript: winningNormalized });
+        appendLog("REJECTED", `"${winningNormalized}" — malformed split-hand card command`);
+        setStatus({ kind: "unrecognized", transcript: winningNormalized });
+        finishUtterance("REJECTED", "split-hand card", "UNKNOWN_COMMAND");
+        scheduleReset();
+        return;
+      }
+      if (splitHandCard) {
+        const cardTarget: CardTarget = splitHandCard.hand === 2 ? splitTargetFor(splitHandCard.seat) : splitHandCard.seat;
+        const resolution = resolveCardEntryTarget(investigation, currentRound, cardTarget, busy);
+        if (resolution.disabled) {
+          const reason = resolution.notEnabled
+            ? `Spot ${splitHandCard.seat} Hand ${splitHandCard.hand} doesn't exist yet`
+            : resolution.locked
+              ? `Spot ${splitHandCard.seat} Hand ${splitHandCard.hand} already has a result recorded — that hand is locked`
+              : "Round isn't active for entry right now";
+          appendLog("REJECTED", `"${winningNormalized}" — ${reason}`);
+          setStatus({ kind: "disabled", transcript: winningNormalized, reason });
+          finishUtterance("REJECTED", `Spot ${splitHandCard.seat} Hand ${splitHandCard.hand} card`, "CONTROL_DISABLED");
+          scheduleReset();
+          return;
+        }
+        void (async () => {
+          const card = { rank: splitHandCard.rank, suit: "unspecified" as const };
+          await addCard(
+            { targetType: resolution.targetType, targetId: resolution.targetId, rank: splitHandCard.rank },
+            (round) => resolution.applyCard(round, card),
+            { type: "card", message: resolution.eventMessage(card) }
+          );
+          // Deterministic active-target behavior (§7): the explicitly named
+          // hand becomes the active target, exactly like every other
+          // explicit-target voice command already does (see the legacy
+          // `card` dispatch case's own comment: "switched to match, exactly
+          // as if the operator had tapped that seat/dealer tile first").
+          // No conversational continuation is introduced by this — a
+          // FOLLOWING bare card still just uses whatever's now active,
+          // the same pre-existing mechanism every other target change
+          // already relies on.
+          setActiveTarget(cardTarget);
+          const label = `Spot ${splitHandCard.seat} Hand ${splitHandCard.hand}: ${splitHandCard.displayRank ?? splitHandCard.rank}`;
+          diagnostics.info("voice", "split-hand card", { seat: splitHandCard.seat, hand: splitHandCard.hand, rank: splitHandCard.rank });
+          appendLog("ACCEPTED", label);
+          setStatus({ kind: "accepted", label });
+          if (voiceAudioFeedback) speak(label);
+          finishUtterance("ACCEPTED", label, undefined, cardTarget);
+          scheduleReset();
+        })();
+        return;
+      }
+
       // READ-ONLY QUERY LAYER (real-iPhone acceptance fix) — natural
       // questions ("What is the count?", "What's the KO?", "How many
       // aces?", "Repeat") that must NEVER mutate the CardEvent ledger.
@@ -1575,6 +1823,27 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
         return;
       }
 
+      // EyeOnPit 1.10 Phase 5 §4 — the single-card legacy path (the common
+      // case: "spot 3 has a five" defers here, since it's the trivial
+      // legacy-equivalent shape narration itself declines to handle — see
+      // parseNarration's isTrivialLegacyEquivalent). Checked here, with
+      // `parsed.command` already in hand, so this gets the distinct
+      // AMBIGUOUS_HAND_TARGET code (dispatch's own `null` return has no way
+      // to carry a specific code — every other disabled-control case it
+      // covers is correctly generic CONTROL_DISABLED, but this one isn't).
+      if (parsed.command.kind === "card" && parsed.command.target) {
+        const cardTarget = toCardTarget(parsed.command.target);
+        if (isAmbiguousSplitSeatCardTarget(currentRound, parsed.command.target, cardTarget)) {
+          const reason = `Spot ${cardTarget} is split — say "hand 1" or "hand 2"`;
+          diagnostics.info("voice", "rejected — ambiguous split-seat card target", { transcript: winningNormalized, seat: cardTarget });
+          appendLog("REJECTED", `"${winningNormalized}" — ${reason}`);
+          setStatus({ kind: "disabled", transcript: winningNormalized, reason });
+          finishUtterance("REJECTED", `Spot ${cardTarget} card`, "AMBIGUOUS_HAND_TARGET");
+          scheduleReset();
+          return;
+        }
+      }
+
       const dispatched = dispatch(parsed.command);
       if (dispatched == null) {
         // Recognized correctly — the parser matched a real command — but
@@ -1623,6 +1892,11 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
       occupySeat,
       markSeatEmpty,
       activeTarget,
+      busy,
+      mutate,
+      setActiveTarget,
+      splitSeat,
+      addCard,
     ]
   );
 

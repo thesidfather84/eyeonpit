@@ -64,6 +64,8 @@ import {
 } from "./parseVoiceCommand";
 import { parseNarration, type NarrationOp } from "./parseNarration";
 import { parseTableChangeCommand } from "./parseTableChangeCommand";
+import { parseSplitDoubleCommand } from "./parseSplitDoubleCommand";
+import { parseSplitHandCardCommand } from "./parseSplitHandCardCommand";
 import { parseReadOnlyQuery } from "./parseReadOnlyQuery";
 import { parseSetActiveTargetIntent } from "./parseSetActiveTargetIntent";
 import {
@@ -85,6 +87,8 @@ export type ClassificationSource =
   | "note-start"
   | "lifecycle"
   | "table-change"
+  | "split-double"
+  | "split-hand-card"
   | "read-only-query"
   | "set-active-target"
   | "narration"
@@ -409,6 +413,59 @@ function classifyCore(
       source: "table-change",
       actionKey: `table:${tableChange.kind}:${tableChange.seat}`,
       summary: `Seat ${tableChange.seat} ${tableChange.kind === "seat-joins" ? "sat down" : "left"}`,
+      hasExplicitTarget: true,
+    };
+  }
+
+  // EyeOnPit 1.10 Phase 4 — "spot 3 split" / "spot 3 hand 2 double".
+  // Checked here, before narration: parseNarration.ts's own
+  // INERT_ACTION_WORDS already treats bare "split"/"double" as no-op
+  // filler (see its doc comment), which would otherwise silently collapse
+  // "spot 3 split" to nothing but a target selection. actionKey/summary
+  // here are classification-only (for N-best agreement scoring); the
+  // actual dispatch in VoiceControl.tsx re-parses the winning transcript
+  // directly, exactly like table-change above.
+  const splitDouble = parseSplitDoubleCommand(rawTranscript);
+  if (splitDouble?.kind === "blocked") {
+    // See SplitDoubleParse's own doc comment — a malformed split/double
+    // attempt must be rejected outright here, never deferred to narration
+    // (which would otherwise silently absorb "double"/"split" as inert
+    // filler and misread a leftover token as an ordinary card).
+    return { valid: false, code: "UNKNOWN_COMMAND", reason: "Malformed split/double command." };
+  }
+  if (splitDouble) {
+    const actionKey =
+      splitDouble.kind === "split"
+        ? `splitdouble:split:${splitDouble.seat}`
+        : `splitdouble:double:${splitDouble.seat}:${splitDouble.hand ?? "bare"}`;
+    const summary =
+      splitDouble.kind === "split"
+        ? `Spot ${splitDouble.seat} split`
+        : `Spot ${splitDouble.seat}${splitDouble.hand ? ` Hand ${splitDouble.hand}` : ""} double`;
+    return { valid: true, source: "split-double", actionKey, summary, hasExplicitTarget: true };
+  }
+
+  // EyeOnPit 1.10 Phase 5 — "spot 3 hand 1 has a five" / "spot 3 hand 2
+  // has a king". Same reasoning as Phase 4's split/double block just
+  // above: parseNarration.ts has no vocabulary for "hand" at all, so
+  // without this intercepting first, "hand"/"1" would just be counted as
+  // stray noise tokens around a card — a real risk of misreading the
+  // actual rank. actionKey encodes seat+hand+rank so a same-card,
+  // different-hand N-best alternative is correctly scored as a DIFFERENT
+  // action, never silently agreeing with it.
+  const splitHandCard = parseSplitHandCardCommand(rawTranscript);
+  if (splitHandCard?.kind === "blocked") {
+    return { valid: false, code: "UNKNOWN_COMMAND", reason: "Malformed split-hand card command." };
+  }
+  if (splitHandCard) {
+    const steps: CanonicalStep[] = [
+      { kind: "card", target: `SEAT${splitHandCard.seat}H${splitHandCard.hand}`, rank: splitHandCard.rank, displayRank: splitHandCard.displayRank },
+    ];
+    return {
+      valid: true,
+      source: "split-hand-card",
+      actionKey: canonicalActionKey(steps),
+      summary: canonicalSummary(steps),
       hasExplicitTarget: true,
     };
   }

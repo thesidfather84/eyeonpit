@@ -69,6 +69,19 @@ export function PlayerActionsRow({ target }: { target: number }) {
 
   return (
     <>
+      {/* EyeOnPit 1.10 Phase 3 — goal 6: "do not allow an operator to
+          accidentally assume Double applies to both hands." One caption
+          covers every action below at once (Double included) rather than
+          cramming a per-button qualifier into an already-narrow 5-column
+          grid — the operator has already seen the same fact spelled out
+          large in ActiveSeatHeader's own HAND 1/HAND 2 switcher directly
+          above; this is reinforcement at the point of action, not the only
+          place it's stated. Absent entirely for a seat that never split. */}
+      {alreadySplit && (
+        <p className="border-b border-border bg-surface-raised px-2 py-1 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+          Actions below apply to {isSplit ? "Hand 2" : "Hand 1"} only
+        </p>
+      )}
       <div className="grid grid-cols-5 gap-1 border-b border-border bg-surface p-1.5">
         <button
           disabled={disabled || locked || Boolean(record?.doubled)}

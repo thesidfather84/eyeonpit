@@ -5,7 +5,7 @@ import { formatCard } from "@/lib/utils/cards";
 import { ENGINE_VERSIONS, type VersionedRecord } from "@/lib/versioning/types";
 import { generateCanonicalId, generateHumanReadableId } from "@/lib/versioning/id";
 import type { CardEvent } from "@/lib/counting-engine/types";
-import type { Investigation } from "@/types/investigation";
+import type { Investigation, Round } from "@/types/investigation";
 import type { PropertyMetadata } from "./propertyMetadata";
 import {
   REPORT_SCHEMA_VERSION,
@@ -85,6 +85,51 @@ function buildCountHistory(investigation: Investigation, cardEvents: CardEvent[]
   });
 }
 
+/**
+ * One entry per hand, primary hand (`handIndex: 1`) before that same
+ * seat's split hand (`handIndex: 2`) when one exists — reads directly from
+ * `round.seats`/`round.splitHands`, the same authoritative source live
+ * entry already writes to and Counter Detection's own
+ * `extractObservations.ts` already reads from (see that file's own
+ * `allSeatNumbersEverObserved` for the identical "check both maps"
+ * pattern). Never touches a CardEvent — `cards` here are `formatCard`
+ * strings derived from `seat.playerCards`/`splitHand.playerCards`, the
+ * exact same display arrays every other report/UI surface already reads,
+ * never re-derived from the ledger and never duplicated between hands
+ * (each hand's `playerCards` is its own independent array in the
+ * investigation record).
+ */
+function buildRoundEvidenceSeats(round: Round): ReportRoundEvidence["seats"] {
+  const entries: ReportRoundEvidence["seats"] = [];
+  const seatNumbers = Object.keys(round.seats)
+    .map(Number)
+    .sort((a, b) => a - b);
+  for (const seatNumber of seatNumbers) {
+    const seat = round.seats[seatNumber];
+    if (!seat) continue;
+    entries.push({
+      seatNumber: seat.seatNumber,
+      handIndex: 1,
+      betAmount: seat.betAmount ?? null,
+      doubled: seat.doubled,
+      cards: seat.playerCards.map(formatCard),
+      outcome: seat.outcome ?? null,
+    });
+    const splitHand = round.splitHands[seatNumber];
+    if (splitHand) {
+      entries.push({
+        seatNumber: splitHand.seatNumber,
+        handIndex: 2,
+        betAmount: splitHand.betAmount ?? null,
+        doubled: splitHand.doubled,
+        cards: splitHand.playerCards.map(formatCard),
+        outcome: splitHand.outcome ?? null,
+      });
+    }
+  }
+  return entries;
+}
+
 function buildRoundEvidence(investigation: Investigation): ReportRoundEvidence[] {
   return [...investigation.rounds]
     .sort((a, b) => a.shoeNumber - b.shoeNumber || a.roundNumber - b.roundNumber)
@@ -97,14 +142,7 @@ function buildRoundEvidence(investigation: Investigation): ReportRoundEvidence[]
         dealerCards: dealerCards.map(formatCard),
         dealerTotal: total.value,
         dealerResult: deriveDealerResult(round.dealerHand.cards),
-        seats: Object.values(round.seats)
-          .filter((seat): seat is NonNullable<typeof seat> => seat != null)
-          .map((seat) => ({
-            seatNumber: seat.seatNumber,
-            betAmount: seat.betAmount ?? null,
-            cards: seat.playerCards.map(formatCard),
-            outcome: seat.outcome ?? null,
-          })),
+        seats: buildRoundEvidenceSeats(round),
       };
     });
 }

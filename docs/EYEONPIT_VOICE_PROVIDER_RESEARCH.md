@@ -309,3 +309,201 @@ missing piece is no longer "does the engine work" (answered: yes) but
 own zero-false-CardEvent bar" — which requires either real casino-phrase
 audio recordings or a live microphone session, neither available in this
 environment. That remains the concrete next step.
+
+## 9. Dealer hotword investigation (2026-08-20) — root cause found, lab-only fix built
+
+A real mic session (run by the user, not this environment) against the
+real Dealer/Player/noise phrase script found Dealer recognition genuinely
+unstable even with hotwords "on": "Dealer has a five" consistently
+misheard as "Taylor," "Dealer showing ten" as "Tillers... a tin," while
+bare "Dealer" and "Dealer has a king" came through correctly. Investigated
+why, per explicit instruction to confirm rather than assume before
+changing any configuration.
+
+### 9.1 Confirmed root causes — two independent, compounding bugs
+
+1. **`modelingUnit` was left at its default, `"cjkchar"`.** Read directly
+   from sherpa-onnx's own `online-model-config.cc`: `bpe_vocab` is only
+   required (and only validated to exist) when `modeling_unit` is `"bpe"`
+   or `"cjkchar+bpe"` — so the shipped `"cjkchar"` default silently passed
+   config validation with an empty `bpeVocab`, then encoded hotword text
+   using a CJK-character tokenizer against an English BPE model's
+   vocabulary. Confirmed with a real sentencepiece test against this
+   model's own training tokenizer: `"DEALER"` → `["▁DE","AL","ER"]` (three
+   real, valid vocabulary pieces) but `"dealer"` → `["▁","dealer"]` (an
+   unmatched fallback — nothing to bias).
+2. **Hotword phrase text was lowercase.** `casinoVoiceContext.ts`'s base
+   vocabulary is lowercase; this model's 500-piece BPE vocabulary was
+   trained on UPPERCASE text only (every piece in the real `bpe.model` is
+   uppercase). Confirmed by the same sentencepiece test above — the
+   working `"DEALER"` example above IS the uppercase form.
+
+Both had to be fixed together: fixing only `modelingUnit` without a real
+`bpe.vocab` file causes sherpa-onnx's own config validation to hard-fail
+recognizer construction; fixing only casing without `modelingUnit`/
+`bpeVocab` has no effect, since `cjkchar` tokenization was never going to
+produce correct BPE pieces regardless of case.
+
+### 9.2 The missing `bpe.vocab` — found, generated, and verified, not assumed
+
+The bundled model repo (`csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-21`)
+ships only `tokens.txt` — no `bpe.vocab`. Traced the model back to its real
+training source, `marcoyang/icefall-libri-giga-pruned-transducer-stateless7-streaming-2023-04-04`,
+which DOES ship the real sentencepiece `bpe.model` at
+`data/lang_bpe_500/bpe.model`. Verified it's the correct, matching
+tokenizer (not a guess) by confirming `tokens.txt` is byte-identical
+between the training repo and the bundled model repo. Installed the
+`sentencepiece` Python package, downloaded the real `bpe.model`, and
+generated a real `bpe.vocab` (piece + log-probability per line, matching
+sherpa-onnx's documented format) from it. Deployed to
+`public/sherpa-onnx-lab/bpe.vocab` — gitignored, lab-only, same treatment
+as the WASM/model bundle, never committed.
+
+### 9.3 Fix verified real, in a real browser — construction and non-regression only
+
+Loaded the real WASM+model bundle in a real Chrome tab (browser
+automation), constructed a recognizer with `modelingUnit: "bpe"` + the
+generated `bpe.vocab` + UPPERCASE hotword text, and confirmed:
+construction succeeds (no config-validation error), and decoding a real
+audio clip still produces the exact same word-for-word correct transcript
+as before (the fix doesn't degrade ordinary recognition). **What this does
+NOT show:** whether it actually improves real Dealer recognition accuracy
+against real speech — no microphone exists in this environment. That
+measurement is exactly what §9.4's tooling exists for.
+
+### 9.4 Lab-only A/B/C tooling built, not yet run
+
+`/lab/sherpa-voice-test` now offers three selectable Sherpa configurations
+against the same phrase script and mic conditions:
+
+- **A** — hotwords off entirely.
+- **B** — hotwords on, exact configuration every prior round shipped
+  (`modelingUnit` default, lowercase phrases) — the confirmed-wrong
+  baseline, kept deliberately so the comparison measures the real
+  regression rather than a strawman.
+- **C** — the corrected configuration from §9.1–§9.3.
+
+Each recorded utterance shows the raw transcript AND EyeOnPit's real,
+unmodified, read-only `classifyVoiceTranscript` result (accepted/rejected,
+whether a CardEvent would be produced) — informational only, never
+dispatched or written anywhere; this page still creates zero CardEvents.
+An operator-marked correct/incorrect judgment and per-configuration
+aggregate accuracy round out the comparison. The phrase script includes
+the exact Dealer stress phrases requested ("Dealer," "Dealer has a five,"
+"Dealer has a king," "Dealer showing ten," "Dealer has an ace," "Dealer
+has a king and a five"), representative Player/Spot phrases (so a
+Dealer-focused change can't hide a regression elsewhere), and the existing
+noise-phrase set (checks whether hotword biasing hallucinates casino
+vocabulary into unrelated speech).
+
+**Still requires real-microphone validation** — this round built and
+verified the tooling and the underlying configuration fix; it did not, and
+could not, run the actual A/B/C comparison against real speech. That is
+the explicit next step, to be run by the user.
+
+## 10. "assets-not-found" production incident — root cause, fix, and Vercel Blob deployment (2026-08-20)
+
+**The incident:** the user ran a real production mic session against
+`/lab/sherpa-voice-test` and got `error: "assets-not-found"` on all 30
+attempts, with zero recognition output at all (finalText/interims/
+confidence/timing all null) — a deployment/asset-availability defect, not
+a speech-recognition accuracy failure.
+
+**Root cause (confirmed, not guessed):** `public/sherpa-onnx-lab/` — the
+~204MB WASM/model/vocab bundle §8-§9 above verified running — is git­ignored
+(`.gitignore`) and was never committed. Vercel deploys only what's tracked
+in git, so none of these files ever reached the production deployment.
+`start()`'s own error-classification correctly reported the resulting 404
+as `assets-not-found` — this was designed, honest, fail-closed behavior;
+the actual gap was that nothing had ever provisioned real assets for a
+real deployment, and the Lab route has no environment check preventing it
+from being reachable (behind the `/lab` passcode) regardless.
+
+**Fix — Vercel Blob, version-pinned, public-read:**
+
+- All 5 files the provider actually requires (`sherpa-onnx-asr.js`,
+  `sherpa-onnx-wasm-main-asr.js/.wasm/.data`, `bpe.vocab` — NOT
+  `app-asr.js`/`index.html`, which the provider's own runtime code never
+  references) were uploaded, byte-identical to the exact locally-verified
+  files (sha256-checked — see `src/lib/voice/sherpaAssetManifest.ts`), to
+  a new public-read Vercel Blob store (`eyeonpit-lab-sherpa-assets`,
+  connected to the `eyeonpit` project's Production and Preview
+  environments; the write-capable `BLOB_READ_WRITE_TOKEN` is a normal
+  server-side env var, never exposed to the browser).
+- **Model/version path** (immutable — `allowOverwrite: false`, uploaded
+  with `addRandomSuffix: false` for predictable filenames):
+  ```
+  https://9uezlmmeazeykpud.public.blob.vercel-storage.com/sherpa/en-zipformer-2023-06-21-v1.13.6/
+  ```
+  The segment `en-zipformer-2023-06-21-v1.13.6` encodes both the bundled
+  model identity (`sherpa-onnx-streaming-zipformer-en-2023-06-21`) and the
+  engine/WASM release it was built from (`1.13.6`), so a future genuinely
+  different model build lives at a different path rather than silently
+  overwriting this one.
+- **Total footprint:** 204,249,120 bytes (≈194.8 MiB) — `sherpa-onnx-asr.js`
+  53,867 B, `sherpa-onnx-wasm-main-asr.js` 82,688 B,
+  `sherpa-onnx-wasm-main-asr.wasm` 13,148,431 B,
+  `sherpa-onnx-wasm-main-asr.data` 190,951,044 B, `bpe.vocab` 13,090 B —
+  every URL verified (HTTP 200, exact expected `Content-Length`) before
+  any production config change.
+- **Why not committed to git directly:** Vercel's own documented CLI/source
+  upload limit is 100MB (Hobby) / 1GB (Pro); the single 190MB `.data` file
+  alone already exceeds the Hobby cap, and Vercel's own guidance is to
+  serve large static files from an external store, not source-controlled
+  build input.
+- **Production configuration:** `NEXT_PUBLIC_SHERPA_ASSET_BASE_URL` is now
+  set (Production environment) to the Blob base URL above — inlined into
+  the client bundle at build time. Development is deliberately left unset,
+  so ordinary local dev keeps using the gitignored `/sherpa-onnx-lab/`
+  path unchanged.
+- **A real Next.js build-time-inlining bug found and fixed in the same
+  round:** the first implementation read
+  `env.NEXT_PUBLIC_SHERPA_ASSET_BASE_URL` from a `process.env` object
+  passed as a function parameter — Next.js's static replacement of
+  `NEXT_PUBLIC_*` vars only recognizes the literal expression
+  `process.env.NEXT_PUBLIC_X` textually in the source, so the client
+  bundle silently never received the real value and kept resolving to the
+  local dev path even in a "production-configured" local test. Caught by
+  the local Blob-hosted-construction verification itself (network requests
+  kept hitting `/sherpa-onnx-lab/*` instead of the Blob URL) — fixed by
+  making the literal `process.env.NEXT_PUBLIC_SHERPA_ASSET_BASE_URL`
+  expression appear directly at each of the two call sites
+  (`sherpaOnnxProvider.ts`, `page.tsx`), while keeping the underlying
+  resolution function itself parameterized/testable.
+- **Improved error diagnostics:** a failed asset load now reports
+  `assets-not-found: <exact failing URL/detail>` (was a bare generic
+  string) — both in the provider's `onError` callback and, unchanged, the
+  Lab page's existing error display, so an operator immediately sees which
+  specific asset request failed.
+- **Asset-manifest/integrity mechanism:** `sherpaAssetManifest.ts` records
+  filename/size/sha256/version for all 5 files; wired into a real runtime
+  check on `bpe.vocab` (the one asset fetched via plain `fetch()` — checked
+  against the response's `Content-Length` header, not decoded text length,
+  to avoid a UTF-8-vs-UTF-16 false positive) that throws a specific
+  "possible model/version mismatch" error on a size mismatch. The
+  `.wasm`/`.data`/glue-script files are loaded via Emscripten's own
+  internal `<script src>`-triggered fetch, which this provider has no hook
+  into to check before the browser commits to using it — documented
+  honestly as a known, deliberate limitation of "smallest safe
+  implementation" scope, not silently overclaimed as fully covered.
+
+**Verified locally, twice, both ways:**
+
+1. Local dev, default config (no `NEXT_PUBLIC_SHERPA_ASSET_BASE_URL` set):
+   recognizer reached `status: "listening"` against the local
+   `/sherpa-onnx-lab/*` files, ~2.3–2.5s load time, ~205-215MB JS heap,
+   zero errors — confirms local dev is completely unaffected.
+2. Local dev with `NEXT_PUBLIC_SHERPA_ASSET_BASE_URL` pointed at the real
+   Blob URL: network requests confirmed hitting
+   `https://9uezlmmeazeykpud.public.blob.vercel-storage.com/...` exclusively
+   (zero requests to `/sherpa-onnx-lab/*`), recognizer reached
+   `status: "listening"`, ~6.5s load time (real CDN latency vs. localhost),
+   ~204.6MB JS heap, zero errors — confirms the Blob-hosted path works
+   end-to-end, construction-only.
+
+**Explicitly NOT claimed:** recognition accuracy. Construction and asset
+loading were verified; whether Sherpa actually transcribes real speech
+correctly through the Blob-hosted assets in production has not been
+measured and requires the user's own real-microphone session against the
+deployed page — this provider remains experimental, Lab-only, and not
+production-ready.

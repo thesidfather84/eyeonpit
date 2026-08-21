@@ -20,8 +20,22 @@ import type { CountingSystem } from "@/types/investigation";
  * deliberately left untouched.
  */
 
-/** Bumped to 2 for EyeOnPit 1.7 — ReportAnalysisSection gained the counter/betting/playing-deviation/insurance/observation-confidence/methodology optional fields (see that interface's own doc comment). A schema-v1 report simply lacks these fields; nothing about v1 reports changes retroactively. */
-export const REPORT_SCHEMA_VERSION = 2;
+/**
+ * Bumped to 2 for EyeOnPit 1.7 — ReportAnalysisSection gained the
+ * counter/betting/playing-deviation/insurance/observation-confidence/
+ * methodology optional fields (see that interface's own doc comment). A
+ * schema-v1 report simply lacks these fields; nothing about v1 reports
+ * changes retroactively.
+ *
+ * Bumped to 3 for EyeOnPit 1.10 Phase 1 — `ReportRoundEvidence.seats[]`
+ * gained `handIndex` (required) and `doubled` (required), and a split
+ * seat now produces two entries instead of one (see that interface's own
+ * doc comment). A schema-v2 report's `seats[]` entries simply predate
+ * these two fields and represent one hand per seat only — reading an old
+ * report never needs to assume a split existed, since v2 had no way to
+ * represent one anyway.
+ */
+export const REPORT_SCHEMA_VERSION = 3;
 
 /** OBSERVED FACT vs. DERIVED ANALYSIS — every section of the report is tagged with which one it is, per docs/EYEONPIT_PRODUCT_SPEC.md §16's explicit requirement that the two never blur together. */
 export type ReportSectionKind = "observed-fact" | "derived-analysis" | "narrative";
@@ -103,9 +117,23 @@ export interface ReportRoundEvidence {
   dealerCards: string[];
   dealerTotal: number;
   dealerResult: string | null;
+  /**
+   * One entry per HAND, not per seat — a split seat produces two entries
+   * with the same `seatNumber` and `handIndex` 1 and 2, sharing no cards
+   * (each hand's `cards` are its own physical cards, never a copy of the
+   * other hand's). A seat that never split still gets exactly one entry,
+   * `handIndex: 1` — this is what keeps an unsplit round's representation
+   * unchanged in substance from every schema-v2 report: same fields, same
+   * values, one new required field whose value is always `1` for every
+   * hand that existed before splits were represented here at all.
+   */
   seats: {
     seatNumber: number;
+    /** 1 = the seat's primary hand. 2 = that seat's split hand (`Round.splitHands[seatNumber]`) — see `Round.splitHands`'s own doc comment in types/investigation.ts for why there is at most one split hand per seat today. */
+    handIndex: 1 | 2;
     betAmount: number | null;
+    /** True once Double was recorded for THIS hand specifically — a split seat's two hands double independently, so this is never inferred from the seat as a whole. */
+    doubled: boolean;
     cards: string[];
     outcome: string | null;
   }[];

@@ -12,6 +12,512 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### Sherpa Lab "assets-not-found" Production Fix — Vercel Blob Deployment (2026-08-20)
+
+**Problem:** a real production mic session against `/lab/sherpa-voice-test`
+failed 30/30 with `error: "assets-not-found"` and zero recognition output.
+Root cause: the ~204MB WASM/model/vocab bundle
+(`public/sherpa-onnx-lab/`) is gitignored and was never committed, so
+Vercel's deployment never contained it — every asset request 404'd before
+the recognizer could even initialize. Confirmed present in every prior
+committed version of the provider, not a regression from recent work.
+
+**Fix:** uploaded the exact locally-verified assets (byte-identical,
+sha256-checked) to a new public-read Vercel Blob store, at the
+version-pinned, immutable path
+`sherpa/en-zipformer-2023-06-21-v1.13.6/` (encodes both the model identity
+and the engine/WASM release), and pointed production's
+`NEXT_PUBLIC_SHERPA_ASSET_BASE_URL` at it. Local dev is unaffected (still
+defaults to the gitignored local path). Total footprint: 204,249,120 bytes
+(≈194.8 MiB) across 5 files, every URL verified reachable with the correct
+`Content-Length` before any production config change.
+
+**A real bug found and fixed in the same round:** the first
+implementation of the env-var override silently never worked, because
+Next.js's build-time inlining of `NEXT_PUBLIC_*` vars only recognizes the
+literal `process.env.NEXT_PUBLIC_X` expression in source — passing the
+whole `process.env` object into a function defeated it. Caught by the
+local verification itself (requests kept hitting the local path even with
+the env var set) before it ever reached production.
+
+**Also shipped:** error diagnostics now name the exact failing asset
+URL/detail instead of a bare generic code; a new asset manifest
+(`sherpaAssetManifest.ts`, filename/size/sha256/version per file) with a
+real runtime size check wired into the one asset fetched via plain
+`fetch()` (`bpe.vocab`) — the `.wasm`/`.data`/glue files are loaded via
+Emscripten's own internal fetch, which isn't hookable the same way, and
+that's disclosed as a known scope boundary, not silently glossed over.
+
+**Verified locally, both ways:** the recognizer reaches `status:
+"listening"` with zero errors against (1) the local `/sherpa-onnx-lab/*`
+files (default, unaffected) and (2) the real Blob-hosted URLs exclusively
+(confirmed via network-request inspection — zero local-path requests),
+~6.5s load over the real CDN vs. ~2.4s over localhost, ~205MB JS heap
+either way. **Recognition accuracy against the Blob-hosted assets has NOT
+been measured** — construction/loading only; a real microphone session
+against the deployed production page is still required.
+
+**Tests:** 10 new (`sherpaOnnxProvider.test.ts` — `resolveDefaultAssetBaseUrl`/
+`classifySherpaStartError`) + 12 new (`sherpaAssetManifest.test.ts`). Full
+suite green (1461 passed, 1 pre-existing skip), `tsc --noEmit` clean,
+`eslint` clean, `counting-engine/` diff empty, 1.10 Split/Double, Field
+Test #3/#4, and production Browser Web Speech/`VoiceControl.tsx` all
+untouched.
+
+**Status:** committed and pushed — see commit hash in the session's final
+report. Sherpa-ONNX remains an EXPERIMENTAL, Lab-only provider, not
+production-ready; this round fixed asset DEPLOYMENT, not recognition
+ACCURACY, which is still awaiting the user's real-microphone session
+against the live deployed page.
+
+### PC Voice Field Test #4 — Protocol Prepared (2026-08-20)
+
+**Problem:** EyeOnPit 1.10 Phases 4 (voice Split/Double) and 5 (explicit
+split-hand voice card targeting) were both built and regression-tested
+against TEXT only — every command shape and every rejection path has a
+passing automated test, but none of it has been spoken into a real Chrome
+session since. Needed a concise, real-microphone test script before either
+phase can be considered field-validated, mirroring the standing "do not
+skip a Field Test" discipline already established for Field Test #3.
+
+**What shipped:** `docs/EYEONPIT_VOICE_FIELD_TEST_4.md` — a full protocol
+(purpose, methodology, a single 19-line ordered script covering all three
+Split phrasings, Double on an unsplit seat and both hands of a split seat,
+six accepted explicit split-hand card forms across Spot/Player/Seat
+synonyms, the mandatory bare-target ambiguity rejection, three malformed-
+hand rejections, the multi-card-under-one-hand rejection, and a full
+Undo→Redo round-trip), an exact table mapping this round's new
+`actionSummary` confirmation-text shapes to the existing JSON export, and
+six explicit safety gates (zero false CardEvents, zero wrong-hand entries,
+exactly one CardEvent/count-change per accepted card, bare split-seat
+targets never guessing a hand, malformed hand phrases never falling
+through). **Zero production code was changed** — the existing
+`VoiceUtteranceSummary`/`buildVoiceSessionExport` diagnostic tooling and
+Phase 3's own `ActiveSeatHeader` HAND 1/HAND 2 display already capture
+everything the protocol needs; see the doc's own §6 for why no new
+diagnostic field was added, given how many more production dispatch sites
+it would touch after Phases 4-5.
+
+**Explicitly not done:** the actual real-microphone session — this is a
+protocol, not a completed test. No grammar was changed or broadened based
+on any hypothetical ASR failure. No parser/classifier behavior changed. No
+counting-engine changes. No conversational split-hand continuation (not
+implemented, so nothing to test). All current uncommitted Phase 1-5 work,
+Sherpa A/B/C, and Field Test #3 preserved exactly.
+
+**Tests:** no new tests (documentation-only round). Full suite green (1440
+passed, 1 pre-existing skip), `tsc --noEmit` clean, `eslint` clean.
+
+**Status:** protocol complete, pending review. Not committed/pushed. Voice
+Split/Double and split-hand card targeting remain **implemented and
+text-verified, but not field-validated** until the user runs this script
+with a real microphone and reviews the export — see
+`docs/EYEONPIT_1_10_SPLIT_DOUBLE_DESIGN.md`'s top status banner and §12
+item 8.
+
+### 1.10 Split/Double — Phase 5, Explicit Split-Hand Voice Card Targeting (2026-08-20)
+
+**Scope:** voice CARD entry that names both the seat AND the hand
+explicitly — "spot 3 hand 1 has a five", "spot 3 hand 2 has a king" (and
+the connector-less "spot 3 hand 1 five" form, already tolerated for a
+plain seat and inherited here unchanged). Conversational continuation for
+split hands (a later card resolving against a previously-named hand with
+no fresh target spoken) is explicitly NOT implemented — genuinely open,
+separate future work.
+
+**The core safety fix this phase adds:** "Spot 3 has a five" (no "hand"
+word) on an ALREADY-SPLIT seat now correctly rejects as ambiguous
+(`AMBIGUOUS_HAND_TARGET`) instead of silently landing on the primary hand
+— enforcing a rule the design doc's own §7.1 had already locked before
+this phase started ("never guess which hand a bare target phrase means
+once a seat has split"). Enforced at the two places a plain, explicit
+seat-target card is ever resolved (the legacy single-card dispatch path,
+and `preflightNarration`'s card-op branch for multi-card narration), via a
+new shared `isAmbiguousSplitSeatCardTarget` check — never for a card with
+no target at all, which keeps ordinary bare-card continuation against
+whatever's already active completely untouched.
+
+**Targeting:** Hand 1 → the seat's existing positive-number target. Hand 2
+→ the existing `splitTargetFor(seat)` negative-number target. Both flow
+through the identical `resolveCardEntryTarget`/`addCard` production path
+every other card entry already uses — one `addCard` call site, so a
+second CardEvent for one spoken card isn't just untested, it's
+architecturally impossible from this code.
+
+**A real cross-grammar bug found and fixed during this round:** Phase 4's
+split/double parser blocks on any leftover tail containing its own
+trigger words, one of which ("hand") is ALSO this phase's own trigger
+word — so every valid split-hand card command was being incorrectly
+swallowed and blocked by Phase 4's parser before Phase 5's parser ever
+got a chance (caught immediately: 18 of 24 new tests failed on first
+run). Fixed by making each parser defer to its sibling's shape instead of
+blocking blindly — the split/double parser now yields when a tail's last
+token is a real card rank; the split-hand-card parser yields when a tail
+is exactly "double."
+
+**N-best safety reviewed:** `classifyVoiceTranscript.ts` stays a pure,
+transcript-only function (no access to live split-seat state, by design)
+— alternatives that genuinely disagree on which hand was named classify
+to different `actionKey`s and fail closed via the existing
+`CONFLICTING_ALTERNATIVES` mechanism, unchanged from before this phase.
+No changes were needed to `nBestResolver.ts`.
+
+**Tests:** 24 new tests in `src/components/live/VoiceSplitHandCard.test.tsx`
+covering every accepted form, unsplit-seat behavior, the bare-target
+ambiguity fix, every malformed-hand case, count/ledger integrity (exactly
+one CardEvent and one count change per card, no migration between hands,
+pre-split cards untouched, Double state stays correctly associated),
+Undo/Redo (Redo exercised via the real context function directly — there
+is no voice command for Redo), and reporting association via the
+unmodified Phase 1 report builder. Full suite green (1440 passed, 1
+pre-existing skip, stable across repeated runs — one known, pre-existing,
+CPU-contention-only flaky test unrelated to this phase), `tsc --noEmit`
+clean, `eslint` clean, `counting-engine/` diff empty, Phase 1 reporting
+schema/Phase 3 UI untouched, Sherpa A/B/C and Field Test #3 preserved
+exactly.
+
+**Status:** Phase 5 complete, pending review. Not committed/pushed.
+Conversational split-hand continuation remains not started — see
+`docs/EYEONPIT_1_10_SPLIT_DOUBLE_DESIGN.md` §0.5/§12 for full detail and
+the recommended next-phase path (a real microphone Field Test round for
+split/double + split-hand-card voice, before continuation work begins).
+
+### 1.10 Split/Double — Phase 4, Voice Split/Double Commands (2026-08-20)
+
+**Scope:** voice commands for Split and Double ONLY — "spot 3 split",
+"spot 3 double" (unsplit seat), "spot 3 hand 1 double"/"spot 3 hand 2
+double" (split seat, hand required explicitly). Split-hand voice CARD
+ENTRY ("spot 3 hand 2 has a five") is a separate, later phase (Phase 6) —
+not touched here; entering cards into either hand still requires the
+manual CardEntryPad until then.
+
+**Why a new parser was needed:** `parseNarration.ts` already recognizes
+bare "split"/"double" as `INERT_ACTION_WORDS` (permanently no-op filler,
+from 1.9-era design) — without a dedicated grammar checked first, "spot 3
+split" would have silently narrated as nothing but a target selection,
+discarding "split" entirely. New file `src/lib/voice/
+parseSplitDoubleCommand.ts` recognizes exactly six closed shapes (spot/
+player/seat prefix synonyms × leading-or-trailing verb placement × an
+optional explicit hand number), wired into both
+`classifyVoiceTranscript.ts` (N-best alternative scoring) and
+`VoiceControl.tsx`'s `handleFinalResult` (actual dispatch), in the same
+position table-change/read-only-query already occupy — before narration.
+
+**Real bug found and fixed during this round:** an early version of the
+parser returned plain `null` for a malformed hand number ("spot 3 hand 3
+double" — hand 3 doesn't exist). Testing proved that was unsafe: `null`
+let the transcript fall through to `parseNarration`, whose one-word noise
+tolerance absorbed "hand" as a stray token and "double" as inert filler,
+then read the trailing "3" as an ordinary card — entering a real, wrong
+Hi-Lo +1 CardEvent from what should have been a flatly rejected command.
+Fixed by giving the parser a third return state, `{kind: "blocked"}`: once
+a clean seat target is found, any leftover tokens still containing one of
+this grammar's own trigger words ("split"/"double"/"hand") block the
+utterance outright instead of deferring it. Ordinary sentences that merely
+start with a valid seat phrase ("spot 3 raised his bet") are unaffected.
+
+**Safety:** a bare double on an already-split seat is rejected with a new
+`AMBIGUOUS_HAND_TARGET` diagnostic code — never guesses Hand 1 vs. Hand 2.
+Both commands dispatch through the exact same `splitSeat`/`mutate`
+functions the manual Split/Double buttons already call (Double's updater
+is byte-identical to `PlayerActionsRow.tsx`'s `handleDouble`) — never a
+parallel commit path, so Phase 2's Undo/Redo guarantees apply to a
+voice-triggered Double exactly as they do to a manual one (verified
+directly by test). Neither command ever creates a CardEvent or changes any
+displayed count (verified via direct ledger assertion). Accepted commands
+speak through the existing `speak()` abstraction under the existing
+`voiceAudioFeedback` setting; rejections stay visual-only, like every
+other rejection in this app.
+
+**Tests:** 11 new tests in `src/components/live/VoiceSplitDouble.test.tsx`,
+driving the real `VoiceControl` component end to end. Full suite green
+(1416 passed, 1 pre-existing skip, stable across repeated runs), `tsc
+--noEmit` clean, `eslint` clean, `counting-engine/` diff empty, Phase 1
+reporting schema/Phase 3 UI untouched, Sherpa A/B/C and Field Test #3
+preserved exactly.
+
+**Status:** Phase 4 complete, pending review. Not committed/pushed.
+Split-hand voice card-entry targeting (Phase 6, §7.1 of the design doc)
+remains not started. See `docs/EYEONPIT_1_10_SPLIT_DOUBLE_DESIGN.md`
+§0.4/§12 for full detail.
+
+### 1.10 Split/Double — Phase 3, Split-Hand Operator UX Polish (2026-08-20)
+
+**Problem:** the design round (below) flagged three real UX gaps for a
+split seat: the split-hand indicator was a small, cryptic 20px "H2" badge
+with no paired "H1"; the active hand relied on the same generic
+cyan-highlight treatment every other seat selection uses, with no
+dedicated signal; and the Double button gave no on-screen confirmation of
+which hand it would apply to before tapping.
+
+**What shipped, presentation-only:**
+
+- `ActiveSeatHeader.tsx` — a split seat now shows a spelled-out, two-button
+  `HAND 1` / `HAND 2` switcher directly under the seat identity line: 48px
+  touch targets (44px in `short:` landscape), `role="group"`, and
+  `aria-pressed` plus a filled background, border, and checkmark icon on
+  the active button — three signal channels, never color alone. An
+  unsplit seat's header is byte-identical to before this round.
+- `PlayerActionsRow.tsx` — a caption ("Actions below apply to Hand 1/Hand
+  2 only") now appears above the Double/Split/Insurance/Surrender/More
+  row, shown only for a seat that has split. No button label or dispatch
+  behavior changed.
+- `PlayerDetailSheet.tsx` / `PlayerDetailBar.tsx` — the dialog title and
+  compact collapsed-row text now spell out "Hand 1"/"Hand 2" for a split
+  seat instead of the old bare "· SPLIT" suffix.
+- `SeatTilesRow.tsx` — the dense table-overview tile's split-hand badge
+  enlarged 20px → 24px with an added border; `aria-label` clarified to
+  "Spot n, Hand 2 — select". Kept intentionally compact and secondary —
+  `ActiveSeatHeader` is now the primary hand-switching surface.
+
+**What did not change:** `mutate`/`addCard`/`splitSeat`/`undo`/`redo`, any
+`CardEvent` handling, the counting engine, the reporting schema, or the
+Phase 2 Double/Undo semantics. All five changed files are presentation
+components only.
+
+**Tests:** 9 new tests in `src/components/live/SplitHandUX.test.tsx`,
+driving the real `LiveScreen` component tree end-to-end (not isolated
+components) — unsplit-seat display unchanged; both hand labels shown
+spelled out; active hand represented via `aria-pressed`; selecting each
+hand correctly retargets; the seat-tile badge works as a shortcut; Double
+applies only to the currently selected hand (each hand's own `doubled`
+state checked independently); both hand controls stay present in the DOM
+regardless of the `short:` landscape CSS variant. Full suite green (1395
+passed, 1 pre-existing skip, stable across repeated runs), `tsc --noEmit`
+clean, `eslint` clean, `counting-engine/` diff empty.
+
+**Status:** Phase 3 complete, pending review. Not committed/pushed.
+Recommended next step: Phase 4 (voice Split/Double), now that both the
+Double/Undo defect (Phase 2) and the split-hand UX gaps (Phase 3) are
+resolved. See `docs/EYEONPIT_1_10_SPLIT_DOUBLE_DESIGN.md` §0.3/§12 for
+full detail.
+
+### 1.10 Split/Double — Phase 2, Double/Undo Defect Fix (2026-08-20)
+
+**Problem:** Phase 1's Double/Undo verification round found a real,
+confirmed defect (below) and, per instruction, reported it without fixing
+it. This round fixed it, narrowly.
+
+**Root cause:** `InvestigationContext.undo()` always checked the active
+target's own most recent active CardEvent BEFORE the whole-round history
+snapshot that actually held a Double — so pressing Undo right after
+Double, while the target still had its own cards, always undid a card
+instead of the double, silently leaving the wager doubled.
+
+**The fix:** `undo()` now checks, first, whether the active target's hand
+is `doubled` with no post-double card yet — a deterministic read of
+`doubled`/`doubledAtCardCount`/`playerCards.length`, fields already on
+`SeatRoundRecord`. When true, it reverts the Double itself (via the same
+`mutateRound` primitive every other round-state undo uses) instead of
+touching a card. Once a post-double card exists, this check is false and
+the pre-existing card-undo path runs unchanged — removing that card is
+what makes a SECOND Undo naturally reach the double-revert case. A new,
+narrow `HistoryEntry` variant (`"target-double"`) makes this symmetric
+with Redo. No parallel CardEvent, no history-system redesign, no change
+to global LIFO behavior for ordinary or split-hand card entry.
+
+**What shipped:** `seatTarget.ts` gained three pure functions
+(`isDoubledWithNoPostDoubleCard`/`revertDouble`/`reapplyDouble`);
+`InvestigationContext.tsx`'s `undo()`/`redo()`/`undoLabel`/`canUndo`
+updated to use them. 16 total Double/Undo/Redo integration tests (the
+prior defect-proving test replaced with tests proving the fix; 7 new
+scenarios: reverting a bare double, redo, the extra-card-then-double
+two-step undo and its two-step redo, the same behavior on a split's Hand
+2, an unrelated seat staying unaffected, and confirmation the CardEvent
+ledger/count never change when undoing only Double state).
+
+**One accepted, documented side effect:** the original generic `"round"`
+history snapshot `handleDouble`'s `mutate()` call still pushes when Double
+is first pressed becomes an inert "ghost" entry in the common case, now
+that the new targeted check intercepts first. This exact characteristic
+already existed for every `mutate()`-based action before this fix (Double,
+Insurance, Surrender) — not introduced by this round, and not fixed here
+since doing so would mean touching `PlayerActionsRow.tsx`, a larger change
+than this narrowly-scoped fix called for.
+
+**Explicitly not done:** Split/Double voice, H1/H2 UX, PC Voice Field Test
+#3, Sherpa A/B/C — the latter two untouched and preserved exactly.
+
+**Tests:** 16 total in the Double/Undo/Redo suite (net +7 over Phase 1's
+verification round). Full suite green (1386 passed, 1 pre-existing skip),
+`tsc --noEmit` clean, `eslint` clean, `counting-engine/` diff empty.
+
+**Status:** Phase 2 complete, pending review. Not committed/pushed.
+Recommended next step: Phase 3 (UX polish, only if you confirm it's
+wanted) or skip straight to Phase 4 (voice Split/Double), now that the
+Double/Undo defect blocking it is resolved.
+
+### 1.10 Split/Double — Locked Decisions + Phase 1 Reporting Fix (2026-08-20)
+
+**Problem:** the design round below left five open decisions and one
+approved-but-unstarted Phase 1 (a confirmed real bug: split-hand data was
+silently absent from every generated Report). This round locked those
+decisions and executed Phase 1.
+
+**Locked decisions:** pre-split cards stay as-is (Split creates a new
+empty hand, never moves/mutates historical CardEvents — count integrity
+over visual reconstruction); re-splits explicitly out of 1.10 scope, but
+Phase 1's data shape was kept extensible for it anyway; H1/H2 UX
+confirmed worth improving, explicitly deferred; Double/Undo verification
+required before any voice work.
+
+**What shipped:**
+
+- **Phase 1, done:** `reportBuilder.ts` now folds `round.splitHands` into
+  the report — a split seat produces two entries (`handIndex: 1`/`2`),
+  each with its own cards/wager/doubled-state/outcome.
+  `REPORT_SCHEMA_VERSION` bumped 2→3, additive only. 7 new regression
+  tests (unsplit-unchanged, both hands present, cards/outcomes/doubled
+  correctly attributed per hand, zero duplication) — all passing. No
+  CardEvent mutation, no counting-engine involvement.
+- **Double/Undo verification, done — real defect found:** targeted
+  automated tests (`InvestigationContext.integration.test.tsx`) prove
+  pressing Undo immediately after Double (before any further card) does
+  NOT undo the Double — it silently undoes the seat's last card instead,
+  leaving the wager doubled. Root cause: `undo()`'s context-aware
+  per-target lookup always runs before the whole-round history-stack
+  fallback that actually holds the Double, and a target with any of its
+  own remaining cards always satisfies that lookup first. **Reported, not
+  fixed**, per explicit instruction — see
+  `docs/EYEONPIT_1_10_SPLIT_DOUBLE_DESIGN.md` §0.2.
+
+**Explicitly not done:** UX polish (deferred by decision), Split/Double
+voice (blocked in part on deciding what to do about the Double/Undo
+defect), PC Voice Field Test #3, Sherpa A/B/C — the latter two untouched
+and preserved exactly.
+
+**Tests:** 10 new (7 reporting + 3 Double/Undo/Redo), 1 existing assertion
+updated for the schema-version bump. Full suite green (1380 passed, 1
+pre-existing skip), `tsc --noEmit` clean, `eslint` clean,
+`counting-engine/` diff empty.
+
+**Status:** Phase 1 complete, pending review. Not committed/pushed.
+Recommended next step: a decision on the Double/Undo defect (fix, or
+document as a known limitation) before Phase 2 (voice Split/Double)
+begins.
+
+### 1.10 Split/Double — Design Only, No Implementation (2026-08-20)
+
+**Status: PLANNING ONLY.** Nothing in this entry is implemented as new
+work — its main finding is that Split/Double were already substantially
+built (see below), correcting an earlier, wrong assumption recorded in
+this session's own prior recovery report that 1.10 hadn't started.
+
+**What was found already implemented** (full detail in
+`docs/EYEONPIT_1_10_SPLIT_DOUBLE_DESIGN.md` §1): the full split-hand data
+model (`Round.splitHands`), the negative-seat-number targeting
+convention, the CardEvent ledger's `"split"` target type with already-
+safe per-target undo/redo, the manual Split/Double UI
+(`PlayerActionsRow.tsx`/`SeatTilesRow.tsx`), round-completion validation
+requiring split hands to resolve, Counter Detection's split-hand-aware
+observation extraction, and backward compatibility for legacy
+investigations. **What's genuinely missing:** voice commands for split/
+double (explicitly `PLANNED` in the Product Spec's own status matrix,
+unchanged by this entry), and a confirmed, real reporting gap —
+`reportBuilder.ts` never reads `round.splitHands`, so a split hand's
+cards/outcome/wager are silently absent from every generated Report today.
+
+**What shipped:** the design document only — a 6-phase implementation
+plan (reporting fix first, since it's a real bugfix independent of
+voice; then an open decision on whether Split should move the pre-split
+cards into the new hand; then optional UX polish; then voice in two
+sub-phases; then a real field test), undo-semantics verification table,
+count-integrity confirmation (already fully guaranteed by the existing
+architecture), and five explicit open decisions requiring approval before
+any implementation begins.
+
+**Explicitly not done:** no code was written or modified. No counting-
+engine changes. No voice grammar. No PC Voice Field Test #3 or Sherpa
+A/B/C work touched — both remain exactly as left, gated on the user's own
+real-microphone sessions.
+
+**Status:** design complete, pending your review of the open decisions in
+§14 of the design doc. Not committed/pushed.
+
+### PC Voice Field Test #3 — Protocol Prepared (2026-08-20)
+
+**Problem:** Field Test #2's remediation and the follow-up "Final Chrome
+Patch" round were both built and regression-tested against TEXT only —
+none of it had been spoken into a real Chrome session since. Needed a
+concise, real-microphone test script before any further voice work, per
+the roadmap's own standing "do not skip Field Test #3" rule.
+
+**What shipped:** `docs/EYEONPIT_VOICE_FIELD_TEST_3.md` — a full protocol
+(purpose, methodology, 27-line phrase corpus copied verbatim from existing
+passing regression tests across every fix category since Field Test #2,
+pass/fail criteria, and exactly how to read the existing JSON export for
+each required field). **Zero production code was changed** — the existing
+`VoiceUtteranceSummary`/`buildVoiceSessionExport` diagnostic tooling
+already captures everything the protocol needs (raw alternatives,
+normalized/recovered interpretation, accept/reject + code + reason,
+whether a CardEvent was produced, latency, active target before/after);
+see the doc's own §6 for why one candidate convenience field was
+considered and deliberately not added, given how many production
+call-sites it would touch for a documentation-only reviewer convenience.
+
+**Explicitly not done:** the actual real-microphone session — this is a
+protocol, not a completed test. No parser/classifier behavior changed. No
+counting-engine changes. No 1.10 work.
+
+**Tests:** none added — no diagnostic tooling code changed, so none was
+needed. Full existing suite re-confirmed green as a no-op check (1371
+passed, 1 pre-existing unrelated flake confirmed passing in isolation),
+`tsc --noEmit` clean, `eslint` clean.
+
+**Status:** prepared, pending the user's real-mic session. Kept alongside
+the still-uncommitted Dealer A/B/C Sherpa lab work (below) — neither track
+overwrites the other; see that entry for what remains separately pending
+there.
+
+### Dealer Hotword Investigation + Lab A/B/C Tooling (2026-08-20)
+
+**Problem:** a real mic session found Sherpa's Dealer recognition unstable
+even with hotwords "on" — "Dealer has a five" consistently misheard as
+"Taylor," "Dealer showing ten" as "Tillers... a tin," while bare "Dealer"
+and "Dealer has a king" worked. Needed to know why before touching any
+configuration.
+
+**What was found** (full detail in `docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md`
+§9): two real, confirmed, compounding misconfigurations — `modelingUnit`
+left at its default `"cjkchar"` for an English BPE model (confirmed
+directly from sherpa-onnx's own C++ source), and hotword phrase text
+lowercase against a vocabulary trained on uppercase-only text (confirmed
+with a real sentencepiece test against the model's own training
+tokenizer). The model bundle doesn't ship a `bpe.vocab` file; traced the
+model to its real training source, verified (byte-identical `tokens.txt`)
+it's the correct tokenizer, and generated a real `bpe.vocab` from it —
+deployed lab-only, gitignored.
+
+**What shipped:**
+
+- Three new, all-optional `SherpaOnnxProviderOptions` fields
+  (`modelingUnit`, `bpeVocabUrl`, `hotwordCasing`) — every one defaults to
+  exactly what every prior round already shipped, so existing callers are
+  byte-for-byte unchanged.
+- A real recognizer with the corrected configuration was constructed and
+  decode-tested in a real Chrome tab — confirmed it doesn't break ordinary
+  recognition. Real-mic Dealer-accuracy improvement was NOT measured — no
+  microphone exists in this environment.
+- `/lab/sherpa-voice-test` now offers a Dealer A/B/C comparison (hotwords
+  off / current-shipped / tuned) against the same phrase script, showing
+  each recorded utterance's raw transcript AND EyeOnPit's real, unmodified,
+  read-only classification (accepted/rejected, would-produce-a-CardEvent)
+  side by side — informational only, this page still creates zero
+  CardEvents.
+
+**Explicitly not touched:** CardEvent ledger, counting engine, production
+Browser Web Speech provider, production parser/classifier behavior. No PC
+Voice Field Test #3. No 1.10/Split-Double work.
+
+**Tests:** `sherpaOnnxProvider.test.ts` extended (8 new tests covering
+hotword casing, the new tunable options, and the investigation's own
+recorded findings). Full suite green (1371 passed, 1 pre-existing skip),
+`tsc --noEmit` clean, `eslint` clean.
+
+**Status:** complete, pending review. Not committed/pushed. Recommended
+next step: the user runs the real A/B/C microphone comparison in the lab —
+see `docs/EYEONPIT_VOICE_PROVIDER_RESEARCH.md` §9.4.
+
 ### Sherpa-ONNX Real Implementation Gate (2026-08-19)
 
 **Problem:** the prior round's `SherpaOnnxProvider` was an honest but
@@ -635,11 +1141,21 @@ gate.
    review, see above. Built without touching voice.
 5. ~~PC Voice Field Test #2 remediation~~ — complete, pending review, see
    above and `docs/EYEONPIT_VOICE_FIELD_TEST_2.md`.
-6. **PC Voice Field Test #3** — a fresh diagnostic export against this
-   round's remediation, using the suggested script in
-   `docs/EYEONPIT_VOICE_FIELD_TEST_2.md`'s closing section, before any
-   further voice changes. *(up next)*
-7. Fix/validate remaining Voice failures surfaced by Field Test #3.
+6. **PC Voice Field Test #3** — protocol prepared, see
+   `docs/EYEONPIT_VOICE_FIELD_TEST_3.md` (purpose, 27-line real-mic
+   corpus, pass/fail criteria — supersedes the old placeholder pointer to
+   Field Test #2's closing section). *(the real-microphone session itself
+   is still up next, not yet run)*
+6a. **1.10 Split/Double, Phases 1-5** — built and text-regression-tested
+    since this list was last current (see the dedicated 1.10 entries
+    above): reporting, the Double/Undo fix, split-hand operator UX, voice
+    Split/Double commands, and explicit split-hand voice card targeting.
+    **PC Voice Field Test #4** — protocol prepared, see
+    `docs/EYEONPIT_VOICE_FIELD_TEST_4.md` (19-line real-mic script
+    covering Phases 4-5's new voice surface, safety gates). *(also not yet
+    run — neither Field Test #3 nor #4's real-microphone session has
+    happened; both remain open gates, not just one)*
+7. Fix/validate remaining Voice failures surfaced by Field Test #3 and #4.
 8. Repeat Voice testing until the reliability gate is met.
 9. Voice Independence — implement a real `SpeechProvider` abstraction
    (design finalized, see `docs/EYEONPIT_1_9_VOICE_INDEPENDENCE.md`) and,

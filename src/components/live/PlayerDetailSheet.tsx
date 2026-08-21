@@ -32,12 +32,13 @@ export function PlayerDetailSheet({
 }) {
   const { currentRound } = useInvestigationContext();
   const { seatNumber, isSplit } = resolveSeatTarget(currentRound, target);
+  const hasSplit = Boolean(currentRound.splitHands[seatNumber]);
 
   return (
     <BottomSheet
       open={open}
       onClose={onClose}
-      title={`Spot ${seatNumber}${isSplit ? " · Split" : ""} — Player Details`}
+      title={`Spot ${seatNumber}${hasSplit ? ` · Hand ${isSplit ? "2" : "1"}` : ""} — Player Details`}
     >
       <div className="flex flex-col gap-2 pb-2">
         <QuickBetPanel target={target} />

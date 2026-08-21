@@ -16,8 +16,9 @@ import { resolveSeatTarget } from "@/lib/utils/seatTarget";
  */
 export function PlayerDetailBar({ target, onOpen }: { target: number; onOpen: () => void }) {
   const { currentRound } = useInvestigationContext();
-  const { record, isSplit } = resolveSeatTarget(currentRound, target);
+  const { seatNumber, record, isSplit } = resolveSeatTarget(currentRound, target);
   const bet = record?.betAmount;
+  const hasSplit = Boolean(currentRound.splitHands[seatNumber]);
 
   return (
     <button
@@ -29,7 +30,7 @@ export function PlayerDetailBar({ target, onOpen }: { target: number; onOpen: ()
     >
       <span className="text-[11px] font-semibold text-foreground">
         {bet != null && bet > 0 ? `$${bet} · ` : ""}PLAYER DETAILS
-        {isSplit ? " · SPLIT" : ""}
+        {hasSplit ? ` · HAND ${isSplit ? "2" : "1"}` : ""}
       </span>
       <span className="flex items-center gap-0.5 text-[10px] font-medium text-muted-foreground">
         Details <ChevronRight className="h-3.5 w-3.5" aria-hidden />

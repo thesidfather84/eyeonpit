@@ -192,17 +192,26 @@ export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProp
               )}
 
               {splitRecord && (
+                // EyeOnPit 1.10 Phase 3 — a compact, table-overview-scale
+                // affordance, not the primary Hand 1/Hand 2 statement (that
+                // lives in ActiveSeatHeader, spelled out in full, once this
+                // seat becomes the active target — see that component's own
+                // doc comment). Tapping the tile body itself already
+                // targets Hand 1; this is the only path to Hand 2 directly
+                // from the table map, so it stays a real, distinct button —
+                // just deliberately terser, matching the density every
+                // other seat tile in this dense grid already needs.
                 <button
                   type="button"
-                  aria-label={`Spot ${seat} split hand`}
+                  aria-label={`Spot ${seat}, Hand 2 — select`}
                   onClick={(e) => {
                     e.stopPropagation();
                     setActiveTarget(splitTargetFor(seat));
                   }}
-                  className={`absolute bottom-0.5 left-0.5 flex h-5 w-5 items-center justify-center rounded text-[9px] font-bold ${
+                  className={`absolute bottom-0.5 left-0.5 flex h-6 w-6 items-center justify-center rounded border text-[9px] font-bold ${
                     isSplitActive
-                      ? "bg-accent-secondary text-accent-secondary-foreground"
-                      : "bg-surface-raised text-muted-foreground"
+                      ? "border-accent-secondary bg-accent-secondary text-accent-secondary-foreground"
+                      : "border-border bg-surface-raised text-muted-foreground"
                   }`}
                 >
                   H2

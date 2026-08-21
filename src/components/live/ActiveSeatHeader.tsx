@@ -1,8 +1,9 @@
 "use client";
 
+import { Check } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import type { CardTarget } from "@/contexts/InvestigationContext";
-import { resolveSeatTarget } from "@/lib/utils/seatTarget";
+import { resolveSeatTarget, splitTargetFor } from "@/lib/utils/seatTarget";
 
 /**
  * The ONE place that states, unambiguously, what the card keypad currently
@@ -36,32 +37,89 @@ import { resolveSeatTarget } from "@/lib/utils/seatTarget";
  * accepting "seat"/"spot"/"player" as synonyms regardless of which word is
  * on screen (see docs/EYEONPIT_PRODUCT_SPEC.md §4's terminology standard,
  * updated for this priority).
+ *
+ * EyeOnPit 1.10 Phase 3 — split-hand clarity. The old "· SPLIT" suffix
+ * told the operator a split existed but never which of the two hands they
+ * were actually about to enter cards into — confirmed as a real usability
+ * gap during Phase 3's design review (only a small "H2" badge on the seat
+ * tile distinguished them, easy to miss under time pressure). Now, once a
+ * seat has a split hand, this header spells out "HAND 1"/"HAND 2" in full
+ * (never the bare shorthand as the primary label) and adds a direct,
+ * large, always-visible two-button switcher — selecting either hand takes
+ * exactly one tap, no sheet to open, right where the operator's attention
+ * already is. Completely unchanged for a seat that has never split (see
+ * the early return below) and for the dealer.
  */
 export function ActiveSeatHeader({ target, terminology = "spot" }: { target: CardTarget; terminology?: "seat" | "spot" }) {
-  const { investigation, currentRound } = useInvestigationContext();
+  const { investigation, currentRound, setActiveTarget } = useInvestigationContext();
   const word = terminology === "seat" ? "SEAT" : "SPOT";
 
-  let identity: string;
   if (target === "dealer") {
-    identity = "DEALER";
-  } else {
-    const { seatNumber, isSplit } = resolveSeatTarget(currentRound, target);
-    const groupId = investigation.seatPlayerGroups[seatNumber];
-    const group = groupId ? investigation.playerGroups[groupId] : undefined;
-    identity = `${word} ${seatNumber}${isSplit ? " · SPLIT" : ""}${group ? ` · ${group.label}` : ""}`;
+    return (
+      <div
+        data-testid="active-seat-header"
+        className="flex-none border-b border-accent-secondary/40 bg-accent-secondary/10 px-2 py-0.5 short:flex short:items-baseline short:gap-1.5 short:py-0"
+      >
+        <p className="text-[11px] font-bold leading-tight tracking-wide text-accent-secondary short:text-[10px]">DEALER</p>
+        <p className="text-[10px] font-medium leading-tight text-muted-foreground short:text-[9px]">ENTER CARDS</p>
+      </div>
+    );
+  }
+
+  const { seatNumber, isSplit } = resolveSeatTarget(currentRound, target);
+  const hasSplit = Boolean(currentRound.splitHands[seatNumber]);
+  const groupId = investigation.seatPlayerGroups[seatNumber];
+  const group = groupId ? investigation.playerGroups[groupId] : undefined;
+  const seatIdentity = `${word} ${seatNumber}${group ? ` · ${group.label}` : ""}`;
+
+  if (!hasSplit) {
+    return (
+      <div
+        data-testid="active-seat-header"
+        className="flex-none border-b border-accent-secondary/40 bg-accent-secondary/10 px-2 py-0.5 short:flex short:items-baseline short:gap-1.5 short:py-0"
+      >
+        <p className="text-[11px] font-bold leading-tight tracking-wide text-accent-secondary short:text-[10px]">{seatIdentity}</p>
+        <p className="text-[10px] font-medium leading-tight text-muted-foreground short:text-[9px]">ENTER CARDS</p>
+      </div>
+    );
   }
 
   return (
-    <div
-      data-testid="active-seat-header"
-      className="flex-none border-b border-accent-secondary/40 bg-accent-secondary/10 px-2 py-0.5 short:flex short:items-baseline short:gap-1.5 short:py-0"
-    >
-      <p className="text-[11px] font-bold leading-tight tracking-wide text-accent-secondary short:text-[10px]">
-        {identity}
-      </p>
-      <p className="text-[10px] font-medium leading-tight text-muted-foreground short:text-[9px]">
-        ENTER CARDS
-      </p>
+    <div data-testid="active-seat-header" className="flex-none border-b border-accent-secondary/40 bg-accent-secondary/10 px-2 py-1 short:py-1">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] font-bold leading-tight tracking-wide text-accent-secondary short:text-[10px]">{seatIdentity}</p>
+        <p className="text-[10px] font-medium leading-tight text-muted-foreground short:text-[9px]">ENTER CARDS</p>
+      </div>
+      <div className="mt-1 grid grid-cols-2 gap-1.5 short:mt-1 short:gap-1" role="group" aria-label={`Select which hand at ${word.toLowerCase()} ${seatNumber} to enter cards for`}>
+        <button
+          type="button"
+          onClick={() => setActiveTarget(seatNumber)}
+          aria-pressed={!isSplit}
+          data-testid="select-hand-1"
+          className={`flex min-h-12 items-center justify-center gap-1 rounded-lg border-2 text-sm font-bold tracking-wide short:min-h-11 ${
+            !isSplit
+              ? "border-accent-secondary bg-accent-secondary text-accent-secondary-foreground"
+              : "border-border bg-surface text-foreground"
+          }`}
+        >
+          {!isSplit && <Check className="h-4 w-4" aria-hidden />}
+          HAND 1
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTarget(splitTargetFor(seatNumber))}
+          aria-pressed={isSplit}
+          data-testid="select-hand-2"
+          className={`flex min-h-12 items-center justify-center gap-1 rounded-lg border-2 text-sm font-bold tracking-wide short:min-h-11 ${
+            isSplit
+              ? "border-accent-secondary bg-accent-secondary text-accent-secondary-foreground"
+              : "border-border bg-surface text-foreground"
+          }`}
+        >
+          {isSplit && <Check className="h-4 w-4" aria-hidden />}
+          HAND 2
+        </button>
+      </div>
     </div>
   );
 }

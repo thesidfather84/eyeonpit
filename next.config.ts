@@ -42,33 +42,45 @@ const nextConfig: NextConfig = {
           { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
         ],
       },
-      // RESTORED 2026-08-21 after being briefly (and INCORRECTLY) removed
-      // earlier the same day. The mistaken reasoning: since whisper.cpp's
-      // WASM runtime no longer runs in-process on THIS page (it moved to
-      // its own isolated origin, whisper-static-lab.vercel.app, embedded
-      // via <iframe> — see whisperCppProvider.ts's own ARCHITECTURE doc
-      // comment), it looked like this page no longer needed
-      // crossOriginIsolated itself. Real, direct testing proved that
-      // reasoning wrong: `self.crossOriginIsolated` inside a NESTED iframe
-      // requires COEP on the ENTIRE ancestor chain, not just the iframe's
-      // own document — removing COEP here made the Whisper iframe's own
-      // crossOriginIsolated read `false` despite its own COOP/COEP headers,
-      // silently breaking its SharedArrayBuffer-backed pthread worker pool
-      // (module init hung forever on `debug:awaiting-module`, confirmed via
-      // real instrumentation). The ACTUAL bug removing this had been meant
-      // to fix — whisper-static-lab's own `Cross-Origin-Resource-Policy:
-      // same-origin` blocking this COEP-enabled page from embedding it at
-      // all — is fixed on the OTHER side instead: that project's
-      // vercel.json now sends `Cross-Origin-Resource-Policy: cross-origin`,
-      // which satisfies COEP's requirement without EyeOnPit giving up its
-      // own COEP. Both fixes are required together, verified end-to-end in
-      // a real browser: real transcription, zero wake phrase.
+      // NO LONGER NEEDED, 2026-08-21 — this route used to carry
+      // COOP/COEP for crossOriginIsolated (first because whisper.cpp's
+      // command.js ran in-process here, then briefly again because it was
+      // assumed the isolated-origin Whisper <iframe> still needed it via
+      // ancestor-chain propagation — see git history for both). Real,
+      // direct testing proved that assumption wrong TOO:
+      // `self.crossOriginIsolated` does not reliably propagate to a
+      // cross-origin document nested in an <iframe> in this browser
+      // regardless of COEP mode (tried both `credentialless` and
+      // `require-corp` on this page, matched against the child's own
+      // headers — neither made the iframe's `self.crossOriginIsolated`
+      // read `true`; confirmed via real instrumentation posted back from
+      // inside the iframe). The actual, durable fix was upstream, in
+      // whisper.cpp's own build: `command.wasm` is now compiled WITHOUT
+      // pthreads/SharedArrayBuffer at all (see the no-pthreads patch
+      // referenced in whisperCppProvider.ts's own top-of-file doc
+      // comment), so crossOriginIsolated is no longer required by
+      // anything, on either side, in any configuration — this page needs
+      // no special headers for Whisper, and neither does the isolated
+      // origin itself anymore.
+      //
+      // Permissions-Policy, 2026-08-21 — real production bug found testing
+      // the isolated-origin Whisper <iframe> end-to-end: with NO
+      // Permissions-Policy header sent at all, the browser's IMPLICIT
+      // default for "microphone" is `self` (same-origin only) — the
+      // iframe's own `allow="microphone"` HTML attribute (set in
+      // whisperCppProvider.ts's own `ensureSession()`) can only DELEGATE a
+      // permission the top-level page's policy already grants for that
+      // origin, it cannot override a same-origin-only default on its own.
+      // Net effect: `getUserMedia()` inside the cross-origin Whisper
+      // iframe hung forever — no error, no resolution, confirmed directly
+      // (a manually constructed test iframe posted `whisper:start-phrase`
+      // and never received ANY reply, not even a `whisper:error`, exactly
+      // matching a permission prompt/request that can never actually
+      // fire). Explicitly allowlisting the isolated Whisper origin here is
+      // the fix — every other origin still defaults to `self`, unaffected.
       {
         source: "/lab/sherpa-voice-test",
-        headers: [
-          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-          { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
-        ],
+        headers: [{ key: "Permissions-Policy", value: 'microphone=(self "https://whisper-static-lab.vercel.app")' }],
       },
     ];
   },

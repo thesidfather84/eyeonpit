@@ -1,100 +1,184 @@
 // @vitest-environment node
 //
-// Same testing boundary as sherpaOnnxProvider.test.ts's own doc comment:
-// this provider depends on WASM/model assets that don't exist anywhere yet
-// (see whisperCppProvider.ts's own ASSET DEPLOYMENT doc comment) and on
-// DOM/AudioWorklet/getUserMedia APIs a plain Node/vitest environment
-// doesn't have. These tests cover exactly what's honestly testable here:
-// pure logic and unsupported-environment behavior — never a real WASM run,
-// which has NOT been performed this round (disclosed explicitly in the
-// module's own top-of-file doc comment, unlike sherpa-onnx's real-audio
-// verification).
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+// This provider's real work — an actual iframe loading a real cross-origin
+// runtime, real postMessage exchange, real getUserMedia/WASM inside that
+// iframe — is NOT something jsdom can meaningfully simulate (jsdom does
+// not navigate iframes to real URLs or implement getUserMedia/AudioWorklet
+// at all), so it is not faked here. That real behavior was verified
+// directly in a real browser instead — see this module's own top-of-file
+// ARCHITECTURE and NO-WAKE-PHRASE PATCH doc comments for exactly what was
+// proven (real transcription of jfk.wav on the isolated origin with zero
+// wake phrase spoken) and the round's own final report for the full
+// verification trail. What IS honestly unit-testable in a plain
+// Node/vitest environment — pure protocol parsing/validation, origin
+// trust logic, error classification, timeout behavior, and
+// unsupported-environment behavior — is covered here, same discipline as
+// sherpaOnnxProvider.test.ts's own documented testing boundary.
+import { describe, expect, it, vi } from "vitest";
 import {
   createWhisperCppProvider,
   WHISPER_CPP_PROVIDER_ID,
   WHISPER_CPP_PROVENANCE,
-  WHISPER_CPP_ASSET_MANIFEST,
-  WHISPER_CPP_MODELS,
-  DEFAULT_WHISPER_MODEL,
-  DEFAULT_MODULE_INIT_TIMEOUT_MS,
-  MODULE_INIT_TIMEOUT_MESSAGE,
-  WHISPER_MODEL_FS_PATH,
+  DEFAULT_WHISPER_READY_TIMEOUT_MS,
+  WHISPER_IFRAME_READY_TIMEOUT_MESSAGE,
   detectWhisperCppSupport,
-  resolveDefaultWhisperAssetBaseUrl,
+  resolveDefaultWhisperOrigin,
+  isTrustedWhisperMessageOrigin,
+  parseWhisperInboundMessage,
   classifyWhisperStartError,
-  withModuleInitTimeout,
+  withWhisperReadyTimeout,
 } from "./whisperCppProvider";
 
-describe("detectWhisperCppSupport — pure feature detection, identical structure to Sherpa's own", () => {
-  it("is entirely unsupported with no window", () => {
-    expect(detectWhisperCppSupport({ hasWindow: false, hasWebAssembly: true, hasAudioWorkletNode: true, hasGetUserMedia: true })).toEqual({
-      webAssembly: false,
-      audioWorklet: false,
-      getUserMedia: false,
-    });
+describe("detectWhisperCppSupport — iframe embedding needs only window+document, unlike the old in-process WASM checks", () => {
+  it("is unsupported with no window", () => {
+    expect(detectWhisperCppSupport({ hasWindow: false, hasDocument: true })).toEqual({ iframeEmbedding: false });
   });
 
-  it("reports each capability independently when a window exists", () => {
-    expect(
-      detectWhisperCppSupport({ hasWindow: true, hasWebAssembly: true, hasAudioWorkletNode: false, hasGetUserMedia: true })
-    ).toEqual({ webAssembly: true, audioWorklet: false, getUserMedia: true });
+  it("is unsupported with no document", () => {
+    expect(detectWhisperCppSupport({ hasWindow: true, hasDocument: false })).toEqual({ iframeEmbedding: false });
   });
 
-  it("is fully supported when every capability is present", () => {
-    expect(
-      detectWhisperCppSupport({ hasWindow: true, hasWebAssembly: true, hasAudioWorkletNode: true, hasGetUserMedia: true })
-    ).toEqual({ webAssembly: true, audioWorklet: true, getUserMedia: true });
+  it("is supported with both", () => {
+    expect(detectWhisperCppSupport({ hasWindow: true, hasDocument: true })).toEqual({ iframeEmbedding: true });
   });
 });
 
-describe("resolveDefaultWhisperAssetBaseUrl — same env-var-overridable pattern as Sherpa's asset base URL", () => {
-  it("falls back to the gitignored local dev path when the env var is unset", () => {
-    expect(resolveDefaultWhisperAssetBaseUrl({})).toBe("/whisper-cpp-lab/");
+describe("resolveDefaultWhisperOrigin — falls back to the real, deployed isolated origin, no env var required", () => {
+  it("falls back to the real whisper-static-lab production origin when unset", () => {
+    expect(resolveDefaultWhisperOrigin({})).toBe("https://whisper-static-lab.vercel.app");
   });
 
-  it("falls back to the local dev path when the env var is an empty string", () => {
-    expect(resolveDefaultWhisperAssetBaseUrl({ NEXT_PUBLIC_WHISPER_ASSET_BASE_URL: "" })).toBe("/whisper-cpp-lab/");
+  it("falls back when the env var is an empty string", () => {
+    expect(resolveDefaultWhisperOrigin({ NEXT_PUBLIC_WHISPER_STATIC_ORIGIN: "" })).toBe("https://whisper-static-lab.vercel.app");
   });
 
-  it("uses the env var verbatim when set", () => {
-    expect(
-      resolveDefaultWhisperAssetBaseUrl({ NEXT_PUBLIC_WHISPER_ASSET_BASE_URL: "https://blob.example.com/whisper/v1/" })
-    ).toBe("https://blob.example.com/whisper/v1/");
+  it("uses the env var verbatim (minus any trailing slash) when set", () => {
+    expect(resolveDefaultWhisperOrigin({ NEXT_PUBLIC_WHISPER_STATIC_ORIGIN: "https://whisper-lab.example.com/" })).toBe(
+      "https://whisper-lab.example.com"
+    );
   });
 
   it("ignores unrelated env vars", () => {
-    expect(resolveDefaultWhisperAssetBaseUrl({ NODE_ENV: "production" })).toBe("/whisper-cpp-lab/");
+    expect(resolveDefaultWhisperOrigin({ NODE_ENV: "production" })).toBe("https://whisper-static-lab.vercel.app");
   });
 });
 
-describe("classifyWhisperStartError — same exact-asset-URL error detail as Sherpa's own", () => {
-  it('classifies a loadScript 404 as "assets-not-found", naming the exact failing URL', () => {
-    expect(classifyWhisperStartError("failed to load /whisper-cpp-lab/command.js")).toBe(
-      "assets-not-found: failed to load /whisper-cpp-lab/command.js"
+describe("isTrustedWhisperMessageOrigin — the ONE real security boundary for inbound messages, per this module's SECURITY doc comment", () => {
+  it("trusts an exact match", () => {
+    expect(isTrustedWhisperMessageOrigin("https://whisper-static-lab.vercel.app", "https://whisper-static-lab.vercel.app")).toBe(true);
+  });
+
+  it("rejects a different origin outright", () => {
+    expect(isTrustedWhisperMessageOrigin("https://evil.example.com", "https://whisper-static-lab.vercel.app")).toBe(false);
+  });
+
+  it("rejects a same-host-different-scheme origin — never treated as equivalent", () => {
+    expect(isTrustedWhisperMessageOrigin("http://whisper-static-lab.vercel.app", "https://whisper-static-lab.vercel.app")).toBe(false);
+  });
+
+  it("rejects a subdomain that merely contains the configured origin as a substring", () => {
+    expect(isTrustedWhisperMessageOrigin("https://whisper-static-lab.vercel.app.evil.com", "https://whisper-static-lab.vercel.app")).toBe(
+      false
     );
   });
 
-  it('classifies a model-file fetch failure as "assets-not-found" too', () => {
-    expect(classifyWhisperStartError("failed to load /whisper-cpp-lab/ggml-tiny.en-q5_1.bin")).toBe(
-      "assets-not-found: failed to load /whisper-cpp-lab/ggml-tiny.en-q5_1.bin"
-    );
-  });
-
-  it("passes through an unrelated error message verbatim — never mislabels a real init()/model error as a missing asset", () => {
-    expect(classifyWhisperStartError("whisper.cpp init() returned 0 (model load failed)")).toBe(
-      "whisper.cpp init() returned 0 (model load failed)"
-    );
+  it("rejects the literal wildcard string — never silently trusted", () => {
+    expect(isTrustedWhisperMessageOrigin("*", "https://whisper-static-lab.vercel.app")).toBe(false);
   });
 });
 
-describe("createWhisperCppProvider — Node/vitest environment (no window)", () => {
+describe("parseWhisperInboundMessage — validates the narrow protocol; no audio/waveform shape exists to parse, by design", () => {
+  it("parses a valid whisper:ready message", () => {
+    expect(parseWhisperInboundMessage({ type: "whisper:ready", moduleReadyMs: 670 })).toEqual({ type: "whisper:ready", moduleReadyMs: 670 });
+  });
+
+  it("parses a valid whisper:error message", () => {
+    expect(parseWhisperInboundMessage({ type: "whisper:error", message: "mic denied" })).toEqual({ type: "whisper:error", message: "mic denied" });
+  });
+
+  it("parses a valid whisper:final message", () => {
+    expect(parseWhisperInboundMessage({ type: "whisper:final", text: "dealer has a king" })).toEqual({
+      type: "whisper:final",
+      text: "dealer has a king",
+    });
+  });
+
+  it("parses a valid whisper:status message", () => {
+    expect(parseWhisperInboundMessage({ type: "whisper:status", status: "listening" })).toEqual({ type: "whisper:status", status: "listening" });
+  });
+
+  it("rejects null/non-object data", () => {
+    expect(parseWhisperInboundMessage(null)).toBeNull();
+    expect(parseWhisperInboundMessage("whisper:ready")).toBeNull();
+    expect(parseWhisperInboundMessage(42)).toBeNull();
+  });
+
+  it("rejects an unknown type", () => {
+    expect(parseWhisperInboundMessage({ type: "whisper:audio-chunk", samples: [1, 2, 3] })).toBeNull();
+  });
+
+  it("rejects a known type with a missing/mis-typed required field — never coerces", () => {
+    expect(parseWhisperInboundMessage({ type: "whisper:ready" })).toBeNull();
+    expect(parseWhisperInboundMessage({ type: "whisper:ready", moduleReadyMs: "670" })).toBeNull();
+    expect(parseWhisperInboundMessage({ type: "whisper:final" })).toBeNull();
+  });
+
+  it("never parses a message carrying raw audio/waveform data as a trusted shape, even if it claims a known type", () => {
+    expect(parseWhisperInboundMessage({ type: "whisper:final", text: "ok", audio: new Float32Array([1, 2, 3]) })).toEqual({
+      type: "whisper:final",
+      text: "ok",
+    });
+  });
+});
+
+describe("classifyWhisperStartError", () => {
+  it("classifies an iframe-unreachable network failure distinctly", () => {
+    expect(classifyWhisperStartError("failed to load https://whisper-static-lab.vercel.app/")).toBe(
+      "iframe-unreachable: failed to load https://whisper-static-lab.vercel.app/"
+    );
+  });
+
+  it("passes the ready-timeout message through verbatim, never relabeled as network failure", () => {
+    expect(classifyWhisperStartError(WHISPER_IFRAME_READY_TIMEOUT_MESSAGE)).toBe(WHISPER_IFRAME_READY_TIMEOUT_MESSAGE);
+  });
+
+  it("passes an unrelated real error through verbatim", () => {
+    expect(classifyWhisperStartError("mic access denied by user")).toBe("mic access denied by user");
+  });
+});
+
+describe("withWhisperReadyTimeout — bounds the wait for whisper:ready, mirrors the prior in-process provider's own hang-prevention fix", () => {
+  it("resolves normally when the underlying promise resolves before the timeout", async () => {
+    await expect(withWhisperReadyTimeout(Promise.resolve(670), DEFAULT_WHISPER_READY_TIMEOUT_MS)).resolves.toBe(670);
+  });
+
+  it("rejects with the real underlying error when the promise rejects before the timeout", async () => {
+    await expect(withWhisperReadyTimeout(Promise.reject(new Error("mic denied")), DEFAULT_WHISPER_READY_TIMEOUT_MS)).rejects.toThrow(
+      "mic denied"
+    );
+  });
+
+  it("rejects with WHISPER_IFRAME_READY_TIMEOUT_MESSAGE when the promise never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const neverSettles = new Promise<number>(() => {});
+      const result = withWhisperReadyTimeout(neverSettles, 20000);
+      const assertion = expect(result).rejects.toThrow(WHISPER_IFRAME_READY_TIMEOUT_MESSAGE);
+      await vi.advanceTimersByTimeAsync(20000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("createWhisperCppProvider — Node/vitest environment (no window/document)", () => {
   it("reports providerId", () => {
     const provider = createWhisperCppProvider({ onFinalResult: vi.fn() });
     expect(provider.providerId).toBe(WHISPER_CPP_PROVIDER_ID);
   });
 
-  it("is NOT supported without a browser environment — real feature detection, not a hardcoded guess", () => {
+  it("is NOT supported without a browser environment", () => {
     const provider = createWhisperCppProvider({ onFinalResult: vi.fn() });
     expect(provider.supported).toBe(false);
   });
@@ -126,26 +210,25 @@ describe("createWhisperCppProvider — Node/vitest environment (no window)", () 
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it("accepts assetBaseUrl/modelId/feedIntervalMs options without throwing at construction time (no network/DOM access until start())", () => {
+  it("accepts whisperOrigin/readyTimeoutMs options without throwing at construction time (no network/DOM access until start())", () => {
     expect(() =>
       createWhisperCppProvider({
         onFinalResult: vi.fn(),
-        assetBaseUrl: "/whisper-cpp-lab/",
-        modelId: "base.en-q5_1",
-        feedIntervalMs: 100,
+        whisperOrigin: "https://whisper-static-lab.vercel.app",
+        readyTimeoutMs: 5000,
       })
     ).not.toThrow();
   });
 
-  it("still reports onError(\"unsupported\") regardless of the tuned options — construction-time-only fields never bypass real feature detection", () => {
+  it('still reports onError("unsupported") regardless of the tuned options — construction-time-only fields never bypass real feature detection', () => {
     const onError = vi.fn();
-    const provider = createWhisperCppProvider({ onFinalResult: vi.fn(), onError, modelId: "base.en" });
+    const provider = createWhisperCppProvider({ onFinalResult: vi.fn(), onError, whisperOrigin: "https://example.com" });
     provider.start();
     expect(onError).toHaveBeenCalledWith("unsupported");
   });
 });
 
-describe("WHISPER_CPP_PROVENANCE — real, cited, and honest about what was NOT verified this round", () => {
+describe("WHISPER_CPP_PROVENANCE — real, cited, and honest about architecture + the no-wake-phrase patch", () => {
   it("records the real engine repository and license", () => {
     expect(WHISPER_CPP_PROVENANCE.engineRepository).toBe("https://github.com/ggml-org/whisper.cpp");
     expect(WHISPER_CPP_PROVENANCE.engineLicense).toBe("MIT");
@@ -156,115 +239,22 @@ describe("WHISPER_CPP_PROVENANCE — real, cited, and honest about what was NOT 
     expect(WHISPER_CPP_PROVENANCE.exampleChosenBecause).toMatch(/voice commands/i);
   });
 
-  it("honestly records that no prebuilt browser release exists and no toolchain is available here", () => {
-    expect(WHISPER_CPP_PROVENANCE.prebuiltBrowserReleaseExists).toBe(false);
-    expect(WHISPER_CPP_PROVENANCE.emscriptenToolchainAvailableInThisEnvironment).toBe(false);
+  it("records the isolated-static-origin-iframe architecture and why in-process WASM was abandoned", () => {
+    expect(WHISPER_CPP_PROVENANCE.architecture).toBe("isolated-static-origin-iframe");
+    expect(WHISPER_CPP_PROVENANCE.inProcessWasmConfirmedBroken).toMatch(/pthread/i);
   });
 
-  it("records the exact pinned upstream commit the deployed assets were extracted from — real, verifiable provenance, not guessed", () => {
+  it("records the exact pinned upstream commit the deployed/patched build is built from", () => {
     expect(WHISPER_CPP_PROVENANCE.pinnedCommit).toBe("339f2b4e");
     expect(WHISPER_CPP_PROVENANCE.pinnedCommitSubject).toMatch(/package\.json/);
-    expect(WHISPER_CPP_ASSET_MANIFEST.pinnedCommit).toBe(WHISPER_CPP_PROVENANCE.pinnedCommit);
   });
 
-  it("records assets were extracted from the official live demo, not built from source", () => {
-    expect(WHISPER_CPP_PROVENANCE.assetsExtractedFrom).toMatch(/official live demo/i);
+  it("records the no-wake-phrase patch and its real verified transcription result", () => {
+    expect(WHISPER_CPP_PROVENANCE.noWakePhrasePatch.against).toBe("pinned commit 339f2b4e");
+    expect(WHISPER_CPP_PROVENANCE.noWakePhrasePatch.verifiedRealTranscription).toMatch(/country/i);
   });
 
-  it("has zero files copied into this repo and zero upstream modifications", () => {
+  it("has zero files copied into this repo — the WASM runtime lives entirely on the isolated origin", () => {
     expect(WHISPER_CPP_PROVENANCE.filesActuallyCopiedIntoThisRepo).toEqual([]);
-    expect(WHISPER_CPP_PROVENANCE.modificationsToUpstream).toEqual([]);
-  });
-});
-
-describe("WHISPER_CPP_ASSET_MANIFEST — real sha256/size for every extracted asset, recorded this round", () => {
-  it("records all four real deployed files with a positive size and a 64-char sha256", () => {
-    for (const [name, info] of Object.entries(WHISPER_CPP_ASSET_MANIFEST.files)) {
-      expect(info.sizeBytes).toBeGreaterThan(0);
-      expect(info.sha256).toMatch(/^[0-9a-f]{64}$/);
-      expect(name.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("the model file (whisper.bin) is roughly 31MB — the real downloaded tiny.en-q5_1 size", () => {
-    const model = WHISPER_CPP_ASSET_MANIFEST.files["whisper.bin"];
-    expect(model.sizeBytes).toBeGreaterThan(30_000_000);
-    expect(model.sizeBytes).toBeLessThan(33_000_000);
-  });
-});
-
-describe("WHISPER_MODEL_FS_PATH — the fixed virtual-FS destination confirmed from the real reference implementation", () => {
-  it('is always "whisper.bin" — the model is never written under its own original filename', () => {
-    expect(WHISPER_MODEL_FS_PATH).toBe("whisper.bin");
-  });
-});
-
-describe("WHISPER_CPP_MODELS — real sizes confirmed from the live official demo page this round", () => {
-  it("defaults to the smallest/fastest quantized tiny.en model", () => {
-    expect(DEFAULT_WHISPER_MODEL).toBe("tiny.en-q5_1");
-  });
-
-  it("every model has a real, positive approximate size and a .bin filename", () => {
-    for (const [id, info] of Object.entries(WHISPER_CPP_MODELS)) {
-      expect(info.file).toMatch(/^ggml-.*\.bin$/);
-      expect(info.approxSizeBytes).toBeGreaterThan(0);
-      expect(id).toContain(".en"); // English-only models, per explicit requirement
-    }
-  });
-
-  it("quantized variants are smaller than their non-quantized counterparts", () => {
-    expect(WHISPER_CPP_MODELS["tiny.en-q5_1"].approxSizeBytes).toBeLessThan(WHISPER_CPP_MODELS["tiny.en"].approxSizeBytes);
-    expect(WHISPER_CPP_MODELS["base.en-q5_1"].approxSizeBytes).toBeLessThan(WHISPER_CPP_MODELS["base.en"].approxSizeBytes);
-  });
-});
-
-describe("withModuleInitTimeout — REGRESSION (2026-08-21 real production finding): a hung module init must never hang the caller forever", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("resolves normally when the underlying promise resolves before the timeout", async () => {
-    const inner = Promise.resolve("real module");
-    const result = withModuleInitTimeout(inner, DEFAULT_MODULE_INIT_TIMEOUT_MS);
-    await expect(result).resolves.toBe("real module");
-  });
-
-  it("rejects with the real underlying error when the promise rejects before the timeout — never masks a real error as a timeout", async () => {
-    const inner = Promise.reject(new Error("script load failed"));
-    const result = withModuleInitTimeout(inner, DEFAULT_MODULE_INIT_TIMEOUT_MS);
-    await expect(result).rejects.toThrow("script load failed");
-  });
-
-  it("REGRESSION: rejects with MODULE_INIT_TIMEOUT_MESSAGE when the underlying promise never settles — the exact real production symptom (stuck on 'Loading…' forever, modelLoadMs null, no record ever created)", async () => {
-    const neverSettles = new Promise<string>(() => {});
-    const result = withModuleInitTimeout(neverSettles, 20000);
-    const assertion = expect(result).rejects.toThrow(MODULE_INIT_TIMEOUT_MESSAGE);
-    await vi.advanceTimersByTimeAsync(20000);
-    await assertion;
-  });
-
-  it("does not fire the timeout if the promise resolves just before the deadline", async () => {
-    let resolveInner: (v: string) => void;
-    const inner = new Promise<string>((resolve) => {
-      resolveInner = resolve;
-    });
-    const result = withModuleInitTimeout(inner, 20000);
-    await vi.advanceTimersByTimeAsync(19000);
-    resolveInner!("just in time");
-    await vi.advanceTimersByTimeAsync(2000);
-    await expect(result).resolves.toBe("just in time");
-  });
-
-  it("the timeout error message never gets misclassified as assets-not-found by classifyWhisperStartError — a hung worker pool is a different, distinct failure from a missing file", () => {
-    expect(classifyWhisperStartError(MODULE_INIT_TIMEOUT_MESSAGE)).toBe(MODULE_INIT_TIMEOUT_MESSAGE);
-  });
-});
-
-describe("createWhisperCppProvider — module init timeout surfaces as a real onError, never a silent hang (Node/vitest environment)", () => {
-  it("accepts moduleInitTimeoutMs without throwing at construction time", () => {
-    expect(() => createWhisperCppProvider({ onFinalResult: vi.fn(), moduleInitTimeoutMs: 5000 })).not.toThrow();
   });
 });

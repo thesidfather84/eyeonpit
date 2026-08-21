@@ -3,6 +3,56 @@
  * before touching this file.
  *
  * ============================================================
+ * ARCHITECTURE, 2026-08-21 — isolated-origin iframe + postMessage, NOT
+ * in-process WASM. This REPLACES an earlier version of this file that
+ * loaded whisper.cpp's compiled `command.js`/`command.wasm` directly into
+ * EyeOnPit's own page. That approach is CONFIRMED BROKEN, not merely
+ * unverified: `command.js`'s own internal pthread worker-pool bootstrap
+ * (`PThread.allocateUnusedWorker` -> `new Worker(command.js)`) fails
+ * immediately, every time, with a content-free `ErrorEvent`, when served
+ * through EyeOnPit's Next.js stack — reproduced in a real production build
+ * (`next build && next start`), with cross-origin isolation, asset hosting,
+ * and dev-vs-prod all ruled out directly as causes. The SAME compiled
+ * assets, served from a trivial static origin with no Next.js in the
+ * request path, work correctly and reliably — confirmed via real
+ * transcription (see WHISPER_CPP_PROVENANCE.staticLabVerification below).
+ *
+ * The fix is architectural, not a header tweak: the actual whisper.cpp
+ * WASM runtime lives ENTIRELY on its own isolated static origin
+ * (`whisper-static-lab.vercel.app` by default — see
+ * `resolveDefaultWhisperOrigin`), loaded here as a hidden `<iframe>`. This
+ * provider never touches WebAssembly, AudioWorklet, or getUserMedia
+ * itself — every one of those happens INSIDE the iframe's own origin. This
+ * file's entire job is the narrow postMessage protocol below: tell the
+ * iframe when to start/stop listening, and receive back status/timing/
+ * transcript/error — nothing else ever crosses the origin boundary.
+ *
+ * RAW MICROPHONE AUDIO NEVER CROSSES postMessage. Not samples, not a
+ * waveform, not an audio Blob — only the inbound message shapes in
+ * `parseWhisperInboundMessage` below (status strings, a timing number, and
+ * transcribed TEXT) are ever received from the iframe, and the only
+ * outbound messages this file ever sends are the two zero-payload control
+ * messages `whisper:start-phrase` / `whisper:end-phrase`. Audio capture,
+ * resampling, buffering, and inference all happen inside the iframe's own
+ * JS heap and are never serialized out of it.
+ *
+ * ============================================================
+ * SECURITY — explicit origin allowlisting on BOTH sides
+ * ============================================================
+ * This file (`isTrustedWhisperMessageOrigin`) accepts an inbound
+ * `message` event ONLY when the browser's own `event.origin` — never
+ * anything from the message payload itself — is an EXACT match for the
+ * one configured Whisper static origin (`whisperOrigin`, resolved via
+ * `resolveDefaultWhisperOrigin`). Every outbound `postMessage` call also
+ * targets that exact origin string, never `"*"`. The mirror-image check
+ * lives on the OTHER side, in the isolated Whisper origin's own
+ * `index.html` (`ALLOWED_PARENT_ORIGINS`) — that page independently
+ * accepts control messages only from EyeOnPit's production origins plus
+ * approved local-dev origins, also never `"*"`. Neither side trusts the
+ * other's identity claims from message content; both rely solely on the
+ * browser-verified `event.origin`.
+ *
+ * ============================================================
  * WHY whisper.cpp's `examples/command.wasm`, SPECIFICALLY
  * ============================================================
  * Three official, maintained browser/WASM examples ship in
@@ -15,167 +65,58 @@
  * "short casino commands." No third-party wrapper was considered.
  *
  * ============================================================
- * REAL ASSET EXTRACTION (2026-08-20) — provenance, not a build
+ * NO-WAKE-PHRASE PATCH, 2026-08-21 — EyeOnPit Lab patch against pinned
+ * upstream commit 339f2b4e, rebuilt from source (Emscripten SDK 6.0.8,
+ * CMake 4.4.2, Ninja 1.13.0, WHISPER_WASM_SINGLE_FILE=OFF)
  * ============================================================
- * whisper.cpp publishes NO prebuilt browser-WASM release on GitHub
- * Releases (confirmed by checking), and no emscripten/CMake toolchain was
- * available to build one from source in the environment that first wrote
- * this file. Instead, the exact compiled assets were extracted directly
- * from the project's own OFFICIAL, maintained live demo at
- * https://ggml.ai/whisper.cpp/command.wasm/ — the same domain
- * (ggml.ai, the whisper.cpp org's own site) already cited elsewhere in
- * this codebase's research, not a third-party mirror. The demo page's own
- * footer gives EXACT, verifiable provenance for the build that produced
- * these files:
+ * The official `command.wasm` example hardcodes a wake-phrase enrollment
+ * gate ("Ok Whisper, start listening for commands.") that every operator
+ * would otherwise have to speak before every real command — inappropriate
+ * here, since EyeOnPit already has its own explicit Start Phrase / End
+ * Phrase workflow. The gate lives in `command_main()` in
+ * `examples/command.wasm/emscripten.cpp`, driven by three C++ globals:
+ * `have_prompt` (has the wake phrase been heard yet), `ask_prompt` (should
+ * the "say the phrase" status be shown), and `pcmf32_prompt` (the captured
+ * enrollment audio, later prepended to every command before transcribing
+ * so the prompt can be found and stripped back out).
  *
- *   Pinned commit:   339f2b4e
- *   Commit subject:  "bindings-javascript : remove package.json from git (#4001)"
- *   Repository:      https://github.com/ggerganov/whisper.cpp
- *   Build time:      Thu Aug 20 13:59:54 2026 (per the live page's own footer)
+ * The patch changes two things, both isolated to that one file, preserved
+ * byte-for-byte in `eyeonpit-no-wake-phrase.patch` (kept alongside the
+ * whisper-static-lab deployment, NOT in this repo — the C++ source and its
+ * own build live entirely outside EyeOnPit, matching the isolated-origin
+ * architecture above):
+ *   1. `have_prompt` starts `true` (was `false`) and `ask_prompt` starts
+ *      `false` (was `true`) — skips enrollment entirely and moves straight
+ *      to the "waiting for voice commands" branch. `pcmf32_prompt` is left
+ *      at its natural empty default rather than fabricated. This means the
+ *      CALLER's own set_audio()/no-set_audio() cadence — driven by
+ *      EyeOnPit's real Start Phrase / End Phrase buttons, via this
+ *      provider's `whisper:start-phrase`/`whisper:end-phrase` messages —
+ *      is what actually controls when transcription is active, not any
+ *      spoken phrase.
+ *   2. The command-transcript's prompt-stripping logic (upstream
+ *      unconditionally searches every transcript for a best-matching
+ *      prefix to strip, assuming the enrollment prompt was re-spoken) is
+ *      guarded on `!pcmf32_prompt.empty()`. Without this guard, `have_prompt
+ *      = true` alone is a REAL correctness bug: `best_sim` starts at 0, so
+ *      the unconditional search always finds *some* "best" prefix length
+ *      to strip even when nothing resembling the enrollment phrase was
+ *      ever said — for a short real command, this can truncate or fully
+ *      erase the correctly transcribed text. Guarding on the existing,
+ *      already-populated-only-by-enrollment `pcmf32_prompt` signal (not a
+ *      new flag) makes the no-wake-phrase path take the full decoded text
+ *      as the command, deterministically, with zero corruption risk.
  *
- * Files extracted, byte-identical, sha256-recorded (see
- * `WHISPER_CPP_ASSET_MANIFEST` below):
- *   - `command.js`   (1,773,304 bytes) — the compiled Emscripten glue, WASM
- *     embedded as base64 inside it (single-file build: a separate
- *     `command.wasm`/`package.js` were checked and confirmed NOT to exist
- *     at this URL — 404 — confirming single-file mode).
- *   - `helpers.js`   (6,521 bytes) — shared fetch/IndexedDB-cache helper
- *     used by every whisper.cpp WASM example, unmodified upstream code.
- *   - `coi-serviceworker.js` (6,028 bytes) — cross-origin-isolation
- *     service-worker shim the reference HTML loads defensively; whether
- *     THIS particular build strictly requires it (vs. including it only
- *     as standard boilerplate) was not conclusively determined this round
- *     — see WHAT WAS AND WAS NOT VERIFIED below.
- *
- * These are the OFFICIAL project's OWN compiled output, served from the
- * OFFICIAL project's OWN domain — not rebuilt, not modified, not sourced
- * from any third-party wrapper.
- *
- * ============================================================
- * THE REAL JS API CONTRACT — read directly from the live reference HTML's
- * own inline `<script>` (view-source of
- * https://ggml.ai/whisper.cpp/command.wasm/), NOT from documentation
- * summaries, and NOT guessed:
- * ============================================================
- *   - Model loading: the model is ALWAYS written to the FIXED virtual-FS
- *     path `"whisper.bin"` — REGARDLESS of which actual model file was
- *     downloaded — via:
- *       try { Module.FS_unlink("whisper.bin"); } catch (e) {}
- *       Module.FS_createDataFile("/", "whisper.bin", bytes, true, true);
- *     NOT `Module.FS.writeFile(...)` (an earlier version of this file
- *     incorrectly assumed the same API shape sherpa-onnx's WASM build
- *     uses — confirmed wrong by reading the real reference code).
- *   - `Module.init("whisper.bin") -> number` — loads the model at that
- *     fixed path and starts a background worker with its own internal
- *     voice-activity detection. Returns a truthy context handle on
- *     success.
- *   - `Module.set_audio(instance, audio: Float32Array) -> void` — REPLACES
- *     the engine's internal audio buffer with WHATEVER is passed, every
- *     call. The reference implementation calls this with the FULL,
- *     EVER-GROWING accumulated recording (re-decoded and concatenated)
- *     roughly every 250ms — NOT with only the newest small chunk. An
- *     earlier version of this file called `set_audio` with only each tiny
- *     incremental AudioWorkletNode chunk, which — given the REPLACE
- *     semantics just confirmed from the real reference code — would have
- *     meant the engine only ever saw the last ~2.9ms of audio and never a
- *     coherent utterance. Fixed: this provider now accumulates all
- *     captured (resampled) samples into a growing buffer client-side and
- *     periodically calls `set_audio` with the FULL buffer, matching the
- *     real, working reference exactly.
- *   - `Module.get_transcribed() -> string` — a POLLING function: the most
- *     recently recognized command, or empty/short noise otherwise. The
- *     ONLY way recognized text reaches JS — no callback/event mechanism.
- *   - `Module.get_status()` / `Module.set_status(text)` — a coarse status
- *     string.
- *   - `_free` is a real exported symbol (confirmed present in the
- *     downloaded `command.js`), though the reference HTML itself never
- *     calls it (it's a single continuous-session demo, never torn down).
- *     This provider calls it in `stop()` anyway, for the same "every
- *     phrase is its own clean segment" reason sherpa-onnx's own
- *     SEGMENTATION fix established — real capability, conservatively used,
- *     not demonstrated by the upstream demo itself.
- *
- * ARCHITECTURAL DIFFERENCE FROM SHERPA-ONNX, disclosed honestly: this API
- * has its OWN internal VAD deciding when one "command" is complete — there
- * is no caller-driven force-finalize primitive. Every non-empty
- * `get_transcribed()` read is treated here as a COMPLETE, FINAL result
- * (`onFinalResult`) — never a growing interim, because that's what this
- * engine's design actually produces. `onInterimResult` is never called.
- *
- * A REAL, DISCLOSED, UNRESOLVED RISK — the global `Module` name: the
- * reference HTML declares a plain global `var Module = {...}` BEFORE
- * loading `command.js` (classic, non-modularized Emscripten output — this
- * provider cannot rename that requirement, since it uses the prebuilt
- * official asset rather than recompiling with a custom `EXPORT_NAME`).
- * `sherpaOnnxProvider.ts` ALSO uses the literal global `window.Module` for
- * the identical reason. Both providers cache their own module reference
- * once, in their own module-scope promise, and never re-read the global
- * afterward — reasoning through the two engines' own code suggests this
- * makes them independently safe even if a Lab session uses BOTH providers
- * one after another (the second provider's initialization overwrites
- * `window.Module`, but the first provider's already-resolved reference is
- * a stable object unaffected by that reassignment) — but this has NOT been
- * empirically verified this round for BOTH engines loaded in the same
- * page session. See the round's own final report for exactly what WAS
- * verified (Whisper alone, in isolation).
- *
- * ============================================================
- * WHAT WAS AND WAS NOT VERIFIED THIS ROUND — see the round's own final
- * report for the authoritative, current verification status (asset
- * HTTP 200s, model download, WASM init, recognizer construction, Lab
- * ready-state) — this comment intentionally does not duplicate that
- * status inline, to avoid it silently going stale as later rounds verify
- * more. Real microphone transcription accuracy, specifically, requires
- * Sidney's own real-mic session — never claimed fixed/working here.
- * ============================================================
- *
- * ============================================================
- * ASSET DEPLOYMENT — SAME-ORIGIN, NOT a cross-origin CDN (unlike sherpa-onnx)
- * ============================================================
- * A real, compelling, DIRECTLY TESTED reason this provider's assets are
- * committed to git and served SAME-ORIGIN from `public/whisper-cpp-lab/`,
- * rather than an external CDN like sherpa-onnx's own Vercel Blob strategy:
- *
- * `command.js`'s own internal pthread worker-pool bootstrap
- * (`allocateUnusedWorker`) calls `new Worker(mainScriptUrl)` DIRECTLY on
- * its own script URL — and the Worker CONSTRUCTOR (unlike `fetch()`,
- * `<script src>`, or `importScripts()` called from WITHIN an
- * already-running worker) enforces same-origin for its initial script
- * argument at the BROWSER level, unconditionally — no CORS header, no
- * COEP/COOP configuration, and no Vercel Blob setting can satisfy this.
- * CONFIRMED directly, 2026-08-20: pointing this provider's `assetBaseUrl`
- * at a real, working, public-read Vercel Blob URL produced a real, fatal,
- * uncaught `SecurityError: Failed to construct 'Worker': Script ... cannot
- * be accessed from origin ...` every time, in a real browser, via real
- * browser automation — not a hypothetical. (Separately confirmed sherpa-onnx
- * itself does not hit this — its own WASM build doesn't spawn workers this
- * way — so its Blob-based strategy remains correct for IT; this is a
- * genuine, asset-specific difference, not a contradiction of that prior
- * work.)
- *
- * Given that hard constraint, and given the full asset bundle here
- * (~33MB — `command.js` 1.73MB, `helpers.js`/`coi-serviceworker.js`
- * ~13KB combined, `whisper.bin` ~31MB) is comfortably under Vercel's
- * documented 100MB (Hobby) / 1GB (Pro) source-upload limit — unlike
- * sherpa-onnx's ~204MB bundle, which is what actually forced Blob usage
- * there — committing these files directly to `public/whisper-cpp-lab/`
- * and letting Vercel serve them same-origin (its ordinary static-asset
- * path, not a special case) is the correct, simplest, and only option
- * that satisfies the Worker same-origin requirement. `assetBaseUrl`/
- * `NEXT_PUBLIC_WHISPER_ASSET_BASE_URL` both default to `/whisper-cpp-lab/`
- * — a real, relative, same-origin path in every environment, dev or
- * production — no environment-specific override is needed or set.
- *
- * `coi-serviceworker.js` is deployed alongside the others (matching the
- * live reference bundle exactly) but is NOT currently wired into the Lab
- * page's own `<head>` — cross-origin isolation is instead achieved via
- * real `Cross-Origin-Opener-Policy`/`Cross-Origin-Embedder-Policy`
- * response headers scoped to `/lab/sherpa-voice-test` in `next.config.ts`
- * (confirmed sufficient: `self.crossOriginIsolated` reads `true` with
- * this in place, real browser test). The file is kept deployed for
- * provenance/fidelity with the official bundle and as a documented
- * fallback path a future round could wire in if the header-based approach
- * ever proves insufficient in some environment.
+ * PROVEN 2026-08-21 on the isolated static origin, known audio
+ * (whisper.cpp's own bundled `jfk.wav`, fed via the harness's
+ * `whisper:test-with-sample` debug-only message — never used by this
+ * production provider, which always drives real microphone capture via
+ * `whisper:start-phrase`): module init, pthread worker-pool init, model
+ * load, and `init()` all succeeded; audio was accepted and transcribed
+ * with ZERO wake phrase spoken; `get_transcribed()` returned a real,
+ * correct transcript fragment of the actual spoken audio ("You can do for
+ * your country." — the tail of the famous "ask not..." line, matching
+ * `command.wasm`'s own 4-second rolling command window exactly).
  *
  * ============================================================
  * SAFETY BOUNDARY — IDENTICAL to every other SpeechProvider. This provider
@@ -198,264 +139,104 @@ export const WHISPER_CPP_PROVENANCE = {
   example: "examples/command.wasm",
   exampleChosenBecause:
     'The project\'s own README describes command.wasm as "a basic Voice Assistant example that accepts voice commands from the microphone" — the one official example purpose-built for short discrete commands, matching EyeOnPit\'s use case directly, rather than examples/whisper.wasm (general file/mic transcription) or examples/stream.wasm (continuous streaming transcription).',
-  liveOfficialDemo: "https://ggml.ai/whisper.cpp/command.wasm/",
-  /** Read directly from the live demo page's own footer — real, verifiable, not guessed. */
+  /** Read from the live official demo page's own footer at the time the pinned commit was chosen — real, verifiable, not guessed. */
   pinnedCommit: "339f2b4e",
   pinnedCommitSubject: "bindings-javascript : remove package.json from git (#4001)",
   modelSource: "https://huggingface.co/ggerganov/whisper.cpp",
   modelLicense: "MIT (OpenAI's original Whisper weights are MIT licensed; whisper.cpp publishes GGML-converted versions of the same weights)",
-  prebuiltBrowserReleaseExists: false,
-  emscriptenToolchainAvailableInThisEnvironment: false,
-  assetsExtractedFrom: "official live demo (ggml.ai/whisper.cpp/command.wasm/), not built from source",
+  architecture: "isolated-static-origin-iframe" as const,
+  inProcessWasmConfirmedBroken:
+    "command.js's pthread worker-pool bootstrap fails immediately under EyeOnPit's Next.js serving stack (reproduced in a real production build) — the isolated static origin exists specifically to route around this, not as a preference.",
+  noWakePhrasePatch: {
+    file: "examples/command.wasm/emscripten.cpp",
+    patchFile: "eyeonpit-no-wake-phrase.patch (kept with the whisper-static-lab deployment, not in this repo)",
+    against: "pinned commit 339f2b4e",
+    verifiedRealTranscription: 'jfk.wav sample, zero wake phrase spoken, get_transcribed() returned "You can do for your country."',
+    verifiedOn: "2026-08-21",
+  },
   filesActuallyCopiedIntoThisRepo: [] as string[],
-  modificationsToUpstream: [] as string[],
   researchedOn: "2026-08-20",
 } as const;
 
-/** sha256 + byte size for every extracted asset — recorded so a stale/swapped file at the deployed URL is detectable, same discipline as sherpaAssetManifest.ts. */
-export const WHISPER_CPP_ASSET_MANIFEST = {
-  pinnedCommit: "339f2b4e",
-  files: {
-    "command.js": { sizeBytes: 1773304, sha256: "9111f29e0102453cf7b19d9e4189223b99762ed8d962d59177458c76626554cd" },
-    "helpers.js": { sizeBytes: 6521, sha256: "5371c69265551a7f7d48a7953d118e6503d8a5d480710966dfb9c2a52981a4d8" },
-    "coi-serviceworker.js": { sizeBytes: 6028, sha256: "e97bbac6017322d48aa54a5bc7ce473c725a4b7376ff245002e0ba71c3dcdd7e" },
-    "whisper.bin": { sizeBytes: 32166155, sha256: "c77c5766f1cef09b6b7d47f21b546cbddd4157886b3b5d6d4f709e91e66c7c2b" },
-  },
-} as const;
-
 /**
- * Real model options confirmed from the live demo page this round.
- * `tiny.en-q5_1` is the DEFAULT and the ONLY one this round actually
- * deployed/verified (see `WHISPER_CPP_ASSET_MANIFEST` — its file is always
- * written to the fixed virtual-FS path `"whisper.bin"`, per the real API
- * contract above, regardless of which original model filename it came
- * from). `base.en`/`base.en-q5_1`/plain `tiny.en` remain typed options for
- * a future round but were not downloaded/deployed this round.
+ * Same env-var-overridable pattern as every other provider's asset base
+ * URL resolution — falls back to the real, already-deployed
+ * whisper-static-lab production origin so a Lab session works out of the
+ * box with no env var required, in every environment including local dev
+ * (the isolated origin is reachable from anywhere, unlike the old
+ * same-origin-only asset path).
  */
-export type WhisperCppModelId = "tiny.en" | "tiny.en-q5_1" | "base.en" | "base.en-q5_1";
-
-export interface WhisperCppModelInfo {
-  /** The real Hugging Face filename this model downloads from — NOT the virtual-FS destination filename, which is always the fixed "whisper.bin" (see WHISPER_MODEL_FS_PATH). */
-  file: string;
-  approxSizeBytes: number;
-  quantized: boolean;
+export function resolveDefaultWhisperOrigin(env: Record<string, string | undefined>): string {
+  const raw = env.NEXT_PUBLIC_WHISPER_STATIC_ORIGIN || "https://whisper-static-lab.vercel.app";
+  return raw.replace(/\/+$/, "");
 }
 
-export const WHISPER_CPP_MODELS: Record<WhisperCppModelId, WhisperCppModelInfo> = {
-  "tiny.en": { file: "ggml-tiny.en.bin", approxSizeBytes: 75_000_000, quantized: false },
-  "tiny.en-q5_1": { file: "ggml-tiny.en-q5_1.bin", approxSizeBytes: 31_000_000, quantized: true },
-  "base.en": { file: "ggml-base.en.bin", approxSizeBytes: 142_000_000, quantized: false },
-  "base.en-q5_1": { file: "ggml-base.en-q5_1.bin", approxSizeBytes: 57_000_000, quantized: true },
-};
-
-/** Smallest, fastest offered model — appropriate for short commands, avoids provisioning more than necessary. The one actually downloaded/deployed this round. */
-export const DEFAULT_WHISPER_MODEL: WhisperCppModelId = "tiny.en-q5_1";
-
-/** The FIXED virtual-filesystem destination filename `Module.init()` expects — confirmed from the real reference implementation (`loadWhisper()`'s own `dst = 'whisper.bin'`), true for every model choice, never the model's own original filename. */
-export const WHISPER_MODEL_FS_PATH = "whisper.bin";
-
-interface WhisperFeatureDetection {
-  webAssembly: boolean;
-  audioWorklet: boolean;
-  getUserMedia: boolean;
-}
-
-/** Identical structure/discipline to detectSherpaOnnxSupport — pure, explicit `env`, independently testable without a real browser. */
-export function detectWhisperCppSupport(env: {
-  hasWindow: boolean;
-  hasWebAssembly: boolean;
-  hasAudioWorkletNode: boolean;
-  hasGetUserMedia: boolean;
-}): WhisperFeatureDetection {
-  if (!env.hasWindow) {
-    return { webAssembly: false, audioWorklet: false, getUserMedia: false };
-  }
-  return {
-    webAssembly: env.hasWebAssembly,
-    audioWorklet: env.hasAudioWorkletNode,
-    getUserMedia: env.hasGetUserMedia,
-  };
-}
-
-function detectAmbientWhisperCppSupport(): WhisperFeatureDetection {
-  return detectWhisperCppSupport({
-    hasWindow: typeof window !== "undefined",
-    hasWebAssembly: typeof window !== "undefined" && typeof window.WebAssembly !== "undefined",
-    hasAudioWorkletNode: typeof window !== "undefined" && typeof window.AudioWorkletNode !== "undefined",
-    hasGetUserMedia: typeof navigator !== "undefined" && typeof navigator.mediaDevices?.getUserMedia === "function",
-  });
-}
-
-/** Identical pattern to sherpaOnnxProvider's resolveDefaultAssetBaseUrl. */
-export function resolveDefaultWhisperAssetBaseUrl(env: Record<string, string | undefined>): string {
-  return env.NEXT_PUBLIC_WHISPER_ASSET_BASE_URL || "/whisper-cpp-lab/";
-}
-
-const DEFAULT_ASSET_BASE_URL = resolveDefaultWhisperAssetBaseUrl({
-  NEXT_PUBLIC_WHISPER_ASSET_BASE_URL: process.env.NEXT_PUBLIC_WHISPER_ASSET_BASE_URL,
+const DEFAULT_WHISPER_ORIGIN = resolveDefaultWhisperOrigin({
+  NEXT_PUBLIC_WHISPER_STATIC_ORIGIN: process.env.NEXT_PUBLIC_WHISPER_STATIC_ORIGIN,
 });
 
-/** Identical pattern to classifySherpaStartError. */
+/**
+ * The ONE real security check gating every inbound message this provider
+ * ever acts on — see this module's own SECURITY doc comment above.
+ * `eventOrigin` must be the browser-verified `MessageEvent.origin`, never
+ * anything read out of the message payload.
+ */
+export function isTrustedWhisperMessageOrigin(eventOrigin: string, configuredOrigin: string): boolean {
+  return eventOrigin === configuredOrigin;
+}
+
+/** Every shape this provider will ever act on from the iframe — see the module doc comment: no audio, no waveform, ever. */
+export type WhisperInboundMessage =
+  | { type: "whisper:ready"; moduleReadyMs: number }
+  | { type: "whisper:error"; message: string }
+  | { type: "whisper:final"; text: string }
+  | { type: "whisper:status"; status: string };
+
+/**
+ * Pure, independently testable — validates an untrusted `event.data`
+ * against the exact narrow protocol shapes above. Anything that doesn't
+ * match a known type, or is missing/mis-typed a required field, is
+ * treated as not-a-Whisper-message and ignored (returns null) rather than
+ * guessed at.
+ */
+export function parseWhisperInboundMessage(data: unknown): WhisperInboundMessage | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  if (typeof d.type !== "string") return null;
+  switch (d.type) {
+    case "whisper:ready":
+      return typeof d.moduleReadyMs === "number" ? { type: "whisper:ready", moduleReadyMs: d.moduleReadyMs } : null;
+    case "whisper:error":
+      return typeof d.message === "string" ? { type: "whisper:error", message: d.message } : null;
+    case "whisper:final":
+      return typeof d.text === "string" ? { type: "whisper:final", text: d.text } : null;
+    case "whisper:status":
+      return typeof d.status === "string" ? { type: "whisper:status", status: d.status } : null;
+    default:
+      return null;
+  }
+}
+
+/** Identical pattern to every other provider's start-error classification. */
 export function classifyWhisperStartError(message: string): string {
-  return /404|failed to load/i.test(message) ? `assets-not-found: ${message}` : message;
+  if (message === WHISPER_IFRAME_READY_TIMEOUT_MESSAGE) return message;
+  return /404|failed to load|NetworkError/i.test(message) ? `iframe-unreachable: ${message}` : message;
 }
 
-// Minimal shape of what the real, downloaded command.js glue actually
-// exposes on the global `Module` object — confirmed by reading the live
-// reference HTML's own inline script (view-source), not guessed. Classic
-// (non-modularized) Emscripten output requires the literal global name
-// `Module` — see this module's own top-of-file doc comment on the
-// resulting cross-provider naming risk with sherpa-onnx.
-interface WhisperCommandModule {
-  print?: (text: string) => void;
-  printErr?: (text: string) => void;
-  setStatus?: (text: string) => void;
-  monitorRunDependencies?: (left: number) => void;
-  preRun?: () => void;
-  postRun?: () => void;
-  locateFile?: (path: string, scriptDirectory: string) => string;
-  FS_unlink?: (path: string) => void;
-  FS_createDataFile?: (parent: string, name: string, data: Uint8Array, canRead: boolean, canWrite: boolean) => void;
-  init?: (pathModel: string) => number;
-  free?: (index: number) => void;
-  set_audio?: (index: number, audio: Float32Array) => void;
-  get_transcribed?: () => string;
-  get_status?: () => string;
-  set_status?: (status: string) => void;
-}
-// Deliberately NOT a `declare global { interface Window { Module?: ... } }`
-// augmentation — sherpaOnnxProvider.ts already augments the same global
-// `Window.Module` property with its OWN, different type, and TypeScript
-// requires every augmentation of the same property to agree on one type
-// (confirmed the hard way: `tsc` rejected the naive version of this file
-// with "Subsequent property declarations must have the same type").
-// Casting locally at each use site avoids touching Sherpa's own,
-// already-verified global declaration at all.
-type WhisperGlobalWindow = Window & { Module?: WhisperCommandModule };
-function getWhisperWindow(): WhisperGlobalWindow {
-  return window as WhisperGlobalWindow;
-}
+export const WHISPER_IFRAME_READY_TIMEOUT_MESSAGE =
+  "whisper iframe did not send whisper:ready in time — the isolated Whisper origin may be unreachable, blocked, or its own module init failed";
 
-function loadScript(url: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = url;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error(`failed to load ${url}`));
-    document.head.appendChild(script);
-  });
-}
-
-/** Same linear-interpolation resampler used by sherpaOnnxProvider — duplicated rather than imported so each provider's own verification status stays independent. */
-function resampleTo16k(samples: Float32Array, fromSampleRate: number): Float32Array {
-  const targetRate = 16000;
-  if (fromSampleRate === targetRate) return samples;
-  const ratio = fromSampleRate / targetRate;
-  const newLength = Math.round(samples.length / ratio);
-  const result = new Float32Array(newLength);
-  for (let i = 0; i < newLength; i++) {
-    const srcIndex = i * ratio;
-    const lo = Math.floor(srcIndex);
-    const hi = Math.min(lo + 1, samples.length - 1);
-    const frac = srcIndex - lo;
-    result[i] = samples[lo] * (1 - frac) + samples[hi] * frac;
-  }
-  return result;
-}
-
-const INLINE_WORKLET_SOURCE = `
-class WhisperCaptureProcessor extends AudioWorkletProcessor {
-  process(inputs) {
-    const input = inputs[0];
-    if (input && input[0] && input[0].length > 0) {
-      this.port.postMessage(input[0].slice(0));
-    }
-    return true;
-  }
-}
-registerProcessor('whisper-capture-processor', WhisperCaptureProcessor);
-`;
-
-/** Model bytes rarely change within one page load — fetched once, cached by URL, same reasoning as sherpaOnnxProvider's bpeVocabCache. */
-const modelCache = new Map<string, Promise<Uint8Array>>();
-async function fetchModel(url: string): Promise<Uint8Array> {
-  let cached = modelCache.get(url);
-  if (!cached) {
-    cached = fetch(url).then(async (r) => {
-      if (!r.ok) throw new Error(`failed to load ${url}`);
-      const buf = await r.arrayBuffer();
-      return new Uint8Array(buf);
-    });
-    modelCache.set(url, cached);
-  }
-  return cached;
-}
-
-// MODULE SCOPE — the compiled glue script itself is loaded once per page
-// load, identical reasoning to sherpaOnnxProvider's moduleLoadPromise.
-let moduleLoadPromise: Promise<WhisperCommandModule> | null = null;
+/** Generous default — the isolated origin's own model download + WASM/pthread init took ~1.2s in real verified testing, but a slow connection or cold Vercel edge could legitimately take longer; this only bounds an otherwise-infinite hang. */
+export const DEFAULT_WHISPER_READY_TIMEOUT_MS = 20000;
 
 /**
- * REAL PRODUCTION FINDING, 2026-08-21 — the confirmed root cause of
- * "Start Phrase gets stuck on Loading… forever, modelLoadMs stays null,
- * no record is ever created, the export is silently empty."
- *
- * Confirmed via real browser testing (a real production BUILD run
- * locally — `next build && next start`, no dev-mode tooling involved —
- * reproducing Sidney's real deployed-production report exactly):
- * `command.js`'s own internal pthread worker-pool bootstrap
- * (`PThread.allocateUnusedWorker`, which does
- * `new Worker(pthreadMainJs, {workerData:"em-pthread",name:"em-pthread"})`
- * using the SAME compiled `command.js` as each worker's own entry
- * script) fails immediately for every pool worker, with a content-free
- * `ErrorEvent` (`message`/`filename`/`lineno` all `undefined` — a
- * genuinely opaque browser-level failure, not something this file's own
- * code can extract more detail from). Directly isolated: a minimal
- * `new Worker("<...>/command.js")` — the exact same file, as a worker's
- * own top-level script — reproduces the identical instant, contentless
- * error with ZERO message exchange ever occurring first; the SAME file
- * content loaded via `importScripts()` from WITHIN an already-running
- * separate worker succeeds without error. Ruled out as causes, each
- * confirmed directly: cross-origin asset hosting (same-origin, this
- * round's own earlier fix), `crossOriginIsolated` (confirmed `true` on
- * both the main thread AND inside a real worker), COEP mode (`credentialless`
- * and `require-corp` both reproduce identically), Next.js dev-mode
- * tooling (a genuine production build reproduces identically). This
- * points to a real defect/incompatibility in the OFFICIAL whisper.cpp
- * command.wasm build's (commit 339f2b4e) own pthread-worker bootstrap in
- * this browser environment — not something fixable via EyeOnPit's own
- * headers, asset hosting, or provider code. See the round's own final
- * report for the recommended next step (a from-source Emscripten
- * rebuild, or a different/newer upstream build, is required to actually
- * fix pthread-worker startup — out of scope for this round).
- *
- * THE FIX THIS ROUND ACTUALLY SHIPS: with no timeout, `initModule()`'s
- * wait for `postRun()` hangs forever when this happens — `start()`
- * never resolves OR rejects, `onError` is never called, and the
- * operator is left on "Loading…" indefinitely with a completely empty,
- * silent diagnostic export. `withModuleInitTimeout` below bounds that
- * wait so a failed/hung init ALWAYS surfaces a real, actionable
- * `onError` (and therefore a real captured record with the failure
- * reason) instead of hanging — this does not fix the underlying WASM
- * defect, but it turns "silent, indefinite hang" into "clear, prompt,
- * diagnosable failure," which is what a Lab tool exists to surface.
+ * Bounds `readyPromise` with a real timeout, rejecting with
+ * `WHISPER_IFRAME_READY_TIMEOUT_MESSAGE` if it neither resolves nor
+ * rejects in time. Never resolves/rejects twice.
  */
-export const MODULE_INIT_TIMEOUT_MESSAGE =
-  "whisper.cpp module init timed out — the compiled worker pool likely failed to start (see browser console for \"worker sent an error\" messages)";
-
-/** Generous default — real asset download (~33MB total) plus WASM instantiation could legitimately take several seconds on a slow connection; this only exists to bound an otherwise-infinite hang, not to rush a genuinely slow-but-working load. */
-export const DEFAULT_MODULE_INIT_TIMEOUT_MS = 20000;
-
-/**
- * Pure, independently testable (via fake timers) — bounds `readyPromise`
- * with a real timeout, rejecting with `MODULE_INIT_TIMEOUT_MESSAGE` if it
- * neither resolves nor rejects in time. Never resolves/rejects twice
- * (the loser of the race is a no-op via `clearTimeout`/an already-settled
- * promise).
- */
-export function withModuleInitTimeout<T>(readyPromise: Promise<T>, timeoutMs: number): Promise<T> {
+export function withWhisperReadyTimeout<T>(readyPromise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(MODULE_INIT_TIMEOUT_MESSAGE)), timeoutMs);
+    const timer = setTimeout(() => reject(new Error(WHISPER_IFRAME_READY_TIMEOUT_MESSAGE)), timeoutMs);
     readyPromise.then(
       (value) => {
         clearTimeout(timer);
@@ -469,121 +250,153 @@ export function withModuleInitTimeout<T>(readyPromise: Promise<T>, timeoutMs: nu
   });
 }
 
+interface WhisperFeatureDetection {
+  /** Every real browser supports `<iframe>` + `postMessage` — this only ever reads `false` in a non-browser environment (SSR/Node), identical in spirit to every other provider's `hasWindow` guard. Audio capture itself (getUserMedia/AudioWorklet) happens INSIDE the iframe's own origin and is this provider's problem to detect, not this one's. */
+  iframeEmbedding: boolean;
+}
+
+export function detectWhisperCppSupport(env: { hasWindow: boolean; hasDocument: boolean }): WhisperFeatureDetection {
+  return { iframeEmbedding: env.hasWindow && env.hasDocument };
+}
+
+function detectAmbientWhisperCppSupport(): WhisperFeatureDetection {
+  return detectWhisperCppSupport({
+    hasWindow: typeof window !== "undefined",
+    hasDocument: typeof document !== "undefined",
+  });
+}
+
+type WhisperMessageListener = (msg: WhisperInboundMessage) => void;
+
+interface WhisperIframeSession {
+  origin: string;
+  iframeEl: HTMLIFrameElement;
+  readyPromise: Promise<number>;
+  listeners: Set<WhisperMessageListener>;
+  postToIframe: (message: { type: "whisper:start-phrase" } | { type: "whisper:end-phrase" }) => void;
+}
+
+// MODULE SCOPE — the iframe (and therefore the isolated origin's own
+// model load) is created once and reused across an entire Lab session's
+// worth of phrases, not torn down and rebuilt every Start/End Phrase
+// cycle. This is a deliberate change from the old in-process provider's
+// "fresh context every phrase" design: that constraint no longer applies
+// (the isolated origin's own command_main loop already clears its audio
+// buffer after producing each transcript — see the no-wake-phrase patch
+// doc comment above), and reusing one iframe avoids re-fetching the
+// ~31MB model on every phrase.
+let session: WhisperIframeSession | null = null;
+
+function ensureSession(origin: string, readyTimeoutMs: number): WhisperIframeSession {
+  if (session && session.origin === origin) return session;
+  session?.iframeEl.remove();
+
+  const iframeEl = document.createElement("iframe");
+  iframeEl.src = `${origin}/`;
+  // Grants the cross-origin iframe real getUserMedia access — required
+  // because a cross-origin frame's own microphone permission request is
+  // denied by the browser unless the embedder explicitly allows it here.
+  iframeEl.allow = "microphone";
+  iframeEl.setAttribute("aria-hidden", "true");
+  iframeEl.setAttribute("title", "EyeOnPit Whisper research runtime (isolated origin)");
+  // Deliberately NOT display:none — some browsers deprioritize/throttle
+  // work inside display:none iframes. Zero-sized and non-interactive
+  // instead, which keeps real-time audio processing unthrottled.
+  Object.assign(iframeEl.style, { position: "fixed", width: "0", height: "0", border: "0", opacity: "0", pointerEvents: "none" });
+  document.body.appendChild(iframeEl);
+
+  const listeners = new Set<WhisperMessageListener>();
+
+  function handleWindowMessage(event: MessageEvent) {
+    if (session !== newSession) return; // a later ensureSession() call superseded this one
+    if (!isTrustedWhisperMessageOrigin(event.origin, origin)) return;
+    const msg = parseWhisperInboundMessage(event.data);
+    if (!msg) return;
+    for (const listener of listeners) listener(msg);
+  }
+  window.addEventListener("message", handleWindowMessage);
+
+  const readyPromise = withWhisperReadyTimeout(
+    new Promise<number>((resolve, reject) => {
+      const onReadyOrError: WhisperMessageListener = (msg) => {
+        if (msg.type === "whisper:ready") {
+          listeners.delete(onReadyOrError);
+          resolve(msg.moduleReadyMs);
+        } else if (msg.type === "whisper:error") {
+          listeners.delete(onReadyOrError);
+          reject(new Error(msg.message));
+        }
+      };
+      listeners.add(onReadyOrError);
+    }),
+    readyTimeoutMs
+  );
+
+  const newSession: WhisperIframeSession = {
+    origin,
+    iframeEl,
+    readyPromise,
+    listeners,
+    postToIframe(message) {
+      iframeEl.contentWindow?.postMessage(message, origin);
+    },
+  };
+  session = newSession;
+  return newSession;
+}
+
 export interface WhisperCppProviderOptions extends SpeechProviderOptions {
-  /** Base URL `command.js`/`helpers.js`/`coi-serviceworker.js`/the model file are served from. Defaults to `resolveDefaultWhisperAssetBaseUrl(process.env)`. */
-  assetBaseUrl?: string;
-  /** Which GGML model to load — defaults to `DEFAULT_WHISPER_MODEL` (the only one actually deployed/verified this round). */
-  modelId?: WhisperCppModelId;
-  /** How often (ms) to poll `get_transcribed()`/`get_status()` AND re-feed the full accumulated audio buffer via `set_audio()` — see the module's own doc comment on why this must be the FULL buffer, matching the real reference implementation's own ~250ms cadence exactly. */
-  feedIntervalMs?: number;
-  /** Bounds the wait for the compiled module's `postRun()` — see `MODULE_INIT_TIMEOUT_MESSAGE`'s own doc comment for the real production hang this prevents. Defaults to `DEFAULT_MODULE_INIT_TIMEOUT_MS`. */
-  moduleInitTimeoutMs?: number;
+  /** Origin (scheme + host, no path/trailing slash) of the isolated Whisper runtime. Defaults to `resolveDefaultWhisperOrigin(process.env)`. */
+  whisperOrigin?: string;
+  /** Bounds the wait for the iframe's own `whisper:ready` message. Defaults to `DEFAULT_WHISPER_READY_TIMEOUT_MS`. */
+  readyTimeoutMs?: number;
 }
 
 /**
- * Real, working logic against the REAL, read-from-source command.wasm API
- * — see this module's own top-of-file doc comment for exactly what that
- * contract is and how it was confirmed.
+ * Real, working provider against the isolated-origin iframe architecture
+ * described in this module's own top-of-file doc comment.
  *
- * START PHRASE / END PHRASE MAPPING: `start()` loads the glue script +
- * model (cached at module/URL scope so repeated phrase cycles don't
- * re-fetch ~31MB every time) and calls `init()` to create a fresh context
- * every phrase — no context/model state reused ACROSS phrases at the
- * ENGINE level, matching Sherpa's own "every phrase is its own clean
- * recognition segment" precedent. Audio capture accumulates into a
- * growing buffer (this engine's own internal VAD decides when a "command"
- * is complete — there is no caller-driven force-finalize primitive) and
- * is re-fed to `set_audio()` in FULL, periodically — see the module doc
- * comment for why. `stop()` stops audio capture/feeding and calls
- * `free()` — a clean, fully torn-down session every time.
+ * START PHRASE / END PHRASE MAPPING: `start()` ensures the shared iframe
+ * session exists (creating + waiting for `whisper:ready` on first use,
+ * reused thereafter), then sends `whisper:start-phrase` — the isolated
+ * origin's own `startPhrase()` begins real getUserMedia capture and feeds
+ * the whisper.cpp WASM runtime. `stop()` sends `whisper:end-phrase`,
+ * which tears down that capture session on the iframe side. Every
+ * `whisper:final` message received while this provider instance is active
+ * is treated as a COMPLETE, FINAL result — this engine has its own
+ * internal VAD deciding when a command is complete, not a caller-driven
+ * force-finalize primitive, so `onInterimResult` is never called (same
+ * disclosed limitation the prior in-process version had).
  */
 export function createWhisperCppProvider(options: WhisperCppProviderOptions): SpeechProvider {
-  const assetBaseUrl = (options.assetBaseUrl ?? DEFAULT_ASSET_BASE_URL).replace(/\/?$/, "/");
-  const modelId = options.modelId ?? DEFAULT_WHISPER_MODEL;
-  const feedIntervalMs = options.feedIntervalMs ?? 250;
-  const moduleInitTimeoutMs = options.moduleInitTimeoutMs ?? DEFAULT_MODULE_INIT_TIMEOUT_MS;
+  const whisperOrigin = (options.whisperOrigin ?? DEFAULT_WHISPER_ORIGIN).replace(/\/+$/, "");
+  const readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_WHISPER_READY_TIMEOUT_MS;
   const detection = detectAmbientWhisperCppSupport();
-  const supported = detection.webAssembly && detection.audioWorklet && detection.getUserMedia;
+  const supported = detection.iframeEmbedding;
 
-  let contextIndex: number | null = null;
-  let moduleRef: WhisperCommandModule | null = null;
-  let audioContext: AudioContext | null = null;
-  let mediaStream: MediaStream | null = null;
-  let workletNode: AudioWorkletNode | null = null;
-  let feedHandle: ReturnType<typeof setInterval> | null = null;
-  let suppressed = false;
   let running = false;
-  let lastTranscribed = "";
-  let lastStatus = "";
-  // The FULL accumulated recording so far — set_audio() REPLACES the
-  // engine's buffer on every call (confirmed from the real reference
-  // implementation, see the module doc comment), so this must keep
-  // growing for the whole phrase, never reset mid-phrase.
-  let accumulatedChunks: Float32Array[] = [];
-  let accumulatedLength = 0;
+  let suppressed = false;
+  let audioStartFired = false;
+  let activeSession: WhisperIframeSession | null = null;
+  let activeListener: WhisperMessageListener | null = null;
 
   function emitFinal(text: string) {
     const result: SpeechProviderResult = { transcript: text, confidence: null, isFinal: true, alternatives: [{ transcript: text, confidence: null }] };
     options.onFinalResult(result);
   }
 
-  async function initModule(): Promise<WhisperCommandModule> {
-    if (!moduleLoadPromise) {
-      moduleLoadPromise = withModuleInitTimeout(
-        (async () => {
-          const win = getWhisperWindow();
-          win.Module = {
-            locateFile: (path: string) => `${assetBaseUrl}${path}`,
-          };
-          await loadScript(`${assetBaseUrl}command.js`);
-          await new Promise<void>((resolve) => {
-            const mod = win.Module!;
-            const priorPostRun = mod.postRun;
-            mod.postRun = () => {
-              priorPostRun?.();
-              resolve();
-            };
-          });
-          return win.Module!;
-        })(),
-        moduleInitTimeoutMs
-      ).catch((err) => {
-        // A failed/timed-out load must never be cached permanently — see
-        // MODULE_INIT_TIMEOUT_MESSAGE's own doc comment. A later start()
-        // attempt (a retry, or the next phrase) gets a genuinely fresh
-        // attempt instead of the same rejected promise forever.
-        moduleLoadPromise = null;
-        throw err;
-      });
-    }
-    return moduleLoadPromise;
-  }
-
-  /** Concatenates every captured chunk into one Float32Array — see the module doc comment on why the FULL buffer, not just new samples, must be re-fed each cycle. */
-  function concatAccumulated(): Float32Array {
-    const out = new Float32Array(accumulatedLength);
-    let offset = 0;
-    for (const chunk of accumulatedChunks) {
-      out.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return out;
-  }
-
-  function feedAndPoll() {
-    if (suppressed || !moduleRef || contextIndex === null) return;
-    if (accumulatedLength > 0) {
-      moduleRef.set_audio?.(contextIndex, concatAccumulated());
-    }
-    const status = moduleRef.get_status?.() ?? "";
-    if (status.length > 0 && status !== lastStatus) {
-      lastStatus = status;
-      options.onSpeechStart?.();
-    }
-    const text = moduleRef.get_transcribed?.() ?? "";
-    if (text.length > 0 && text !== lastTranscribed) {
-      lastTranscribed = text;
-      emitFinal(text);
+  function onSessionMessage(msg: WhisperInboundMessage) {
+    if (suppressed) return;
+    if (msg.type === "whisper:status") {
+      if (msg.status === "listening" && !audioStartFired) {
+        audioStartFired = true;
+        options.onAudioStart?.();
+        options.onSpeechStart?.();
+      }
+    } else if (msg.type === "whisper:final") {
+      emitFinal(msg.text);
+    } else if (msg.type === "whisper:error") {
+      options.onError?.(msg.message);
     }
   }
 
@@ -594,43 +407,14 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
     }
     if (running) return;
     running = true;
+    audioStartFired = false;
     try {
-      const whisperModule = await initModule();
-      moduleRef = whisperModule;
-
-      const modelInfo = WHISPER_CPP_MODELS[modelId];
-      const modelBytes = await fetchModel(`${assetBaseUrl}${modelInfo.file}`);
-      try {
-        whisperModule.FS_unlink?.(WHISPER_MODEL_FS_PATH);
-      } catch {
-        // Real reference behavior — ignore "doesn't exist yet" on first load.
-      }
-      whisperModule.FS_createDataFile?.("/", WHISPER_MODEL_FS_PATH, modelBytes, true, true);
-
-      const initFn = whisperModule.init;
-      if (!initFn) throw new Error("init missing after module init");
-      const index = initFn(WHISPER_MODEL_FS_PATH);
-      if (!index) throw new Error("whisper.cpp init() returned a falsy handle (model load failed)");
-      contextIndex = index;
-
-      options.onAudioStart?.();
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioContext = new AudioContext();
-      const workletBlobUrl = URL.createObjectURL(new Blob([INLINE_WORKLET_SOURCE], { type: "application/javascript" }));
-      await audioContext.audioWorklet.addModule(workletBlobUrl);
-      URL.revokeObjectURL(workletBlobUrl);
-
-      const source = audioContext.createMediaStreamSource(mediaStream);
-      workletNode = new AudioWorkletNode(audioContext, "whisper-capture-processor");
-      workletNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
-        if (suppressed) return;
-        const samples = resampleTo16k(event.data, audioContext!.sampleRate);
-        accumulatedChunks.push(samples);
-        accumulatedLength += samples.length;
-      };
-      source.connect(workletNode);
-
-      feedHandle = setInterval(feedAndPoll, feedIntervalMs);
+      const sess = ensureSession(whisperOrigin, readyTimeoutMs);
+      await sess.readyPromise;
+      sess.listeners.add(onSessionMessage);
+      activeSession = sess;
+      activeListener = onSessionMessage;
+      sess.postToIframe({ type: "whisper:start-phrase" });
     } catch (err) {
       running = false;
       const message = err instanceof Error ? err.message : String(err);
@@ -638,38 +422,15 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
     }
   }
 
-  /**
-   * A clean, complete teardown every phrase — see this function's own
-   * top-of-createWhisperCppProvider doc comment for why context reuse
-   * across phrases is deliberately NOT attempted this round.
-   */
   function stop(): void {
     running = false;
-    if (feedHandle !== null) {
-      clearInterval(feedHandle);
-      feedHandle = null;
+    if (activeSession) {
+      activeSession.postToIframe({ type: "whisper:end-phrase" });
+      if (activeListener) activeSession.listeners.delete(activeListener);
     }
-    workletNode?.port.close();
-    workletNode?.disconnect();
-    workletNode = null;
-    mediaStream?.getTracks().forEach((t) => t.stop());
-    mediaStream = null;
-    audioContext?.close().catch(() => {});
-    audioContext = null;
-    if (moduleRef && contextIndex !== null) {
-      try {
-        moduleRef.free?.(contextIndex);
-      } catch {
-        // Best-effort — a context in an unexpected state should never
-        // prevent the rest of cleanup from running.
-      }
-    }
-    contextIndex = null;
-    moduleRef = null;
-    lastTranscribed = "";
-    lastStatus = "";
-    accumulatedChunks = [];
-    accumulatedLength = 0;
+    activeSession = null;
+    activeListener = null;
+    audioStartFired = false;
     options.onAudioEnd?.();
   }
 
@@ -678,11 +439,22 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
     supported,
     start,
     stop,
+    // Reuses the same two protocol messages rather than adding new ones —
+    // see this module's own SECURITY/architecture doc comment: the narrow
+    // postMessage protocol allows only start/end/ready/status/final/error,
+    // nothing else. Sending whisper:end-phrase genuinely stops mic capture
+    // on the iframe side (not just a local flag), so EyeOnPit's own
+    // spoken confirmations cannot be captured/transcribed during
+    // suppression — the same self-hearing guarantee every other provider
+    // makes. Resuming re-sends whisper:start-phrase, which begins a fresh
+    // capture (discarding whatever was buffered before suppression).
     suppressForSpeech() {
       suppressed = true;
+      activeSession?.postToIframe({ type: "whisper:end-phrase" });
     },
     resumeAfterSpeech() {
       suppressed = false;
+      if (running) activeSession?.postToIframe({ type: "whisper:start-phrase" });
     },
   };
 }

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FlaskConical, Mic, Square, SkipForward, ArrowRight, Download, Copy, Check, X } from "lucide-react";
 import { createSherpaOnnxProvider, resolveDefaultAssetBaseUrl } from "@/lib/voice/sherpaOnnxProvider";
 import { createBrowserWebSpeechProvider } from "@/lib/voice/browserWebSpeechProvider";
-import { createWhisperCppProvider, resolveDefaultWhisperAssetBaseUrl } from "@/lib/voice/whisperCppProvider";
+import { createWhisperCppProvider, resolveDefaultWhisperOrigin } from "@/lib/voice/whisperCppProvider";
 import { buildHotwordList } from "@/lib/voice/casinoVoiceContext";
 import { classifyVoiceTranscript } from "@/lib/voice/classifyVoiceTranscript";
 import type { SpeechProvider, SpeechProviderResult } from "@/lib/voice/speechProvider";
@@ -135,12 +135,14 @@ const ASSET_BASE_URL = resolveDefaultAssetBaseUrl({
 }).replace(/\/?$/, "/");
 const BPE_VOCAB_URL = `${ASSET_BASE_URL}bpe.vocab`;
 
-// Identical reasoning/pattern to ASSET_BASE_URL above, for the new Whisper
-// provider — see whisperCppProvider.ts's own ASSET DEPLOYMENT doc comment
-// for why nothing is provisioned at this path in any environment yet.
-const WHISPER_ASSET_BASE_URL = resolveDefaultWhisperAssetBaseUrl({
-  NEXT_PUBLIC_WHISPER_ASSET_BASE_URL: process.env.NEXT_PUBLIC_WHISPER_ASSET_BASE_URL,
-}).replace(/\/?$/, "/");
+// Whisper runs entirely on its own isolated static origin (an <iframe> +
+// narrow postMessage protocol), NOT same-origin WASM — see
+// whisperCppProvider.ts's own top-of-file ARCHITECTURE doc comment for
+// why. Resolves to the real, already-deployed whisper-static-lab
+// production origin by default, in every environment including local dev.
+const WHISPER_ORIGIN = resolveDefaultWhisperOrigin({
+  NEXT_PUBLIC_WHISPER_STATIC_ORIGIN: process.env.NEXT_PUBLIC_WHISPER_STATIC_ORIGIN,
+});
 
 interface InterimSnapshot {
   atMs: number;
@@ -362,7 +364,7 @@ export default function SherpaVoiceTestPage() {
       return createBrowserWebSpeechProvider(commonOptions);
     }
     if (providerChoice === "whisper-cpp") {
-      return createWhisperCppProvider({ ...commonOptions, assetBaseUrl: WHISPER_ASSET_BASE_URL });
+      return createWhisperCppProvider({ ...commonOptions, whisperOrigin: WHISPER_ORIGIN });
     }
     return createSherpaOnnxProvider({
       ...commonOptions,
@@ -566,7 +568,7 @@ export default function SherpaVoiceTestPage() {
           {providerChoice === "browser-web-speech"
             ? "Chrome baseline — A/B/C only applies to Sherpa."
             : providerChoice === "whisper-cpp"
-              ? "Experimental, local/offline — runs entirely in the browser, no audio ever sent to a remote service. A/B/C only applies to Sherpa."
+              ? "Experimental — audio capture + transcription run entirely client-side inside an isolated Whisper runtime (embedded via iframe, its own separate origin); no audio ever leaves your browser or reaches any server. A/B/C only applies to Sherpa."
               : abConfig === "A"
               ? "No hotwords file at all."
               : abConfig === "B"

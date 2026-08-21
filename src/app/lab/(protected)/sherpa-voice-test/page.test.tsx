@@ -71,15 +71,31 @@ describe("Sherpa A/B/C Lab page — REGRESSION (items 7 & 8, 2026-08-20 real mic
     expect(screen.queryByRole("button", { name: /A — Hotwords OFF/ })).toBeNull();
   });
 
-  it("REGRESSION (safety, Whisper): starting a phrase under Whisper fails closed with a real error, never a fake success — Whisper is unsupported in this test environment exactly like Sherpa (no real AudioWorklet/getUserMedia)", () => {
-    render(<SherpaVoiceTestPage />);
-    fireEvent.click(screen.getByRole("button", { name: /Whisper \(Experimental\)/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Start Phrase/ }));
+  it("REGRESSION (safety, Whisper): starting a phrase under Whisper fails closed with a real error, never a fake success — Whisper's provider is now iframe-based (see whisperCppProvider.ts's own ARCHITECTURE doc comment), so it reports `supported: true` in jsdom (only window+document are required in THIS origin — real audio/WASM work happens inside the iframe's own origin); jsdom never actually navigates that iframe or delivers a real `whisper:ready` message, so the real, disclosed ready-timeout fires instead of a fake success", async () => {
+    vi.useFakeTimers();
+    try {
+      render(<SherpaVoiceTestPage />);
+      fireEvent.click(screen.getByRole("button", { name: /Whisper \(Experimental\)/ }));
+      fireEvent.click(screen.getByRole("button", { name: /Start Phrase/ }));
 
-    expect(screen.getByText("unsupported-in-this-browser")).toBeTruthy();
-    expect(screen.getByText("error")).toBeTruthy();
-    // No fabricated success and no phantom CardEvent-eligible record either.
-    expect(screen.getByText(/Captured results \(0\)/)).toBeTruthy();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20000);
+      });
+
+      // Scoped to the "Last error" dt/dd pair specifically — the same
+      // message text can otherwise match more than one place on the page
+      // (e.g. also appearing inside the raw JSON export), which would make
+      // a plain screen.getByText ambiguous.
+      expect(screen.getByText("Last error").nextElementSibling?.textContent).toMatch(/whisper iframe did not send whisper:ready in time/);
+      expect(screen.getByText("error")).toBeTruthy();
+      // A real failure IS a captured record here (unlike the old pre-start
+      // supported-check short-circuit) — the isolated origin being
+      // unreachable is exactly the kind of real, diagnosable failure this
+      // Lab tool exists to surface, not hide.
+      expect(screen.getByText(/Captured results \(1\)/)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("switching the provider (Sherpa -> Chrome baseline) also resets the phrase run and updates the banner", () => {

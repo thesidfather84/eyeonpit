@@ -12,6 +12,69 @@ history, aimed at contributors rather than operators.
 
 ## Completed
 
+### 1.10 Split/Double — Phase 6, Natural Split-Hand Continuation (2026-08-20)
+
+**Scope:** once an operator explicitly selects a split hand ("spot 3 hand
+2 has a five"), a subsequent bare card in a new utterance ("king") now
+continues onto that same hand — no new target needs to be spoken. This is
+the "conversational continuation" half of §7.1 that Phase 5 explicitly
+left open. No new voice grammar was added: the bare-card continuation
+path is the exact mechanism that has always continued onto whatever
+`activeTarget` currently is for an ordinary seat — Phase 6 verified (and
+fixed three real gaps in) that this already sign-agnostic mechanism stays
+correct when `activeTarget` is negative (a split hand).
+
+**Why this was nearly free:** `activeTarget`'s signed-number convention
+(positive = primary hand, negative = split hand, since Phase 4/5) meant
+the production write path (`useCardEntry` → `resolveCardEntryTarget`) and
+the multi-card narration continuation gate
+(`allowUnscopedContinuation: activeTarget !== "dealer"`) were both already
+completely agnostic to the sign of `activeTarget`. 14 of the first 17
+integration tests written for this phase passed on the first run against
+zero new production code.
+
+**Three real pre-existing gaps found and fixed:** (1) `markSeatEmpty`
+only cleared `activeTarget` for the positive form of the seat being
+emptied, even though emptying a seat clears both its hands — a stale
+negative target would have silently rejected every later bare-card
+continuation. (2) `undo()`'s whole-round-snapshot branch (how undoing a
+bare Split, before any card on Hand 2, is reached) never repaired
+`activeTarget` when the restored round no longer had the split hand it
+pointed at. (3) Multi-card narration confirmation carried a `VoiceTarget`
+(structurally always a positive 1-7 seat) — continuing onto an active
+split hand with no target named in that utterance rendered as the
+nonsensical "SPOT -3"; replaced with a plain resolved `targetLabel`
+string via a new round-aware `confirmationLabelFor` helper.
+
+**Never guesses:** a split seat named without an explicit hand ("spot 3
+has a five") still rejects `AMBIGUOUS_HAND_TARGET` exactly as Phase 5 left
+it. **Fail-closed:** a stale split-hand target whose hand ceases to exist
+rejects the next bare card gracefully ("not enabled") and writes zero
+CardEvents, never misapplying it. **Boundaries:** round-advance and
+seat-leaving already unconditionally reset `activeTarget` to a valid
+value by construction — Phase 6 added tests proving this, not new code.
+
+**Tests:** 17 new tests in
+`src/components/live/VoiceSplitHandContinuation.test.tsx`, driving the
+real `VoiceControl` component through complete spoken sequences (not
+isolated parser strings) — explicit-hand-then-bare-card continuation for
+both hands, target switching in both directions between an ordinary seat
+and a split hand, switching between Hand 1 and Hand 2, Double preserving
+active-hand targeting, Undo/Redo of a continuation card, self-healing
+after undoing a bare Split, round-boundary clearing, seat-leaving
+redirect, six fail-closed cases, and a 4-card count-integrity sequence
+across both hands. Full suite green (1479 passed, 1 pre-existing skip),
+`tsc --noEmit` clean, `eslint` clean, `counting-engine/` diff empty,
+Sherpa provider/deployment and Field Test #4 protocol untouched.
+
+**Status:** Phase 6 complete — see commit hash in the session's final
+report. **Not field-validated.** Voice Split/Double, explicit split-hand
+card targeting, and this natural continuation all remain implemented and
+text-verified only, pending the real-microphone Field Test #4 session
+(`docs/EYEONPIT_VOICE_FIELD_TEST_4.md`) and export review. See
+`docs/EYEONPIT_1_10_SPLIT_DOUBLE_DESIGN.md` §0.6/§12 item 7 for full
+detail.
+
 ### Sherpa Lab "assets-not-found" Production Fix — Vercel Blob Deployment (2026-08-20)
 
 **Problem:** a real production mic session against `/lab/sherpa-voice-test`
@@ -1146,10 +1209,11 @@ gate.
    corpus, pass/fail criteria — supersedes the old placeholder pointer to
    Field Test #2's closing section). *(the real-microphone session itself
    is still up next, not yet run)*
-6a. **1.10 Split/Double, Phases 1-5** — built and text-regression-tested
+6a. **1.10 Split/Double, Phases 1-6** — built and text-regression-tested
     since this list was last current (see the dedicated 1.10 entries
     above): reporting, the Double/Undo fix, split-hand operator UX, voice
-    Split/Double commands, and explicit split-hand voice card targeting.
+    Split/Double commands, explicit split-hand voice card targeting, and
+    natural split-hand continuation.
     **PC Voice Field Test #4** — protocol prepared, see
     `docs/EYEONPIT_VOICE_FIELD_TEST_4.md` (19-line real-mic script
     covering Phases 4-5's new voice surface, safety gates). *(also not yet

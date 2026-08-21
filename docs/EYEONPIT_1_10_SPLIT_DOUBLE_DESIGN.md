@@ -2,25 +2,31 @@
 
 **Status: design approved with locked decisions; Phase 1 (reporting fix),
 Phase 2 (Double/Undo defect fix), Phase 3 (split-hand operator UX polish),
-Phase 4 (voice Split/Double commands), AND Phase 5 (EXPLICIT split-hand
-voice card targeting) implemented, tested, and verified BY AUTOMATED
-TEXT-REGRESSION TESTS ONLY. A real-microphone field-test protocol for
-Phases 4-5 is now prepared (`docs/EYEONPIT_VOICE_FIELD_TEST_4.md`) but has
-NOT been run — do not treat voice Split/Double or split-hand card
-targeting as field-validated until that session actually happens and its
-export is reviewed. Phase 5 covers ONLY explicit "spot N hand H has a
-[card]" targeting — conversational split-hand continuation (a later card
-resolving against a previously-named hand with no new target spoken in
-the same or a later utterance) remains NOT started, not scoped, and not
-implemented.** This
+Phase 4 (voice Split/Double commands), Phase 5 (EXPLICIT split-hand
+voice card targeting), AND Phase 6 (natural split-hand continuation)
+implemented, tested, and verified BY AUTOMATED TEXT-REGRESSION TESTS ONLY.
+A real-microphone field-test protocol for Phases 4-5
+(`docs/EYEONPIT_VOICE_FIELD_TEST_4.md`) has still NOT been run — do not
+treat voice Split/Double, split-hand card targeting, or Phase 6's natural
+continuation as field-validated until that session actually happens and
+its export is reviewed. Phase 6 lets an operator explicitly select a
+split hand once ("Player 3 Hand 2 has a five") and then continue naturally
+with bare cards ("King.") that land on that same hand — built entirely on
+the EXISTING active-target architecture (`activeTarget`'s signed-number
+convention, `resolveCardEntryTarget`, `useCardEntry`,
+`allowUnscopedContinuation`) with no new conversational-memory mechanism.
+It does NOT broaden voice grammar beyond what Phase 4/5 already
+established, and never infers which split hand is meant — a split seat
+named without an explicit hand still rejects `AMBIGUOUS_HAND_TARGET`
+exactly as before.** This
 document's original version was planning-only. This revision records the
 user's approved decisions (§0), Phase 1's real, shipped result (§0.1),
 Phase 2's real, shipped fix (§0.2), Phase 3's real, shipped UX work (§0.3),
-Phase 4's real, shipped voice work (§0.4), and Phase 5's real, shipped
-split-hand card-targeting work (§0.5) — it does not retroactively
-claim anything beyond Phases 1-5 is implemented, and Phase 5 itself does
-NOT include conversational continuation for split hands (see §0.5's own
-scope note).
+Phase 4's real, shipped voice work (§0.4), Phase 5's real, shipped
+split-hand card-targeting work (§0.5), and Phase 6's real, shipped natural
+continuation work (§0.6) — it does not retroactively claim anything beyond
+Phases 1-6 is implemented, and none of it is field-validated (see the
+Field Test #4 status above).
 
 ## 0. Locked decisions (approved 2026-08-20)
 
@@ -345,6 +351,88 @@ is a real card-rank word; `parseSplitHandCardCommand` defers when the tail
 is exactly `"double"`. Both directions are fixed (not just the one the
 current check order happens to need) so this doesn't silently depend on
 which parser VoiceControl.tsx happens to check first.
+
+### 0.6 Natural split-hand continuation (Phase 6, 2026-08-20)
+
+**Scope, precisely:** once an operator explicitly selects a split hand
+("spot 3 hand 2 has a five"), a SUBSEQUENT bare card in a new utterance
+("king") now continues onto that SAME hand — no target needs to be
+re-spoken. This is the ONLY new capability. No new voice grammar was
+added: the bare-card path is the exact same one that has always
+continued onto whatever `activeTarget` currently is for an ordinary seat;
+Phase 6 verifies (and, where it found real gaps, fixes) that this already
+sign-agnostic mechanism stays correct when `activeTarget` is negative
+(a split hand) rather than positive.
+
+**Why this was nearly free:** `activeTarget`'s type has been `"dealer" |
+number` since Phase 4/5, with negative numbers already meaning "this
+seat's split hand" via `splitTargetFor`. The production write path for
+EVERY card entry, manual or voice — `useCardEntry` → `resolveCardEntryTarget`
+— and the multi-card narration continuation gate
+(`allowUnscopedContinuation: activeTarget !== "dealer"`) were both already
+completely agnostic to the sign of `activeTarget`. 14 of the first 17
+integration tests written for this phase passed on the very first run
+against zero new production code — only the 3 gaps below needed fixing.
+
+**Three real gaps found and fixed (all pre-existing, not introduced by
+Phase 5):**
+
+1. `markSeatEmpty` cleared `activeTarget` only when it matched the seat's
+   POSITIVE form (`activeTarget === seatNumber`), even though clearing a
+   seat removes both its primary AND split hand. A stale negative target
+   left behind would silently reject every later bare-card continuation.
+   Now checks both `activeTarget === seatNumber || activeTarget === -seatNumber`.
+2. `undo()`'s whole-round-snapshot branch (the path a bare Split — no card
+   yet on Hand 2 — is undone through) never repaired `activeTarget` when
+   the restored round no longer had the split hand it was pointing at.
+   Now redirects back to the seat's primary hand when
+   `!round.splitHands[-activeTarget]` after a round-snapshot restore.
+3. Multi-card narration confirmation (`ConfirmationEntry`) carried a
+   `VoiceTarget`, whose seat number is structurally always positive 1-7 —
+   continuing onto an active split hand with no target named in that
+   utterance rendered as the nonsensical "SPOT -3". Replaced with a plain
+   resolved `targetLabel: string`, computed via a new round-aware
+   `confirmationLabelFor` helper in `VoiceControl.tsx` that correctly
+   renders "SPOT 3 HAND 2".
+
+**Never guesses:** a split seat named without an explicit hand
+("spot 3 has a five") still rejects `AMBIGUOUS_HAND_TARGET` exactly as
+Phase 5 left it — Phase 6 added no inference. Confirmed by a dedicated
+test where a DIFFERENT hand is the live active target at the time.
+
+**Fail-closed, verified by test:** an active split-hand target that
+becomes stale (its hand ceases to exist via any path) rejects the next
+bare card with a graceful "not enabled" message and writes zero
+CardEvents — never misapplies the card to a hand that no longer exists,
+and never a silent DB-layer failure.
+
+**Round/session boundaries:** every round-advance path already
+unconditionally calls `setActiveTarget`, and every new round's
+`splitHands` always starts `{}` — so a split-hand target can never leak
+across a round boundary; this was already true by construction and Phase
+6 only added a test proving it, not new code.
+
+**Testing:** 17 new tests in
+`src/components/live/VoiceSplitHandContinuation.test.tsx`, driving the
+real `VoiceControl` component end to end through complete spoken
+sequences (not isolated parser strings) — explicit-hand-then-bare-card
+continuation for both hands, target switching between an ordinary seat
+and a split hand in both directions, switching between Hand 1 and Hand 2,
+Double preserving active-hand targeting, Undo/Redo of a continuation
+card, self-healing after undoing a bare Split, round-boundary clearing,
+seat-leaving redirect, six fail-closed cases (ambiguous bare split-seat
+target, malformed Hand 3, Hand 2 on an unsplit seat, a stale split-hand
+target forced independently of the `markSeatEmpty` fix, unrelated speech,
+conflicting N-best hand alternatives), and a 4-card count-integrity
+sequence across both hands.
+
+**Explicitly NOT done in Phase 6** (none of these were asked for): no
+broadening of voice grammar beyond Phase 4/5's existing forms; no
+speculative ASR recovery; no changes to `counting-engine/`, reporting, or
+the Sherpa provider/deployment; `advanceToNext`'s guided-mode auto-advance
+jumping to "dealer" for a negative `activeTarget` was noted as adjacent
+by investigation but is untouched — it was not in the user's explicit
+requirement list.
 
 **Deterministic active-target behavior (§7 of the brief):** after a
 successful explicit split-hand card, the named hand becomes the active
@@ -718,13 +806,14 @@ shippable — no phase requires a later one to be safe to ship on its own.
    cross-grammar bug between this and Phase 4's parser was found and fixed
    during this round (see §0.5). Conversational continuation for split
    hands is explicitly NOT part of this phase — see item 7 below.
-7. **Conversational split-hand continuation.** Not started, not scoped in
-   detail. A later card resolving against a previously-named hand with no
-   fresh target spoken — e.g. "spot 3 hand 2 has a five" followed by a bare
-   "and a king" in the same or a later utterance. Genuinely open design
-   work: needs its own safety analysis (mirroring
-   `allowUnscopedContinuation`'s existing precedent for plain seats) before
-   implementation, not a trivial extension of Phase 5.
+7. **✅ DONE — Natural split-hand continuation (§7.1's other half, §0.6).**
+   A bare card in a new utterance now continues onto whichever split hand
+   (or ordinary seat) was last explicitly selected, using the existing
+   sign-agnostic `activeTarget`/`resolveCardEntryTarget` mechanism — no new
+   grammar. Never infers which hand is meant. Three pre-existing gaps
+   found and fixed (`markSeatEmpty`, `undo()`'s round-snapshot branch, the
+   "SPOT -3" confirmation-label bug). 17 new tests in
+   `VoiceSplitHandContinuation.test.tsx`.
 8. **🔶 PROTOCOL PREPARED, NOT RUN — Field Test #4 for split/double +
    split-hand-card voice.** `docs/EYEONPIT_VOICE_FIELD_TEST_4.md` — a full
    19-line ordered script (all three Split phrasings, Double on both an
@@ -742,10 +831,10 @@ shippable — no phase requires a later one to be safe to ship on its own.
    on deferring "as" and similar) — never added speculatively before this
    test runs.
 
-Phase 7 (continuation) remains not started. Phase 8's protocol document
-exists; the real-microphone session itself has not happened.
+Phase 6 (continuation) is now done — see item 7 above. Phase 8's protocol
+document exists; the real-microphone session itself has not happened.
 
-## 13. Files changed (Phases 1-5)
+## 13. Files changed (Phases 1-6)
 
 - `src/lib/reporting/reportBuilder.ts` — Phase 1, the reporting fix.
 - `src/lib/reporting/reportSchema.ts` — Phase 1, `handIndex`/`doubled`
@@ -815,6 +904,24 @@ exists; the real-microphone session itself has not happened.
   `handleFinalResult`'s dependency array.
 - `src/components/live/VoiceSplitHandCard.test.tsx` — Phase 5, new file,
   24 tests driving the real `VoiceControl` component end to end.
+- `src/contexts/InvestigationContext.tsx` — Phase 6, `markSeatEmpty` now
+  also matches the negative (split-hand) form of the seat being emptied;
+  `undo()`'s whole-round-snapshot branch now redirects `activeTarget` back
+  to the primary hand when the restored round no longer has the split hand
+  it was pointing at.
+- `src/lib/voice/narrationConfirmation.ts` — Phase 6, `ConfirmationEntry`
+  now carries a plain resolved `targetLabel: string` instead of a
+  `VoiceTarget`, closing the "SPOT -3" split-hand confirmation bug.
+- `src/lib/voice/narrationConfirmation.test.ts` — Phase 6, existing tests
+  updated for the type change, plus one new split-hand-label test.
+- `src/components/live/VoiceControl.tsx` — Phase 6, new round-aware
+  `confirmationLabelFor` helper replaces the removed `fromCardTarget`
+  (whose doc comment falsely claimed "never a split target"); both
+  `preflightNarration` construction sites and `commitNarration` updated to
+  use it.
+- `src/components/live/VoiceSplitHandContinuation.test.tsx` — Phase 6, new
+  file, 17 tests driving the real `VoiceControl` component end to end
+  through complete spoken sequences.
 
 **Not touched:** `src/lib/counting-engine/` (confirmed via `git status`),
 `src/lib/db/repositories/investigations.ts` (`splitSeat` itself — §5.1
@@ -849,10 +956,8 @@ INERT_ACTION_WORDS vocabulary is read, never modified — see §0.4/§0.5),
 7. ~~§7.2 voice Split/Double~~ — **RESOLVED**: implemented in Phase 4
    (§0.4).
 8. ~~§7.1 explicit split-hand card targeting~~ — **RESOLVED**: implemented
-   in Phase 5 (§0.5). Conversational continuation for split hands (the
-   OTHER half of §7.1's original sketch) remains genuinely open — not
-   started, not scoped in detail, and requires its own safety analysis
-   before implementation (see §12 item 7).
+   in Phase 5 (§0.5). ~~Conversational continuation for split hands~~ —
+   **RESOLVED**: implemented in Phase 6 (§0.6, §12 item 7).
 9. Split-hand-card connector vocabulary (§0.5) — deliberately narrower
    than plain-seat narration's own connector set (no "and"/"with"/"in"/
    "as"). Not a defect; flagged as a real, evidence-gated decision for the
@@ -860,5 +965,8 @@ INERT_ACTION_WORDS vocabulary is read, never modified — see §0.4/§0.5),
    captured that need one of those recognized for this specific phrase
    shape.
 
-Phases 1-5 code changes are real, tested, and described above. No commit,
-no push.
+Phases 1-6 code changes are real, tested, and described above. Remaining
+work to declare 1.10 complete: run the real-microphone Field Test #4
+session (`docs/EYEONPIT_VOICE_FIELD_TEST_4.md`) and review its export —
+nothing in Phases 1-6 should be treated as field-validated until that
+happens.

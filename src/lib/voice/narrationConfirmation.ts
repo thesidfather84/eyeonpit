@@ -1,5 +1,3 @@
-import type { VoiceTarget } from "./parseVoiceCommand";
-
 /**
  * What actually got committed, in commit order — built by VoiceControl's
  * commit step (never by the parser, which never knows a card's final
@@ -7,24 +5,23 @@ import type { VoiceTarget } from "./parseVoiceCommand";
  * module doc comment). A short-form deliberately: this exists only to
  * render the compact confirmation, not to be dispatched from — commit has
  * already happened by the time this is built.
+ *
+ * `targetLabel` is a plain, already-resolved display string (e.g. "SPOT 3",
+ * "SPOT 3 HAND 2", "DEALER") rather than a `VoiceTarget` — EyeOnPit 1.10
+ * Phase 6 fix: `VoiceTarget`'s seat is always a positive 1-7, structurally
+ * unable to represent a split hand, so a multi-card narration continuing
+ * onto a split hand with no target named in that utterance (target falls
+ * back to the negative `activeTarget`) used to render as the nonsensical
+ * "SPOT -3" here — see VoiceControl.tsx's own `confirmationLabelFor`,
+ * which is round-aware and computes the correct split-hand-qualified label
+ * before this module ever sees it, exactly mirroring the wording Phase
+ * 4/5's own Split/Double/split-hand-card confirmations already use.
  */
 export type ConfirmationEntry =
-  | { kind: "card"; target: VoiceTarget; displayRank: string }
+  | { kind: "card"; targetLabel: string; displayRank: string }
   | { kind: "workflow"; action: "done" | "next" | "undo" }
   /** A target was established with no card following it in the same narration (e.g. "seat two stand") — renders as the bare target label, no colon/ranks. */
-  | { kind: "target"; target: VoiceTarget };
-
-/**
- * PRIORITY: operator feedback must say "Spot N," never the bare internal
- * shorthand "S1"–"S7" — this is the normal, visible confirmation pill
- * (`setStatus({kind:"accepted",label})`), not a diagnostic surface, so the
- * 1.9 global terminology rule applies here directly. See
- * lib/utils/cardEntryResolution.ts's own doc comment for the sibling fix on
- * the manual-entry/single-command confirmation path.
- */
-function targetLabel(target: VoiceTarget): string {
-  return target.kind === "dealer" ? "DEALER" : `SPOT ${target.seat}`;
-}
+  | { kind: "target"; targetLabel: string };
 
 type Slot = { kind: "cards"; label: string; ranks: string[] } | { kind: "workflow"; label: string };
 
@@ -46,10 +43,10 @@ export function formatNarrationConfirmation(entries: ConfirmationEntry[]): strin
       continue;
     }
     if (entry.kind === "target") {
-      slots.push({ kind: "workflow", label: targetLabel(entry.target) });
+      slots.push({ kind: "workflow", label: entry.targetLabel });
       continue;
     }
-    const label = targetLabel(entry.target);
+    const label = entry.targetLabel;
     const last = slots[slots.length - 1];
     if (last && last.kind === "cards" && last.label === label) {
       last.ranks.push(entry.displayRank);

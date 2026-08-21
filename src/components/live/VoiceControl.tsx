@@ -7,7 +7,7 @@ import { useCardEntry } from "@/hooks/useCardEntry";
 import { useRoundControls } from "@/hooks/useRoundControls";
 import { useSpeechRecognitionSupport } from "@/hooks/useSpeechRecognitionSupport";
 import { useVoiceRecognition, type VoiceLifecycleEvent, type VoiceResult } from "@/hooks/useVoiceRecognition";
-import { parseVoiceCommand, type VoiceCommandKind, type VoiceSeat, type VoiceTarget } from "@/lib/voice/parseVoiceCommand";
+import { parseVoiceCommand, type VoiceCommandKind, type VoiceTarget } from "@/lib/voice/parseVoiceCommand";
 import { parseNarration, type NarrationOp } from "@/lib/voice/parseNarration";
 import { parseTableChangeCommand } from "@/lib/voice/parseTableChangeCommand";
 import { parseSplitDoubleCommand } from "@/lib/voice/parseSplitDoubleCommand";
@@ -164,9 +164,24 @@ function toCardTarget(target: VoiceTarget): CardTarget {
   return target.kind === "dealer" ? "dealer" : target.seat;
 }
 
-/** Inverse of toCardTarget — only ever applied to a target narration itself produced or the investigation's own current active target, both always "dealer" or a real seat 1-7, never a split target. */
-function fromCardTarget(target: CardTarget): VoiceTarget {
-  return target === "dealer" ? { kind: "dealer" } : { kind: "seat", seat: target as VoiceSeat };
+/**
+ * EyeOnPit 1.10 Phase 6 — a plain, already-resolved confirmation label for
+ * ANY CardTarget, including a negative split-hand target — unlike
+ * `VoiceTarget` (always a positive 1-7 seat), this can correctly describe
+ * "SPOT 3 HAND 2". Needed specifically because a multi-card narration
+ * continuing onto an already-active split hand with no target named in
+ * that utterance resolves its target from `activeTarget`, which can be
+ * negative — see `ConfirmationEntry`'s own doc comment in
+ * narrationConfirmation.ts for the "SPOT -3" bug this replaces. Mirrors
+ * the exact wording Phase 4/5's own dedicated Split/Double/split-hand-card
+ * dispatch blocks already use, so every confirmation surface reads
+ * identically regardless of which code path produced it.
+ */
+function confirmationLabelFor(round: Round, target: CardTarget): string {
+  if (target === "dealer") return "DEALER";
+  const { seatNumber, isSplit } = resolveSeatTarget(round, target);
+  const hasSplit = Boolean(round.splitHands[seatNumber]);
+  return `SPOT ${seatNumber}${hasSplit ? ` HAND ${isSplit ? "2" : "1"}` : ""}`;
 }
 
 /**
@@ -204,7 +219,7 @@ function isAmbiguousSplitSeatCardTarget(round: Round, voiceTarget: VoiceTarget |
  * design closes.
  */
 type PreflightStep =
-  | { kind: "selectTarget"; cardTarget: CardTarget; voiceTarget: VoiceTarget; bareOnly: boolean }
+  | { kind: "selectTarget"; cardTarget: CardTarget; confirmationLabel: string; bareOnly: boolean }
   | {
       kind: "card";
       targetType: CardEventTargetType;
@@ -213,7 +228,7 @@ type PreflightStep =
       applyToRound: (round: Round) => Round;
       eventMessage: string;
       cardTarget: CardTarget;
-      voiceTarget: VoiceTarget;
+      confirmationLabel: string;
       displayRank: string;
     }
   | { kind: "workflow"; action: "done" | "next" | "undo" };
@@ -280,7 +295,12 @@ function preflightNarration(
       if (typeof liveTarget === "number" && !simRound.seats[liveTarget]) {
         simRound = { ...simRound, seats: { ...simRound.seats, [liveTarget]: createEmptySeatRecord(liveTarget) } };
       }
-      steps.push({ kind: "selectTarget", cardTarget: liveTarget, voiceTarget: op.target, bareOnly: isBareTargetOnly });
+      steps.push({
+        kind: "selectTarget",
+        cardTarget: liveTarget,
+        confirmationLabel: confirmationLabelFor(simRound, liveTarget),
+        bareOnly: isBareTargetOnly,
+      });
       continue;
     }
 
@@ -311,7 +331,7 @@ function preflightNarration(
         applyToRound: (round) => resolution.applyCard(round, card),
         eventMessage: resolution.eventMessage(card),
         cardTarget: targetToUse,
-        voiceTarget: op.target ?? fromCardTarget(targetToUse),
+        confirmationLabel: confirmationLabelFor(simRound, targetToUse),
         displayRank: op.displayRank ?? op.rank,
       });
       continue;
@@ -796,7 +816,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
           if (step.cardTarget === "dealer") setActiveTarget("dealer");
           else await occupySeat(step.cardTarget);
           finalTarget = step.cardTarget;
-          if (step.bareOnly) entries.push({ kind: "target", target: step.voiceTarget });
+          if (step.bareOnly) entries.push({ kind: "target", targetLabel: step.confirmationLabel });
           continue;
         }
         if (step.kind === "card") {
@@ -807,7 +827,7 @@ export function VoiceControl({ floorMode = false }: { floorMode?: boolean } = {}
           );
           setActiveTarget(step.cardTarget);
           finalTarget = step.cardTarget;
-          entries.push({ kind: "card", target: step.voiceTarget, displayRank: step.displayRank });
+          entries.push({ kind: "card", targetLabel: step.confirmationLabel, displayRank: step.displayRank });
           continue;
         }
         // workflow — preflight already proved each of these feasible; this

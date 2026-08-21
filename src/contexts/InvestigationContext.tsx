@@ -554,6 +554,19 @@ export function InvestigationProvider({
           type: "correction",
           message: "Undo: reverted last change",
         });
+        // EyeOnPit 1.10 Phase 6 — a whole-round snapshot restore is also
+        // how undoing a bare Split (no card yet entered on Hand 2, so
+        // there's no CardEvent for the context-aware branch above to find)
+        // is reached — see splitSeat's own pushHistory call. If the
+        // restored round no longer has the split hand the active target
+        // currently points at, redirect back to that seat's primary hand
+        // rather than leaving a stale negative target that would silently
+        // reject every subsequent bare-card continuation. Never fires for
+        // an ordinary card/seat-config undo, which never removes a split
+        // hand at all.
+        if (typeof activeTarget === "number" && activeTarget < 0 && !entry.round.splitHands[-activeTarget]) {
+          setActiveTarget(-activeTarget);
+        }
         await refresh();
       } else if (entry.kind === "seat-config") {
         setFuture((f) => [snapshotSeatConfig(investigation), ...f]);
@@ -581,7 +594,7 @@ export function InvestigationProvider({
     } finally {
       setBusy(false);
     }
-  }, [investigation, currentRound, cardEvents, activeTarget, history, refresh]);
+  }, [investigation, currentRound, cardEvents, activeTarget, history, refresh, setActiveTarget]);
 
   /**
    * Redo is never context-aware by design — it always reapplies whatever
@@ -794,7 +807,15 @@ export function InvestigationProvider({
       try {
         pushHistory(snapshotSeatConfig(investigation));
         await markSeatEmptyRepo(investigation.localId, seatNumber);
-        if (activeTarget === seatNumber) setActiveTarget("dealer");
+        // EyeOnPit 1.10 Phase 6 — markSeatEmptyRepo clears BOTH the seat's
+        // primary hand and its split hand for the current round (see that
+        // function's own implementation), so the active target must be
+        // redirected whether it was the positive primary-hand form or the
+        // negative split-hand form (splitTargetFor(seatNumber)) — a bare
+        // `activeTarget === seatNumber` check alone leaves a stale
+        // negative target that would silently reject every subsequent
+        // bare-card continuation instead of failing loudly.
+        if (activeTarget === seatNumber || activeTarget === -seatNumber) setActiveTarget("dealer");
         await refresh();
       } finally {
         setBusy(false);

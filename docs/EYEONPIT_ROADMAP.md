@@ -1508,6 +1508,13 @@ gate.
    Field Test gate above closes on the current browser baseline; run
    the benchmark corpus (same doc §6) against any candidate before it is
    approved.
+   **2026-08-21: long-term native/multilingual voice architecture
+   designed (documentation only, zero code) — see
+   `docs/EYEONPIT_NATIVE_VOICE_SPEC.md`.** Chrome/Sherpa/Whisper are now
+   treated as research/reference providers under this direction; further
+   deep provider-specific patching is paused pending the architecture
+   review that spec calls for. Sequence above is unchanged until that
+   review actually starts real implementation work.
 10. Build-out on top of the now-existing foundation: property metadata
    management UI, AI-narrative review/edit UI, `/lab` creation flows (add
    method, add scenario).

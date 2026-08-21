@@ -89,6 +89,12 @@ export default function LabHomePage() {
       icon: Mic,
       description: "ASR evaluation only — Sherpa-ONNX vs. Chrome, raw transcripts, no CardEvents written, nothing connected to a live investigation.",
     },
+    {
+      href: "/lab/native-voice-test",
+      label: "Native Voice Prototype 0.1",
+      icon: Mic,
+      description: "Prototype 0.1 — Vosk, grammar-constrained, offline. 7 English phrases -> UniversalCommand. Never writes a CardEvent.",
+    },
   ];
 
   return (

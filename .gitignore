@@ -59,3 +59,19 @@ next-env.d.ts
 # testing 2026-08-20 — unlike sherpa-onnx, which has no such requirement).
 # 33MB is comfortably under Vercel's 100MB Hobby/1GB Pro source-upload
 # limit, unlike sherpa-onnx's ~204MB bundle.
+
+# vosk-model-small-en-us-0.15 (Apache-2.0, ~39.3MB, repacked as a gzipped
+# tar with a top-level "model/" dir per vosk-browser's documented format;
+# sha256 8067729ab10947eed53a0571d1956e4834f22f650c7a7e1dbf3cd3dfa24d4633)
+# IS committed — see voskProvider.ts's own ASSET DEPLOYMENT doc comment. The
+# vosk-browser WASM RUNTIME is NOT a separate committed asset: unlike
+# whisper.cpp/sherpa-onnx, it's imported as an ordinary npm package
+# (single-threaded — no SharedArrayBuffer/pthread/COOP/COEP requirement,
+# confirmed by inspecting the published bundle) and bundled by Next.js like
+# any other dependency; its own Worker is spawned from a same-origin
+# blob: URL embedded in that bundle, never a cross-origin script URL, so
+# none of Whisper's `new Worker(crossOriginUrl)` SecurityError applies. No
+# Vercel Blob credentials were available this round to host the model
+# externally (unlike sherpa-onnx); ~39.3MB is comfortably under Vercel's
+# 100MB source-upload limit, so direct commit is the same accepted fallback
+# already used for whisper-cpp-lab.

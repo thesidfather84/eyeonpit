@@ -21,6 +21,12 @@ const eslintConfig = defineConfig([
     // ASSET DEPLOYMENT doc comment). Not our code; nothing here is ever
     // edited.
     "public/whisper-cpp-lab/**",
+    // Same treatment for the vendored, unmodified vosk-browser WASM build +
+    // Vosk small-English model (gitignored elsewhere is NOT applied here —
+    // see voskProvider.ts's ASSET DEPLOYMENT doc comment; committed like
+    // whisper-cpp-lab, not sherpa-onnx-lab). Not our code; nothing here is
+    // ever edited.
+    "public/vosk-lab/**",
   ]),
 ]);
 

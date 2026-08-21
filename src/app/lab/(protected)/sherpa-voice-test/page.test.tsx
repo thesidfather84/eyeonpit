@@ -9,8 +9,9 @@
 // 2026-08-20 Lab UX fix under real React state/render behavior, not a
 // reimplementation of it.
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SherpaVoiceTestPage from "./page";
+import { __resetWhisperSessionForTests } from "@/lib/voice/whisperCppProvider";
 
 function phraseHeading(): string {
   return screen.getByRole("heading", { level: 2, name: /Phrase \d+ of \d+/ }).textContent ?? "";
@@ -223,5 +224,113 @@ describe("Sherpa A/B/C Lab page — Copy JSON confirmation feedback", () => {
     expect(screen.getByRole("button", { name: /Copy failed/ })).toBeTruthy();
 
     vi.useRealTimers();
+  });
+});
+
+// REGRESSION, 2026-08-21 — real production bug: Whisper loaded and reached
+// "listening" successfully, but a full Start Phrase -> speak -> End Phrase
+// cycle produced NO record at all — records: [] and aggregatesByConfig: []
+// in the export, even after a real phrase attempt. Root cause was in this
+// Lab page's own provider (whisperCppProvider.ts), not in Whisper
+// inference: stop() removed its message listener before the isolated
+// origin's own (necessarily asynchronous) reply could arrive, so any
+// transcript that hadn't already arrived during listening was silently
+// discarded. See whisperCppProvider.ts's own REGRESSION doc comment above
+// stop() for the full mechanism. This test proves the FULL real path this
+// page cares about — Start Phrase, a real postMessage reply sequence, End
+// Phrase, and a genuinely late-arriving whisper:final — actually lands in
+// `records` and therefore in the JSON export, exactly like Sherpa/Chrome
+// results already did.
+describe("Whisper record lifecycle — REGRESSION: a full Start/End Phrase cycle must produce a captured record", () => {
+  const WHISPER_ORIGIN = "https://whisper-static-lab.vercel.app";
+  let contentWindowSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    __resetWhisperSessionForTests();
+    contentWindowSpy = vi
+      .spyOn(window.HTMLIFrameElement.prototype, "contentWindow", "get")
+      .mockReturnValue({ postMessage: vi.fn() } as unknown as Window);
+  });
+  afterEach(() => {
+    contentWindowSpy.mockRestore();
+    __resetWhisperSessionForTests();
+  });
+
+  function dispatchFromWhisper(data: unknown) {
+    window.dispatchEvent(new MessageEvent("message", { data, origin: WHISPER_ORIGIN }));
+  }
+
+  it("whisper:final arriving AFTER End Phrase was clicked still creates a record with provider/expectedPhrase/finalText/timing/classification, and it appears in the JSON export", async () => {
+    render(<SherpaVoiceTestPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Whisper \(Experimental\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Start Phrase/ }));
+
+    await act(async () => {
+      await Promise.resolve();
+      document.querySelector("iframe")?.dispatchEvent(new Event("load"));
+      await Promise.resolve();
+      dispatchFromWhisper({ type: "whisper:status", status: "listening" });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Last error").nextElementSibling?.textContent).toBe("—");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /End Phrase/ }));
+      await Promise.resolve();
+    });
+
+    // The real regression: this reply arrives AFTER End Phrase was
+    // clicked, exactly matching the isolated origin's own forced-finalize
+    // sequence (real, non-instant whisper_full() work — see
+    // command_force_finalize() in emscripten.cpp).
+    await act(async () => {
+      dispatchFromWhisper({ type: "whisper:final", text: "Dealer has a king" });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(/Captured results \(1\)/)).toBeTruthy();
+
+    const exportJson = JSON.parse((document.querySelector("textarea") as HTMLTextAreaElement).value);
+    expect(exportJson.records).toHaveLength(1);
+    const record = exportJson.records[0];
+    expect(record.provider).toBe("whisper-cpp");
+    expect(record.expectedPhrase).toBe("Dealer");
+    expect(record.finalText).toBe("Dealer has a king");
+    expect(record.finalMs).toEqual(expect.any(Number));
+    expect(record.classification).not.toBeNull();
+    expect(record.error).toBeNull();
+  });
+
+  it("whisper:error (no speech detected) arriving after End Phrase still creates a record — a recognition failure is never silently dropped", async () => {
+    render(<SherpaVoiceTestPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Whisper \(Experimental\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Start Phrase/ }));
+
+    await act(async () => {
+      await Promise.resolve();
+      document.querySelector("iframe")?.dispatchEvent(new Event("load"));
+      await Promise.resolve();
+      dispatchFromWhisper({ type: "whisper:status", status: "listening" });
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /End Phrase/ }));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      dispatchFromWhisper({ type: "whisper:error", message: "no speech detected" });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(/Captured results \(1\)/)).toBeTruthy();
+    const exportJson = JSON.parse((document.querySelector("textarea") as HTMLTextAreaElement).value);
+    expect(exportJson.records).toHaveLength(1);
+    expect(exportJson.records[0].provider).toBe("whisper-cpp");
+    expect(exportJson.records[0].error).toBe("no speech detected");
   });
 });

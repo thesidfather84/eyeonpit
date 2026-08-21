@@ -250,6 +250,23 @@ export const WHISPER_IFRAME_READY_TIMEOUT_MESSAGE =
 export const DEFAULT_WHISPER_READY_TIMEOUT_MS = 20000;
 
 /**
+ * REGRESSION, 2026-08-21 — real production bug: End Phrase must always
+ * resolve to a definitive outcome (a transcript, or an explicit
+ * "no speech"/error) rather than silently producing nothing. The isolated
+ * origin's own End Phrase handling (see index.html) always replies with
+ * exactly one whisper:final or whisper:error when no result was already
+ * sent during listening; this bounds the wait for that reply so a
+ * genuinely unreachable/crashed iframe still surfaces a real, disclosed
+ * error (and therefore a real captured record) instead of hanging
+ * End Phrase forever.
+ */
+export const END_PHRASE_NO_REPLY_MESSAGE =
+  "whisper iframe did not confirm End Phrase (no whisper:final or whisper:error reply) — the isolated Whisper origin may have become unreachable mid-session";
+
+/** A forced end-of-phrase transcription (up to 4s of audio, single-threaded) is real work, not instant — this only bounds an otherwise-infinite wait if the reply never arrives at all. */
+export const STOP_REPLY_TIMEOUT_MS = 8000;
+
+/**
  * Bounds `readyPromise` with a real timeout, rejecting with
  * `WHISPER_IFRAME_READY_TIMEOUT_MESSAGE` if it neither resolves nor
  * rejects in time. Never resolves/rejects twice.
@@ -307,6 +324,20 @@ interface WhisperIframeSession {
 // doc comment above), and reusing one iframe avoids re-fetching the
 // ~31MB model on every phrase.
 let session: WhisperIframeSession | null = null;
+
+/**
+ * TEST-ONLY. This session is deliberately module-scope (see the doc
+ * comment above) so it survives across phrases within one real page
+ * load — but that means it ALSO survives across tests within one test
+ * file, which real testing found causes cross-test contamination (a
+ * later test's `start()` silently reusing an earlier test's already-
+ * "loaded" iframe/session, short-circuiting the very message sequence
+ * the test meant to exercise). Never called from production code.
+ */
+export function __resetWhisperSessionForTests(): void {
+  session?.iframeEl.remove();
+  session = null;
+}
 
 function ensureSession(origin: string): WhisperIframeSession {
   if (session && session.origin === origin) return session;
@@ -397,9 +428,29 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
   const detection = detectAmbientWhisperCppSupport();
   const supported = detection.iframeEmbedding;
 
+  // REGRESSION, 2026-08-21 — real production bug: End Phrase used to send
+  // whisper:end-phrase and remove this provider's message listener in the
+  // SAME synchronous call. Any whisper:final/whisper:error the isolated
+  // origin sent in response to that end-phrase — which, before the
+  // matching harness fix (see index.html's own endPhrase() doc comment),
+  // was the ONLY way a result could arrive if whisper.cpp's own VAD never
+  // fired during listening — arrived asynchronously, after the listener
+  // was already gone. The transcript (or even an explicit failure) was
+  // silently discarded: no record, nothing in the export, no error
+  // surfaced anywhere. `phase` tracks this explicitly so stop() knows
+  // whether to wait for a definitive reply before detaching, instead of
+  // detaching unconditionally.
+  type Phase = "idle" | "starting" | "listening" | "stopping";
+  let phase: Phase = "idle";
   let running = false;
   let suppressed = false;
-  let audioStartFired = false;
+  // Whether a real whisper:final/whisper:error has already been received
+  // THIS phrase (VAD fired during listening, before End Phrase was even
+  // clicked). The harness's own endPhrase() checks the equivalent state
+  // on its side (`lastTranscribed`) and does NOT send a second
+  // final/error when one was already sent — so when this is already
+  // true, stop() must not wait for another one (none is coming).
+  let resultReceivedThisPhrase = false;
   let activeSession: WhisperIframeSession | null = null;
   let activeListener: WhisperMessageListener | null = null;
 
@@ -411,14 +462,25 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
   function onSessionMessage(msg: WhisperInboundMessage) {
     if (suppressed) return;
     if (msg.type === "whisper:status") {
-      if (msg.status === "listening" && !audioStartFired) {
-        audioStartFired = true;
+      if (msg.status === "listening" && phase === "starting") {
+        phase = "listening";
         options.onAudioStart?.();
         options.onSpeechStart?.();
       }
-    } else if (msg.type === "whisper:final") {
+      return;
+    }
+    // A whisper:error while phase is "starting" is handled exclusively by
+    // start()'s own temporary readiness-wait listener below (which
+    // rejects and drives a single onError via the catch block) — handling
+    // it here too would double-fire onError (and, per this round's
+    // record-per-failure requirement, create two records for one
+    // failure).
+    if (phase !== "listening" && phase !== "stopping") return;
+    if (msg.type === "whisper:final") {
+      resultReceivedThisPhrase = true;
       emitFinal(msg.text);
     } else if (msg.type === "whisper:error") {
+      resultReceivedThisPhrase = true;
       options.onError?.(msg.message);
     }
   }
@@ -430,7 +492,8 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
     }
     if (running) return;
     running = true;
-    audioStartFired = false;
+    phase = "starting";
+    resultReceivedThisPhrase = false;
     const sess = ensureSession(whisperOrigin);
     sess.listeners.add(onSessionMessage);
     activeSession = sess;
@@ -457,6 +520,7 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
       );
     } catch (err) {
       running = false;
+      phase = "idle";
       discardSessionOnFailure(sess);
       sess.listeners.delete(onSessionMessage);
       activeSession = null;
@@ -468,14 +532,59 @@ export function createWhisperCppProvider(options: WhisperCppProviderOptions): Sp
 
   function stop(): void {
     running = false;
-    if (activeSession) {
-      activeSession.postToIframe({ type: "whisper:end-phrase" });
-      if (activeListener) activeSession.listeners.delete(activeListener);
-    }
+    const sess = activeSession;
+    const listener = activeListener;
     activeSession = null;
     activeListener = null;
-    audioStartFired = false;
-    options.onAudioEnd?.();
+
+    if (!sess || !listener) {
+      phase = "idle";
+      options.onAudioEnd?.();
+      return;
+    }
+
+    if (resultReceivedThisPhrase) {
+      // VAD already produced a real result during listening, and this
+      // provider already emitted it — the harness will NOT send a second
+      // final/error for this End Phrase (see index.html's own
+      // endPhrase()), so there is nothing further to wait for.
+      phase = "idle";
+      sess.listeners.delete(listener);
+      sess.postToIframe({ type: "whisper:end-phrase" });
+      options.onAudioEnd?.();
+      return;
+    }
+
+    // No result yet — the harness is guaranteed to force-finalize and
+    // reply with exactly one whisper:final or whisper:error (see
+    // index.html's own endPhrase() doc comment). Keep listening (phase
+    // stays a value onSessionMessage still acts on) until that reply
+    // arrives, or until a bounded timeout — which itself surfaces a real,
+    // disclosed onError rather than a silent nothing — before detaching.
+    phase = "stopping";
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      phase = "idle";
+      sess.listeners.delete(listener);
+      sess.listeners.delete(onEndReply);
+      options.onAudioEnd?.();
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      options.onError?.(END_PHRASE_NO_REPLY_MESSAGE);
+      finish();
+    }, STOP_REPLY_TIMEOUT_MS);
+    const onEndReply: WhisperMessageListener = (msg) => {
+      if (settled) return;
+      if (msg.type === "whisper:final" || msg.type === "whisper:error") {
+        clearTimeout(timer);
+        finish();
+      }
+    };
+    sess.listeners.add(onEndReply);
+    sess.postToIframe({ type: "whisper:end-phrase" });
   }
 
   return {

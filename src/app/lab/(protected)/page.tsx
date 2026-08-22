@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   Beaker,
   BookOpen,
+  Camera,
   FlaskConical,
   LineChart,
   ListChecks,
@@ -100,6 +101,12 @@ export default function LabHomePage() {
       label: "🎤 Mic Check",
       icon: Mic,
       description: "Provider-independent raw microphone diagnostic — permission, live level meter, local playback test. No upload, no persistence.",
+    },
+    {
+      href: "/lab/vision",
+      label: "📷 Vision Lab",
+      icon: Camera,
+      description: "Enterprise Vision foundation (1.15a) — local camera/image test, VisionProvider boundary. Never writes to an investigation, no cloud processing.",
     },
   ];
 

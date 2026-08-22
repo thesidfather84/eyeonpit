@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { ArrowLeftRight, Headphones } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
@@ -9,6 +10,8 @@ import { InvestigationReportsView } from "./InvestigationReportsView";
 import { CountSummaryPanel } from "./CountSummaryPanel";
 import { FloorPlayField } from "./FloorPlayField";
 import { ActiveSeatHeader } from "./ActiveSeatHeader";
+import { PlayerDetailBar } from "./PlayerDetailBar";
+import { PlayerDetailSheet } from "./PlayerDetailSheet";
 import { RoundControlsRow } from "./RoundControlsRow";
 import { CardEntryPad } from "./CardEntryPad";
 import { LiveMenu } from "./LiveMenu";
@@ -24,22 +27,29 @@ import { VoiceControlErrorBoundary } from "./VoiceControlErrorBoundary";
  * is a smaller, voice-first arrangement of exactly the same building
  * blocks LiveScreen already uses (CountSummaryPanel, ActiveSeatHeader,
  * RoundControlsRow, CardEntryPad, VoiceControl), deliberately leaving out
- * the table graphic, wager panel, and player-actions row that LiveScreen
- * shows — Floor Mode's whole premise is that the phone stays in a pocket
- * most of the time, driven by voice, with the manual keypad only as the
- * fallback when voice is unavailable, inaccurate, too noisy, or
- * inappropriate. This is intentionally the minimum useful shell, not a
- * feature-complete alternative to Surveillance; wager entry, player
- * actions, and notes remain Surveillance-only for now (reachable any time
- * via the Surveillance link below — nothing about the investigation is
- * gated by which shell most recently viewed it).
+ * the table graphic that LiveScreen shows — Floor Mode's whole premise is
+ * that the phone stays in a pocket most of the time, driven by voice, with
+ * the manual keypad only as the fallback when voice is unavailable,
+ * inaccurate, too noisy, or inappropriate. This is intentionally the
+ * minimum useful shell, not a feature-complete alternative to Surveillance;
+ * notes remain Surveillance-only for now (reachable any time via the
+ * Surveillance link below — nothing about the investigation is gated by
+ * which shell most recently viewed it).
  *
  * FloorPlayField (below CountSummaryPanel) is the one addition beyond that
- * original set — a compact, low-attention dealer/seat summary so the
- * operator can confirm what a narration was just heard as without leaving
- * Floor Mode for Surveillance's full table. It is deliberately NOT
- * SeatTilesRow/TableMap; see that component's own doc comment for the
- * scope line between the two.
+ * original set — a compact, low-attention dealer/seat summary (occupancy,
+ * wager, cards) so the operator can confirm what a narration was just
+ * heard as without leaving Floor Mode for Surveillance's full table. It is
+ * deliberately NOT SeatTilesRow/TableMap; see that component's own doc
+ * comment for the scope line between the two. Its own one-shot Edit Mode
+ * (AGENTS.md 1.14b) reuses SeatOptionsSheet unchanged for Mark Empty/Link/
+ * player-label — the same sheet Surveillance's TableMap opens.
+ *
+ * PlayerDetailBar/PlayerDetailSheet (AGENTS.md 1.14b §7-9) are the exact
+ * same components LiveScreen mounts, wired with the identical
+ * activeSeatEnabled gate — wager entry/change and Double/Split/Insurance/
+ * Surrender are real Floor operations now, not Surveillance-only. No new
+ * wager store, mutation path, or component was created for this.
  *
  * `<LiveMenu mode="floor" />` (operator-loop milestone) closes what was
  * previously a real gap: Pause/Resume, New Shoe, Misdeal, End Investigation
@@ -76,6 +86,13 @@ export function FloorScreen() {
   const { investigation, activeTarget } = useInvestigationContext();
   const isOnline = useOnlineStatus();
   const isClosed = investigation.status === "closed";
+  const activeSeat = typeof activeTarget === "number" ? activeTarget : null;
+  // Same gate LiveScreen uses — wager/action controls need a real seat
+  // record to act on. Split targets are negative seat numbers, always tied
+  // to an already-occupied seat.
+  const activeSeatEnabled =
+    activeSeat != null && investigation.occupiedSeats.includes(Math.abs(activeSeat));
+  const [playerDetailOpen, setPlayerDetailOpen] = useState(false);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -142,7 +159,20 @@ export function FloorScreen() {
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <CardEntryPad terminology="spot" />
             <RoundControlsRow floorMode />
+            {activeSeatEnabled && (
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <PlayerDetailBar target={activeSeat!} onOpen={() => setPlayerDetailOpen(true)} />
+              </div>
+            )}
           </div>
+
+          {activeSeatEnabled && (
+            <PlayerDetailSheet
+              open={playerDetailOpen}
+              onClose={() => setPlayerDetailOpen(false)}
+              target={activeSeat!}
+            />
+          )}
 
           <VoiceControlErrorBoundary>
             <VoiceControl floorMode />

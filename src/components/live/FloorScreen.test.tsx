@@ -591,8 +591,8 @@ describe("FloorScreen — operator usability cleanup: no bare internal seat iden
   });
 });
 
-describe("FloorScreen — stays the stripped-down field instrument even with an active, occupied seat", () => {
-  it("no wager chips, no player-action buttons, and no permanent deck-preset row — Floor never grows Surveillance's full wager/player-detail surface", async () => {
+describe("FloorScreen — wager/player-action controls (AGENTS.md 1.14b) stay collapsed by default, same progressive disclosure as Surveillance", () => {
+  it("the collapsed PlayerDetailBar trigger is present for an active occupied seat, but its wager chips/player-action buttons stay hidden until opened", async () => {
     const investigationId = await freshInvestigationId();
     const { occupySeat, updateInvestigation } = await import("@/lib/db/repositories/investigations");
     await occupySeat(investigationId, 1);
@@ -605,12 +605,81 @@ describe("FloorScreen — stays the stripped-down field instrument even with an 
     );
 
     await screen.findByTestId("active-seat-header");
+    // 1.14b: Floor Mode gained the exact same PlayerDetailBar/Sheet
+    // LiveScreen uses — real wager entry and Double/Split/Insurance are now
+    // reachable, but collapsed behind one compact row by default, so the
+    // primary card-entry surface stays uncluttered.
+    await screen.findByTestId("player-detail-bar");
     expect(screen.queryByRole("button", { name: "$25" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Double" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Split" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Insurance" })).toBeNull();
-    expect(screen.queryByTestId("player-detail-bar")).toBeNull();
     expect(screen.queryByText("Decks")).toBeNull();
+  });
+
+  it("tapping the collapsed bar reveals the exact same QuickBetPanel/PlayerActionsRow controls LiveScreen uses", async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat, updateInvestigation } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 1);
+    await updateInvestigation(investigationId, { activeTarget: 1 });
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const bar = await screen.findByTestId("player-detail-bar");
+    await act(async () => {
+      bar.click();
+    });
+
+    await screen.findByRole("button", { name: "$25" });
+    screen.getByRole("button", { name: "Double" });
+    screen.getByRole("button", { name: "Split" });
+    screen.getByRole("button", { name: "Insurance" });
+  });
+
+  it("a wager change made through Floor's QuickBetPanel is reachable by the SAME global Undo RoundControlsRow already exposes for card entry", async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat, updateInvestigation, getInvestigation } = await import(
+      "@/lib/db/repositories/investigations"
+    );
+    await occupySeat(investigationId, 1);
+    await updateInvestigation(investigationId, { activeTarget: 1 });
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const bar = await screen.findByTestId("player-detail-bar");
+    await act(async () => {
+      bar.click();
+    });
+    const chip25 = await screen.findByRole("button", { name: "$25" });
+    await act(async () => {
+      chip25.click();
+    });
+
+    await waitFor(async () => {
+      const updated = await getInvestigation(investigationId);
+      expect(updated!.rounds[0].seats[1]?.betAmount).toBe(25);
+    });
+
+    // A Floor-originated wager change is real history, reachable by the
+    // SAME global Undo card entry already uses (RoundControlsRow's own
+    // undo()/canUndo — see InvestigationContext.integration.test.tsx for
+    // that mechanism's own thorough, independent coverage; this only
+    // proves Floor's new wager wiring feeds it, not that Undo itself is
+    // correct). Polled — the DB write lands before React's own history
+    // state/re-render necessarily has, so a synchronous check right after
+    // the DB-level waitFor above can race under heavier parallel test load.
+    await waitFor(() => {
+      const undoButton = screen.getByTitle(/undo/i) as HTMLButtonElement;
+      expect(undoButton.disabled).toBe(false);
+    });
   });
 });
 

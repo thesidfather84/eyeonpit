@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeftRight, Headphones } from "lucide-react";
+import { ArrowLeftRight, Headphones, Home } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { formatLiveStatusLine } from "@/lib/utils/gameConfig";
@@ -96,10 +96,13 @@ export function FloorScreen() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      <div className="flex flex-none items-center justify-between gap-1.5 border-b border-border bg-surface px-2 py-1.5">
+      <div className="flex flex-none flex-wrap items-center justify-between gap-1.5 gap-y-1 border-b border-border bg-surface px-2 py-1.5">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <Headphones className="h-4 w-4 shrink-0 text-accent" aria-hidden />
           <span className="shrink-0 text-[11px] font-bold text-foreground">FLOOR</span>
+          <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
+            {investigation.displayId}
+          </span>
           <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-muted-foreground">
             {formatLiveStatusLine(investigation)}
           </span>
@@ -119,7 +122,18 @@ export function FloorScreen() {
             + New
           </button>
         ) : (
-          <div className="flex shrink-0 items-center gap-1.5">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+            {/* Home (AGENTS.md 1.14b UX correction round §1) — same plain
+                Link to /app as Surveillance's LiveHeader, same existing
+                fresh/recoverable/none lifecycle decides what happens next. */}
+            <Link
+              href="/app"
+              aria-label="Home"
+              title="Home"
+              className="tap-target flex items-center gap-1 rounded-md border border-border bg-surface-raised px-2 text-[11px] font-medium text-foreground"
+            >
+              <Home className="h-3.5 w-3.5" aria-hidden /> Home
+            </Link>
             <Link
               href={`/investigations/${investigation.localId}/live`}
               className="tap-target flex items-center gap-1 rounded-md border border-border bg-surface-raised px-2 text-[11px] font-medium text-foreground"
@@ -150,20 +164,25 @@ export function FloorScreen() {
 
           <ActiveSeatHeader target={activeTarget} terminology="spot" />
 
-          {/* Card entry before operational actions (Floor Mode operator
+          {/* BET, directly below the active-target statement and above the
+              keypad (AGENTS.md 1.14b UX correction round §4) — real-device
+              feedback found this control unreachable without scrolling past
+              the card keypad first. It's the single most common Floor
+              action after card entry itself, so it now gets flex-none,
+              always-visible placement, never competing with the keypad for
+              scroll space. */}
+          {activeSeatEnabled && (
+            <PlayerDetailBar target={activeSeat!} onOpen={() => setPlayerDetailOpen(true)} />
+          )}
+
+          {/* Card entry before round-control operations (Floor Mode operator
               usability cleanup, information-hierarchy pass): an operator's eye
-              moves from "what's active" straight to "how do I enter a card,"
-              with Done/Next/Undo reachable right below once a card is in — not
-              the reverse, which put round controls between the active-target
-              banner and the keypad they don't act on. */}
+              moves from "what's active"/"what's the bet" straight to "how do I
+              enter a card," with Done/Next/Undo reachable right below once a
+              card is in. */}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <CardEntryPad terminology="spot" />
             <RoundControlsRow floorMode />
-            {activeSeatEnabled && (
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                <PlayerDetailBar target={activeSeat!} onOpen={() => setPlayerDetailOpen(true)} />
-              </div>
-            )}
           </div>
 
           {activeSeatEnabled && (

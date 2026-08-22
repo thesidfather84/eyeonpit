@@ -105,6 +105,32 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
     expect(surveillanceLink.getAttribute("href")).toBe(`/investigations/${investigationId}/live`);
   });
 
+  it("AGENTS.md 1.14b UX correction round §2 — displays the same investigation/report ID Surveillance shows, visible but secondary", async () => {
+    const investigationId = await freshInvestigationId();
+    const { getInvestigation } = await import("@/lib/db/repositories/investigations");
+    const inv = await getInvestigation(investigationId);
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    await screen.findByText(inv!.displayId);
+  });
+
+  it("AGENTS.md 1.14b UX correction round §1 — has a single-tap, clearly labeled Home link back to the main entry point", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const home = await screen.findByRole("link", { name: "Home" });
+    expect(home.getAttribute("href")).toBe("/app");
+  });
+
   it("manual card entry works through the exact same CardEntryPad/ledger LiveScreen uses", async () => {
     const investigationId = await freshInvestigationId();
     render(
@@ -274,7 +300,7 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
 });
 
 describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
-  it("shows the dealer and all seven seats at a glance, empty seats reading as a dash", async () => {
+  it("shows the dealer and all seven seats at a glance, empty seats reading as EMPTY in plain words (AGENTS.md 1.14b UX correction round §6 — never rely on a bare dash/color alone)", async () => {
     const investigationId = await freshInvestigationId();
     render(
       <InvestigationProvider investigationId={investigationId}>
@@ -288,7 +314,7 @@ describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
     for (let seat = 1; seat <= 7; seat++) {
       const seatButton = within(field).getByTestId(`floor-seat-${seat}`);
       expect(seatButton.getAttribute("aria-label")).toBe(`Spot ${seat}, empty`);
-      expect(within(seatButton).getByText("—")).toBeTruthy();
+      expect(within(seatButton).getByText("EMPTY")).toBeTruthy();
       // Floor Mode operator usability cleanup — visible label reads "SPOT n",
       // never the bare internal identifier "Sn" (see FloorPlayField's own
       // doc comment on `terminology`).
@@ -680,6 +706,84 @@ describe("FloorScreen — wager/player-action controls (AGENTS.md 1.14b) stay co
       const undoButton = screen.getByTitle(/undo/i) as HTMLButtonElement;
       expect(undoButton.disabled).toBe(false);
     });
+  });
+});
+
+describe("FloorScreen — bet entry is discoverable from the seat interaction itself (AGENTS.md 1.14b UX correction round §4)", () => {
+  it("the bet control leads with BET/SET BET, not the old generic PLAYER DETAILS label an operator wouldn't associate with wagers", async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat, updateInvestigation } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 1);
+    await updateInvestigation(investigationId, { activeTarget: 1 });
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const bar = await screen.findByTestId("player-detail-bar");
+    expect(bar.textContent).toContain("SET BET");
+  });
+
+  it("the bet control is reachable WITHOUT scrolling past the card keypad — it renders before CardEntryPad in DOM order, not after RoundControlsRow", async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat, updateInvestigation } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 1);
+    await updateInvestigation(investigationId, { activeTarget: 1 });
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const bar = await screen.findByTestId("player-detail-bar");
+    const keypad = await screen.findByRole("button", { name: "A" });
+    // DOCUMENT_POSITION_FOLLOWING means `keypad` comes after `bar` in the tree.
+    expect(bar.compareDocumentPosition(keypad) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("selecting a freshly-occupied spot via a normal tap immediately surfaces the bet control — no separate discovery step", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const seat3 = await screen.findByTestId("floor-seat-3");
+    await act(async () => {
+      seat3.click();
+    });
+
+    const bar = await screen.findByTestId("player-detail-bar");
+    expect(bar.textContent).toContain("SET BET");
+  });
+
+  it("once a bet is set, the seat tile itself shows the amount without opening details (AGENTS.md 1.14b UX correction round §5)", async () => {
+    const investigationId = await freshInvestigationId();
+    const { occupySeat, updateInvestigation } = await import("@/lib/db/repositories/investigations");
+    await occupySeat(investigationId, 3);
+    await updateInvestigation(investigationId, { activeTarget: 3 });
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorScreen />
+      </InvestigationProvider>
+    );
+
+    const bar = await screen.findByTestId("player-detail-bar");
+    await act(async () => {
+      bar.click();
+    });
+    const chip25 = await screen.findByRole("button", { name: "$25" });
+    await act(async () => {
+      chip25.click();
+    });
+
+    const seatTile = await screen.findByTestId("floor-seat-3");
+    await waitFor(() => expect(within(seatTile).getByText("$25")).toBeTruthy());
   });
 });
 

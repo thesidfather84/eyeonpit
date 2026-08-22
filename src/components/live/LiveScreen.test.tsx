@@ -49,6 +49,35 @@ function renderLive(investigationId: string) {
   );
 }
 
+describe("LiveScreen — Home navigation (AGENTS.md 1.14b UX correction round §1)", () => {
+  it("has a single-tap, clearly labeled Home link back to the main entry point, using the existing lifecycle rather than a new navigation system", async () => {
+    const investigationId = await freshInvestigationId();
+    renderLive(investigationId);
+
+    const home = await screen.findByRole("link", { name: "Home" });
+    expect(home.getAttribute("href")).toBe("/app");
+  });
+
+  it("also has an equally obvious link to switch to Floor Mode — mode navigation is symmetric with Floor's own Surveillance link", async () => {
+    const investigationId = await freshInvestigationId();
+    renderLive(investigationId);
+
+    const floorLink = await screen.findByRole("link", { name: "Switch to Floor Mode" });
+    expect(floorLink.getAttribute("href")).toBe(`/investigations/${investigationId}/floor`);
+  });
+
+  it("states its own current mode plainly (SURVEILLANCE), always visible, not hidden behind a breakpoint", async () => {
+    const investigationId = await freshInvestigationId();
+    const { container } = renderLive(investigationId);
+
+    await screen.findByText("SURVEILLANCE");
+    // Unlike the brand wordmark, the mode label itself is never `hidden ...
+    // sm:inline` — it must read on a narrow phone exactly as it does on desktop.
+    const label = Array.from(container.querySelectorAll("span")).find((s) => s.textContent === "SURVEILLANCE");
+    expect(label?.className).not.toMatch(/\bhidden\b/);
+  });
+});
+
 describe("LiveScreen — no permanent deck-preset configuration row", () => {
   it("the old 'Decks' preset row is gone; Decks Remaining (a live count value) is unaffected and Quick Setup still reaches deck configuration", async () => {
     const investigationId = await freshInvestigationId();
@@ -108,13 +137,13 @@ describe("LiveScreen — wager/player actions collapse to one compact entry poin
     await waitFor(() => within(dialog).getByText("$25"));
   });
 
-  it("a compact bar with no wager yet reads PLAYER DETAILS; once a bet is placed it leads with the amount", async () => {
+  it("a compact bar with no wager yet reads SET BET; once a bet is placed it leads with BET and the amount", async () => {
     const investigationId = await freshInvestigationId();
     await occupyAndActivate(investigationId, 1);
     renderLive(investigationId);
 
     const bar = await screen.findByTestId("player-detail-bar");
-    expect(bar.textContent).toContain("PLAYER DETAILS");
+    expect(bar.textContent).toContain("SET BET");
     expect(bar.textContent).not.toContain("$");
 
     await act(async () => {
@@ -125,7 +154,7 @@ describe("LiveScreen — wager/player actions collapse to one compact entry poin
       within(dialog).getByRole("button", { name: "$25" }).click();
     });
 
-    await waitFor(() => expect(bar.textContent).toContain("$25"));
+    await waitFor(() => expect(bar.textContent).toContain("BET $25"));
   });
 });
 

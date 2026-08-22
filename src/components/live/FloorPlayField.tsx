@@ -106,13 +106,25 @@ export function FloorPlayField() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-x-1.5 gap-y-0.5 short:grid-cols-4">
+      <div className="grid grid-cols-2 gap-x-1.5 gap-y-1 short:grid-cols-4 short:gap-y-0.5">
         {([1, 2, 3, 4, 5, 6, 7] as const).map((seat) => {
           const isOccupied = investigation.occupiedSeats.includes(seat);
           const isActive = activeTarget === seat;
           const record = currentRound.seats[seat];
           const cards = record?.playerCards ?? [];
           const bet = record?.betAmount;
+          const hasBet = isOccupied && bet != null && bet > 0;
+
+          // Occupancy/active state (AGENTS.md 1.14b UX correction round §6)
+          // — never color alone: EMPTY keeps a dashed outline and no fill,
+          // OCCUPIED gets a solid border AND a filled background, ACTIVE
+          // additionally gets the thicker 2px border it already had. Seat
+          // number stays the largest, boldest text in the tile.
+          const toneClasses = isActive
+            ? "border-2 border-accent-secondary bg-accent-secondary/15"
+            : isOccupied
+              ? "border border-status-green/70 bg-status-green/10"
+              : "border border-dashed border-border/60 bg-transparent";
 
           return (
             <button
@@ -123,30 +135,36 @@ export function FloorPlayField() {
                 editMode
                   ? `Spot ${seat} options`
                   : isActive
-                    ? `Spot ${seat}, active`
+                    ? `Spot ${seat}, active${hasBet ? `, bet $${bet}` : ""}`
                     : isOccupied
-                      ? `Spot ${seat}, occupied`
+                      ? `Spot ${seat}, occupied${hasBet ? `, bet $${bet}` : ""}`
                       : `Spot ${seat}, empty`
               }
               data-testid={`floor-seat-${seat}`}
               style={{ touchAction: "manipulation" }}
-              className={`flex min-w-0 items-center justify-between rounded-md px-1.5 py-0.5 text-left ${
-                isActive ? "bg-accent-secondary/15" : isOccupied ? "bg-status-green/10" : "bg-transparent"
-              } ${editMode ? "outline outline-2 outline-offset-1 outline-accent" : ""}`}
+              className={`flex min-w-0 flex-col gap-0 rounded-md px-1.5 py-1 text-left short:py-0.5 ${toneClasses} ${
+                editMode ? "outline outline-2 outline-offset-1 outline-accent" : ""
+              }`}
             >
               <span
-                className={`truncate text-[10px] font-bold leading-none ${
+                className={`truncate text-xs font-extrabold leading-none short:text-[11px] ${
                   isActive ? "text-accent-secondary" : isOccupied ? "text-status-green" : "text-muted-foreground"
                 }`}
               >
                 {isActive ? `ACTIVE · SPOT ${seat}` : `SPOT ${seat}`}
               </span>
-              <span className="flex shrink-0 items-center gap-1 text-[10px] leading-none text-muted-foreground">
-                {isOccupied && bet != null && bet > 0 && (
-                  <span className="font-semibold text-foreground">${bet}</span>
-                )}
-                <span>{isOccupied ? (cards.length > 0 ? cards.map(formatCard).join(" ") : "—") : "—"}</span>
-              </span>
+              {isOccupied ? (
+                <>
+                  <span className={`text-sm font-extrabold leading-tight ${hasBet ? "text-foreground" : "text-muted-foreground"}`}>
+                    {hasBet ? `$${bet}` : "NO BET"}
+                  </span>
+                  <span className="truncate text-[10px] leading-none text-muted-foreground">
+                    {cards.length > 0 ? cards.map(formatCard).join(" ") : "—"}
+                  </span>
+                </>
+              ) : (
+                <span className="text-[10px] leading-none text-muted-foreground">EMPTY</span>
+              )}
             </button>
           );
         })}

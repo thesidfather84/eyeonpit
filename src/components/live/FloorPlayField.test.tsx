@@ -180,3 +180,68 @@ describe("CASE K — player movement via Floor's UI: Seat 3 leaves, Seat 5 sits"
     });
   });
 });
+
+describe("Occupancy visibility — EMPTY/OCCUPIED/ACTIVE stay visually distinct beyond color alone (AGENTS.md 1.14b UX correction round §6)", () => {
+  it("an empty seat reads EMPTY in plain words and uses a dashed, unfilled border", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorPlayField />
+      </InvestigationProvider>
+    );
+
+    const seat1 = await screen.findByTestId("floor-seat-1");
+    expect(seat1.textContent).toContain("EMPTY");
+    expect(seat1.className).toMatch(/border-dashed/);
+  });
+
+  it("an occupied, non-active seat gets a solid filled border distinct from the empty state's dashed one", async () => {
+    const investigationId = await freshInvestigationId();
+    await occupySeat(investigationId, 1);
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorPlayField />
+      </InvestigationProvider>
+    );
+
+    const seat1 = await screen.findByTestId("floor-seat-1");
+    expect(seat1.className).not.toMatch(/border-dashed/);
+    expect(seat1.className).toMatch(/border-status-green/);
+    expect(seat1.textContent).not.toContain("EMPTY");
+  });
+
+  it("the active target gets its own distinct accent border/fill, different from a merely-occupied seat", async () => {
+    const investigationId = await freshInvestigationId();
+    await occupySeat(investigationId, 1);
+    const { updateInvestigation } = await import("@/lib/db/repositories/investigations");
+    await updateInvestigation(investigationId, { activeTarget: 1 });
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorPlayField />
+      </InvestigationProvider>
+    );
+
+    const seat1 = await screen.findByTestId("floor-seat-1");
+    expect(seat1.className).toMatch(/border-accent-secondary/);
+    expect(seat1.className).not.toMatch(/border-status-green/);
+    expect(seat1.textContent).toContain("ACTIVE");
+  });
+
+  it("the seat number is always present and bold, regardless of state, remaining the strongest identifier", async () => {
+    const investigationId = await freshInvestigationId();
+    await occupySeat(investigationId, 3);
+
+    render(
+      <InvestigationProvider investigationId={investigationId}>
+        <FloorPlayField />
+      </InvestigationProvider>
+    );
+
+    const seat1 = await screen.findByTestId("floor-seat-1"); // empty
+    const seat3 = await screen.findByTestId("floor-seat-3"); // occupied
+    expect(seat1.textContent).toContain("SPOT 1");
+    expect(seat3.textContent).toContain("SPOT 3");
+  });
+});

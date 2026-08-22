@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, Pause, Play, Settings2 } from "lucide-react";
+import Link from "next/link";
+import { Eye, Headphones, Home, Pause, Play, Settings2 } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { useElapsedTimer } from "@/hooks/useElapsedTimer";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
@@ -49,6 +50,7 @@ export function LiveHeader() {
         <LiveMenu />
         <Eye className="h-4 w-4 shrink-0 text-accent" aria-hidden />
         <span className="hidden shrink-0 text-xs font-bold text-foreground sm:inline">EyeOnPit</span>
+        <span className="shrink-0 text-[11px] font-bold text-foreground">SURVEILLANCE</span>
         <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
           {investigation.displayId}
         </span>
@@ -68,7 +70,32 @@ export function LiveHeader() {
         <CountSummaryPanel />
       </div>
 
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+        {!isClosed && (
+          <Link
+            href={`/investigations/${investigation.localId}/floor`}
+            aria-label="Switch to Floor Mode"
+            title="Floor Mode"
+            className="tap-target flex items-center gap-1 rounded-md border border-border bg-surface-raised px-2 text-[11px] font-medium text-foreground"
+          >
+            <Headphones className="h-3.5 w-3.5" aria-hidden /> Floor
+          </Link>
+        )}
+        {/* Home (AGENTS.md 1.14b UX correction round §1) — the one
+            consistent, always-obvious escape from either shell back to the
+            main entry point. A plain Link to /app, not a new navigation
+            system: ConsoleShell's existing fresh/recoverable/none lifecycle
+            (see investigationLifecycle.ts) decides what happens next — an
+            active investigation is picked back up exactly as it was, never
+            silently destroyed. */}
+        <Link
+          href="/app"
+          aria-label="Home"
+          title="Home"
+          className="tap-target flex items-center gap-1 rounded-md border border-border bg-surface-raised px-2 text-[11px] font-medium text-foreground"
+        >
+          <Home className="h-3.5 w-3.5" aria-hidden /> Home
+        </Link>
         <span
           className="shrink-0"
           aria-label={isOnline ? "Online" : "Offline — saved locally"}

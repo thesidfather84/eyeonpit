@@ -31,11 +31,11 @@ function countColorClass(value: number | null): string {
 }
 
 /**
- * The count strip — embedded directly in LiveHeader (its own compact
- * second line in portrait, inline in the same row as everything else once
- * there's enough width for landscape/desktop). It receives one calculated
- * CountSnapshot from the counting engine and only formats/renders it — it
- * never calculates a count itself.
+ * The count dashboard (AGENTS.md operational UI rebuild §4) — one shared
+ * panel, reused unchanged between Surveillance and Floor, directly below
+ * OperationalHeader. It receives one calculated CountSnapshot from the
+ * counting engine and only formats/renders it — it never calculates a
+ * count itself, and no count calculation changed for this rebuild.
  *
  * Two-tier layout, deliberately: a centered PRIMARY block (system label
  * over a large, bold RC/TC pair — the one thing an operator glancing at
@@ -63,7 +63,10 @@ export function CountSummaryPanel() {
   const acesSeen = activeEventsInOrder(shoeEvents).filter((event) => event.rank === "A").length;
 
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div
+      data-testid="count-dashboard"
+      className="flex flex-none flex-col items-center gap-1.5 border-b border-border bg-surface px-3 py-2.5"
+    >
       <div className="flex flex-col items-center gap-0">
         <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground short:text-[8px]">
           {ABBR[primary]}

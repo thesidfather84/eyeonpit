@@ -50,7 +50,7 @@ describe("Split-hand UX — unsplit seats are completely unchanged", () => {
     await occupyAndActivate(investigationId, 2);
     renderLive(investigationId);
 
-    const header = await screen.findByTestId("active-seat-header");
+    const header = await screen.findByTestId("active-seat-panel");
     within(header).getByText(/SPOT 2/);
     expect(screen.queryByTestId("select-hand-1")).toBeNull();
     expect(screen.queryByTestId("select-hand-2")).toBeNull();
@@ -58,16 +58,16 @@ describe("Split-hand UX — unsplit seats are completely unchanged", () => {
     expect(screen.queryByText("HAND 2")).toBeNull();
   });
 
-  it("the compact player-detail bar and dialog title are unchanged for an unsplit seat (existing behavior preserved)", async () => {
+  it("the CHANGE BET button and dialog title are unchanged for an unsplit seat (existing behavior preserved)", async () => {
     const investigationId = await freshInvestigationId();
     await occupyAndActivate(investigationId, 1);
     renderLive(investigationId);
 
-    const bar = await screen.findByTestId("player-detail-bar");
-    expect(bar.textContent).not.toContain("HAND");
+    const changeBet = await screen.findByTestId("change-bet-button");
+    expect(changeBet.textContent).not.toContain("HAND");
 
     await act(async () => {
-      bar.click();
+      changeBet.click();
     });
     await screen.findByRole("dialog", { name: "Spot 1 — Player Details" });
     expect(screen.queryByText(/Actions below apply to/)).toBeNull();
@@ -89,7 +89,7 @@ describe("Split-hand UX — a split seat clearly shows both hands", () => {
     const investigationId = await setUp();
     renderLive(investigationId);
 
-    const header = await screen.findByTestId("active-seat-header");
+    const header = await screen.findByTestId("active-seat-panel");
     within(header).getByText("HAND 1");
     within(header).getByText("HAND 2");
     // The primary label is never bare "H1"/"H2" — only the fully spelled-out form.
@@ -101,7 +101,7 @@ describe("Split-hand UX — a split seat clearly shows both hands", () => {
     const investigationId = await setUp();
     renderLive(investigationId);
 
-    const header = await screen.findByTestId("active-seat-header");
+    const header = await screen.findByTestId("active-seat-panel");
     // Hand 1 is the currently active target right after a split (activeTarget stays the primary seat).
     const hand1Button = within(header).getByTestId("select-hand-1");
     const hand2Button = within(header).getByTestId("select-hand-2");
@@ -109,11 +109,11 @@ describe("Split-hand UX — a split seat clearly shows both hands", () => {
     expect(hand2Button.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("selecting HAND 2 makes it the active target — the header, bar, and dialog all reflect it", async () => {
+  it("selecting HAND 2 makes it the active target — the header and dialog both reflect it", async () => {
     const investigationId = await setUp();
     renderLive(investigationId);
 
-    const header = await screen.findByTestId("active-seat-header");
+    const header = await screen.findByTestId("active-seat-panel");
     await act(async () => {
       within(header).getByTestId("select-hand-2").click();
     });
@@ -121,11 +121,9 @@ describe("Split-hand UX — a split seat clearly shows both hands", () => {
     await waitFor(() => expect(within(header).getByTestId("select-hand-2").getAttribute("aria-pressed")).toBe("true"));
     expect(within(header).getByTestId("select-hand-1").getAttribute("aria-pressed")).toBe("false");
 
-    const bar = screen.getByTestId("player-detail-bar");
-    expect(bar.textContent).toContain("HAND 2");
-
+    const changeBet = within(header).getByTestId("change-bet-button");
     await act(async () => {
-      bar.click();
+      changeBet.click();
     });
     await screen.findByRole("dialog", { name: "Spot 3 · Hand 2 — Player Details" });
   });
@@ -134,7 +132,7 @@ describe("Split-hand UX — a split seat clearly shows both hands", () => {
     const investigationId = await setUp();
     renderLive(investigationId);
 
-    const header = await screen.findByTestId("active-seat-header");
+    const header = await screen.findByTestId("active-seat-panel");
     await act(async () => {
       within(header).getByTestId("select-hand-2").click();
     });
@@ -146,8 +144,12 @@ describe("Split-hand UX — a split seat clearly shows both hands", () => {
 
     await waitFor(() => expect(within(header).getByTestId("select-hand-1").getAttribute("aria-pressed")).toBe("true"));
     expect(within(header).getByTestId("select-hand-2").getAttribute("aria-pressed")).toBe("false");
-    const bar = screen.getByTestId("player-detail-bar");
-    expect(bar.textContent).toContain("HAND 1");
+
+    const changeBet = within(header).getByTestId("change-bet-button");
+    await act(async () => {
+      changeBet.click();
+    });
+    await screen.findByRole("dialog", { name: "Spot 3 · Hand 1 — Player Details" });
   });
 
   it("the seat tile's own H2 badge is a real, working shortcut directly to Hand 2 from the table overview", async () => {
@@ -159,7 +161,7 @@ describe("Split-hand UX — a split seat clearly shows both hands", () => {
       badge.click();
     });
 
-    const header = await screen.findByTestId("active-seat-header");
+    const header = await screen.findByTestId("active-seat-panel");
     await waitFor(() => expect(within(header).getByTestId("select-hand-2").getAttribute("aria-pressed")).toBe("true"));
   });
 
@@ -167,15 +169,15 @@ describe("Split-hand UX — a split seat clearly shows both hands", () => {
     const investigationId = await setUp();
     renderLive(investigationId);
 
-    const header = await screen.findByTestId("active-seat-header");
+    const header = await screen.findByTestId("active-seat-panel");
     await act(async () => {
       within(header).getByTestId("select-hand-2").click();
     });
     await waitFor(() => expect(within(header).getByTestId("select-hand-2").getAttribute("aria-pressed")).toBe("true"));
 
-    const bar = screen.getByTestId("player-detail-bar");
+    const changeBet = within(header).getByTestId("change-bet-button");
     await act(async () => {
-      bar.click();
+      changeBet.click();
     });
     const dialog = await screen.findByRole("dialog", { name: "Spot 3 · Hand 2 — Player Details" });
     within(dialog).getByText("Actions below apply to Hand 2 only");
@@ -204,7 +206,7 @@ describe("Split-hand UX — a split seat clearly shows both hands", () => {
     });
     await waitFor(() => expect(within(header).getByTestId("select-hand-1").getAttribute("aria-pressed")).toBe("true"));
     await act(async () => {
-      screen.getByTestId("player-detail-bar").click();
+      within(header).getByTestId("change-bet-button").click();
     });
     const hand1Dialog = await screen.findByRole("dialog", { name: "Spot 3 · Hand 1 — Player Details" });
     await waitFor(() =>
@@ -212,24 +214,20 @@ describe("Split-hand UX — a split seat clearly shows both hands", () => {
     );
   });
 
-  it("both HAND 1 and HAND 2 controls are simultaneously present in the DOM regardless of the short: (landscape) CSS variant — no orientation-specific JS branch drops either one", async () => {
+  it("both HAND 1 and HAND 2 controls are simultaneously present in the DOM regardless of viewport — no orientation-specific JS branch drops either one", async () => {
     const investigationId = await setUp();
     renderLive(investigationId);
 
-    // This component never conditionally RENDERS based on orientation —
-    // only Tailwind's `short:` variant classes adjust sizing/spacing, which
-    // never removes an element from the DOM. Both controls being present
-    // and both carrying the same `short:min-h-11` class on the same
-    // elements (not a second, orientation-only copy) is the actual
-    // guarantee that landscape never loses either hand's control.
-    const header = await screen.findByTestId("active-seat-header");
+    // This component never conditionally RENDERS based on orientation — both
+    // controls are unconditionally in the JSX (not a second, orientation-only
+    // copy), which is the actual guarantee that landscape/short viewports
+    // never lose either hand's control.
+    const header = await screen.findByTestId("active-seat-panel");
     const hand1 = within(header).getByTestId("select-hand-1");
     const hand2 = within(header).getByTestId("select-hand-2");
-    expect(hand1.className).toContain("short:min-h-11");
-    expect(hand2.className).toContain("short:min-h-11");
     // Both real touch targets, not just visually hinted at — at least the
-    // app-wide accessible minimum in every mode.
-    expect(hand1.className).toMatch(/min-h-12/);
-    expect(hand2.className).toMatch(/min-h-12/);
+    // app-wide accessible minimum.
+    expect(hand1.className).toMatch(/min-h-11/);
+    expect(hand2.className).toMatch(/min-h-11/);
   });
 });

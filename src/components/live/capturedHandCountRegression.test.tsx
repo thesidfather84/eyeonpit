@@ -175,9 +175,13 @@ describe("captured-hand regression — Seat5:A,10 · Seat6:10,A · Dealer:10,5 �
   it("Floor's count display shows the same -3 — one ledger, not a second Floor-only calculation", async () => {
     const investigationId = await buildCapturedHandInvestigation();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
     await waitFor(() => expect(screen.getByLabelText("HI-LO running count").textContent).toBe("-3"));
   });
@@ -249,9 +253,13 @@ describe("requirement #6 — Floor and Surveillance are two views of one investi
     const investigationId = await buildCapturedHandInvestigation(); // -3 already recorded
 
     const floorRender = render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
     await waitFor(() => expect(screen.getByLabelText("HI-LO running count").textContent).toBe("-3"));
 

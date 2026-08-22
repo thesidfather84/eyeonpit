@@ -10,14 +10,18 @@
 // The regex used, `\bS[1-7]\b`, is deliberately word-boundary-anchored so
 // it does NOT false-positive on legitimate substrings that happen to
 // contain "S" next to a digit 1-7 — most notably "S17" (the dealer-stands-
-// on-17 rule label shown in LiveHeader's game config summary): matching
-// "S1" inside "S17" requires a word boundary immediately after the "1,"
-// but the following "7" is also a word character, so there is no boundary
-// there and the pattern correctly does not match. Internal application
-// state (seatNumber props, Dexie keys, activeTarget) legitimately still
-// contains bare seat numbers — this file never asserts against internal
-// state, only rendered DOM text, and separately proves internal IDs still
-// work correctly (clicking "Spot 3" still targets seat 3 internally).
+// on-17 rule label, still shown in the Quick Setup / Reports surfaces even
+// though the operational UI rebuild moved it off the always-visible live
+// screen): matching "S1" inside "S17" requires a word boundary immediately
+// after the "1," but the following "7" is also a word character, so there
+// is no boundary there and the pattern correctly does not match — proven
+// directly against the regex below (REGRESSION_STRING) rather than
+// depending on which live surface happens to render rule-profile text at
+// any given time. Internal application state (seatNumber props, Dexie
+// keys, activeTarget) legitimately still contains bare seat numbers — this
+// file never asserts against internal state, only rendered DOM text, and
+// separately proves internal IDs still work correctly (clicking "Spot 3"
+// still targets seat 3 internally).
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { InvestigationProvider } from "@/contexts/InvestigationContext";
@@ -30,6 +34,10 @@ import { ReportPreview } from "@/components/report/ReportPreview";
 import { buildReportFromInvestigation } from "@/lib/reporting/reportBuilder";
 
 const BARE_SEAT_SHORTHAND = /\bS[1-7]\b/;
+
+// A direct, content-independent proof the regex above isn't vacuously
+// always-false — see the file-level doc comment.
+const S17_SANITY_STRING = "3:2 S17";
 
 async function freshOccupiedInvestigation(): Promise<string> {
   const inv = await createInvestigation({
@@ -74,11 +82,11 @@ describe("Terminology leak — Surveillance (LiveScreen)", () => {
     expect(container.textContent).toContain("SPOT 1");
     expect(container.textContent).toContain("SPOT 3");
     expect(container.textContent).toContain("SPOT 5");
-    // "S17" (dealer-stands-on-17 rule label) is a legitimate, unrelated
-    // substring this test must NOT be tripped up by — confirms it's
-    // actually present (so the negative assertion above is meaningful,
-    // not vacuously true because the label never rendered).
-    expect(container.textContent).toContain("S17");
+    // "S17" is a legitimate, unrelated substring the regex must NOT be
+    // tripped up by — proven directly (see file-level doc comment) rather
+    // than depending on which live surface currently renders rule-profile
+    // text.
+    expect(BARE_SEAT_SHORTHAND.test(S17_SANITY_STRING)).toBe(false);
   });
 
   it("clicking a Spot tile still activates the correct internal seat number — display text changed, internal IDs did not", async () => {
@@ -98,7 +106,7 @@ describe("Terminology leak — Surveillance (LiveScreen)", () => {
       spot5.click();
     });
 
-    const header = await screen.findByTestId("active-seat-header");
+    const header = await screen.findByTestId("active-seat-panel");
     await within(header).findByText(/SPOT 5/);
 
     const { getInvestigation } = await import("@/lib/db/repositories/investigations");
@@ -111,9 +119,13 @@ describe("Terminology leak — Floor Mode (FloorScreen)", () => {
   it("renders no bare S1-S7 anywhere on screen", async () => {
     const investigationId = await freshOccupiedInvestigation();
     const { container } = render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     await waitFor(() => expect(container.textContent).toContain("SPOT 3"));

@@ -92,11 +92,11 @@ describe("End & Review — landing on the just-finished investigation (operator-
     // underneath the Reports overlay) — Hi-Lo -1 for one king.
     await waitFor(() => expect(screen.getByLabelText("HI-LO running count").textContent).toBe("-1"));
 
-    // Investigation identity is visible too (LiveHeader's own displayId).
+    // Investigation identity is visible too (InvestigationIdFooter's own displayId).
     const inv = await import("@/lib/db/repositories/investigations").then((m) =>
       m.getInvestigation(investigationId)
     );
-    screen.getByText(inv!.displayId);
+    expect(screen.getByTestId("investigation-id-footer").textContent).toContain(inv!.displayId);
 
     // Confirms the report explicitly says the investigation is closed and
     // evidence-preserved, rather than showing a now-redundant "Complete
@@ -120,16 +120,16 @@ describe("End & Review — landing on the just-finished investigation (operator-
 
     await screen.findByText("Round-by-Round Evidence");
 
-    // "+ New" (Return Home) replaces Pause/Resume once closed — LiveHeader's
-    // own isClosed branch, unaffected by this correction, still does its job.
-    const returnHome = screen.getByRole("button", { name: "+ New" });
+    // Return Home is the shared BottomNavigation's Home link — unconditional,
+    // present regardless of isClosed, never hidden behind Reports.
+    const returnHome = screen.getByRole("link", { name: "Home" });
     expect(returnHome).toBeTruthy();
 
-    // The menu itself (History/Export/Settings/Help) is unconditionally
-    // mounted regardless of isClosed — see LiveHeader's own doc comment —
-    // so closing Reports and reopening the menu still works.
-    const menuButton = screen.getByRole("button", { name: "Menu" });
-    expect(menuButton).toBeTruthy();
+    // History/Export (and Settings, via its own BottomNavigation button) are
+    // unconditionally mounted regardless of isClosed — so closing Reports
+    // and reopening the More sheet still works.
+    const moreButton = screen.getByRole("button", { name: "More" });
+    expect(moreButton).toBeTruthy();
   });
 
   it("PRIORITY 1.9-6/8/9: the Reports content is NOT a dismissible overlay for a closed investigation — there is no live console underneath to reveal by closing anything", async () => {
@@ -155,7 +155,7 @@ describe("End & Review — landing on the just-finished investigation (operator-
     // never rendered for a closed investigation, confirmed directly rather
     // than inferred from an overlay's dismiss behavior.
     expect(screen.queryByRole("button", { name: "A" })).toBeNull(); // card rank button
-    expect(screen.queryByTestId("active-seat-header")).toBeNull();
+    expect(screen.queryByTestId("active-seat-panel")).toBeNull();
   });
 
   it("PRIORITY 1.9-8: reload-after-completion regression — a fresh render against an already-closed investigation shows Reports directly, driven only by investigation.status, never a query param", async () => {

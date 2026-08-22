@@ -4,6 +4,9 @@ import { useState } from "react";
 import { Pencil } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { formatCard } from "@/lib/utils/cards";
+import { formatCurrency } from "@/lib/utils/currency";
+import { seatToneClasses } from "@/lib/utils/seatTileTone";
+import { legacyOverflowSeatNumbersFor, seatNumbersFor } from "@/lib/utils/seats";
 import { SeatOptionsSheet } from "./SeatOptionsSheet";
 
 /**
@@ -46,6 +49,15 @@ export function FloorPlayField() {
 
   const dealerCards = currentRound.dealerHand.cards;
   const isDealerActive = activeTarget === "dealer";
+  // The table's configured spot count (5, 6, or 7 — see QuickSetupSheet),
+  // same list Surveillance's arch renders, plus any legacy/overflow
+  // positions this investigation already has recorded data on (a table
+  // reconfigured down mid-investigation, or a pre-arch investigation with
+  // positions 8-10) — never a hardcoded 1-7, and never silently dropped.
+  const visibleSeatNumbers = [
+    ...seatNumbersFor(investigation),
+    ...legacyOverflowSeatNumbersFor(investigation, currentRound),
+  ];
 
   function handleSeatTap(seat: number) {
     if (editMode) {
@@ -90,13 +102,14 @@ export function FloorPlayField() {
           aria-pressed={editMode}
           data-testid="floor-edit-mode-toggle"
           style={{ touchAction: "manipulation" }}
-          className={`tap-target ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${
+          className={`tap-target ml-1 flex shrink-0 items-center gap-1 rounded-full border px-2.5 ${
             editMode
               ? "border-accent bg-accent text-accent-foreground"
               : "border-border bg-surface-raised text-muted-foreground"
           }`}
         >
-          <Pencil className="h-3 w-3" aria-hidden />
+          <Pencil className="h-3.5 w-3.5" aria-hidden />
+          <span className="text-[10px] font-semibold">Edit</span>
         </button>
       </div>
 
@@ -107,7 +120,7 @@ export function FloorPlayField() {
       )}
 
       <div className="grid grid-cols-2 gap-x-1.5 gap-y-1 short:grid-cols-4 short:gap-y-0.5">
-        {([1, 2, 3, 4, 5, 6, 7] as const).map((seat) => {
+        {visibleSeatNumbers.map((seat) => {
           const isOccupied = investigation.occupiedSeats.includes(seat);
           const isActive = activeTarget === seat;
           const record = currentRound.seats[seat];
@@ -115,16 +128,10 @@ export function FloorPlayField() {
           const bet = record?.betAmount;
           const hasBet = isOccupied && bet != null && bet > 0;
 
-          // Occupancy/active state (AGENTS.md 1.14b UX correction round §6)
-          // — never color alone: EMPTY keeps a dashed outline and no fill,
-          // OCCUPIED gets a solid border AND a filled background, ACTIVE
-          // additionally gets the thicker 2px border it already had. Seat
-          // number stays the largest, boldest text in the tile.
-          const toneClasses = isActive
-            ? "border-2 border-accent-secondary bg-accent-secondary/15"
-            : isOccupied
-              ? "border border-status-green/70 bg-status-green/10"
-              : "border border-dashed border-border/60 bg-transparent";
+          // Shared EMPTY/OCCUPIED/ACTIVE vocabulary (AGENTS.md operational
+          // UI rebuild §5/§6/§20) — the same helper SeatTilesRow uses, so a
+          // seat never looks meaningfully different between shells.
+          const toneClasses = seatToneClasses(isActive ? "active" : isOccupied ? "occupied" : "empty");
 
           return (
             <button
@@ -156,7 +163,7 @@ export function FloorPlayField() {
               {isOccupied ? (
                 <>
                   <span className={`text-sm font-extrabold leading-tight ${hasBet ? "text-foreground" : "text-muted-foreground"}`}>
-                    {hasBet ? `$${bet}` : "NO BET"}
+                    {hasBet ? formatCurrency(bet!) : "NO BET"}
                   </span>
                   <span className="truncate text-[10px] leading-none text-muted-foreground">
                     {cards.length > 0 ? cards.map(formatCard).join(" ") : "—"}

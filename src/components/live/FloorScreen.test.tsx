@@ -93,9 +93,13 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
   it("shows compact identity/status, reuses the same count engine output as Surveillance, and links back to Surveillance", async () => {
     const investigationId = await freshInvestigationId();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     await screen.findByText("FLOOR");
@@ -111,20 +115,30 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
     const inv = await getInvestigation(investigationId);
 
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
-    await screen.findByText(inv!.displayId);
+    await waitFor(() => {
+      expect(screen.getByTestId("investigation-id-footer").textContent).toContain(inv!.displayId);
+    });
   });
 
   it("AGENTS.md 1.14b UX correction round §1 — has a single-tap, clearly labeled Home link back to the main entry point", async () => {
     const investigationId = await freshInvestigationId();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     const home = await screen.findByRole("link", { name: "Home" });
@@ -134,10 +148,14 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
   it("manual card entry works through the exact same CardEntryPad/ledger LiveScreen uses", async () => {
     const investigationId = await freshInvestigationId();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-        <RoundProbe />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+        <InvestigationProvider investigationId={investigationId}>
+          <FloorScreen />
+          <RoundProbe />
+        </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     const aceButton = await screen.findByRole("button", { name: "A" });
@@ -152,10 +170,14 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
   it("Done/Next/Undo reuse the exact same round-control handlers RoundControlsRow already exposes on Surveillance", async () => {
     const investigationId = await freshInvestigationId();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-        <RoundProbe />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+        <InvestigationProvider investigationId={investigationId}>
+          <FloorScreen />
+          <RoundProbe />
+        </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     const aceButton = await screen.findByRole("button", { name: "A" });
@@ -174,10 +196,14 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
   it("operator-loop correction: tapping Done once in Floor completes the round AND starts exactly one next round — no second Next required, no duplicate round created", async () => {
     const investigationId = await freshInvestigationId();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-        <RoundProbe />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+        <InvestigationProvider investigationId={investigationId}>
+          <FloorScreen />
+          <RoundProbe />
+        </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     const kingButton = await screen.findByRole("button", { name: "10" });
@@ -272,27 +298,34 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
 
     const investigationId = await freshInvestigationId();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-        <SelectSeatOnMount />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+        <InvestigationProvider investigationId={investigationId}>
+          <FloorScreen />
+          <SelectSeatOnMount />
+        </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
-    // ActiveSeatHeader is the ONE place that states the active target now —
-    // "SPOT 3" / "ENTER CARDS" in Floor Mode. PRIORITY 1.9-10: Surveillance's
-    // own instance of this same component says "SPOT 3" too now (the new
-    // global default) — see ActiveSeatHeader's own doc comment on the
-    // `terminology` prop.
+    // ActiveSeatPanel is the ONE place that states the active target's
+    // BET/CARDS/STATUS now — "SPOT 3" in Floor Mode. CardEntryPad's own
+    // "ENTER CARDS FOR SPOT 3" heading names the same target for the
+    // keypad specifically, without repeating ActiveSeatPanel's own facts.
     await waitFor(() => screen.getByText("SPOT 3"));
-    screen.getByText("ENTER CARDS");
+    await waitFor(() => screen.getByText("ENTER CARDS FOR SPOT 3"));
   });
 
   it("the large mic control (VoiceControl) is present, same as Surveillance", async () => {
     const investigationId = await freshInvestigationId();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     await screen.findByRole("button", { name: "Start voice command" });
@@ -302,10 +335,19 @@ describe("FloorScreen — minimal Floor Mode shell", () => {
 describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
   it("shows the dealer and all seven seats at a glance, empty seats reading as EMPTY in plain words (AGENTS.md 1.14b UX correction round §6 — never rely on a bare dash/color alone)", async () => {
     const investigationId = await freshInvestigationId();
+    // Explicitly configured for 7 spots — the default table config is 6
+    // (see PLAYER_SPOT_COUNT_OPTIONS), this test exercises the full arch
+    // including the optional Position 7.
+    const { updateInvestigation } = await import("@/lib/db/repositories/investigations");
+    await updateInvestigation(investigationId, { playerSpotCount: 7 });
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     const field = await screen.findByTestId("floor-play-field");
@@ -326,9 +368,13 @@ describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
   it("tapping an empty seat in the play field occupies AND selects it — same production path as the seat map's own tap handler", async () => {
     const investigationId = await freshInvestigationId();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     const field = await screen.findByTestId("floor-play-field");
@@ -339,16 +385,16 @@ describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
 
     await waitFor(() => expect(seat2.getAttribute("aria-label")).toBe("Spot 2, active"));
     expect(within(seat2).getByText("ACTIVE · SPOT 2")).toBeTruthy();
-    // ActiveSeatHeader (an existing, separately-tested component) renders
+    // ActiveSeatPanel (an existing, separately-tested component) renders
     // once a seat becomes the active target — its appearance here confirms
     // the play field drove the SAME context state, not a parallel one.
     // occupySeat auto-creates a player group ("SPOT 2 · P1" in Floor Mode),
     // so this matches on the seat identity via regex rather than an exact
-    // string. Scoped to the header itself since FloorPlayField's own "ACTIVE
+    // string. Scoped to the panel itself since FloorPlayField's own "ACTIVE
     // · SPOT 2" label (just asserted above) would otherwise also match a
     // document-wide search for the same text.
-    const header = await screen.findByTestId("active-seat-header");
-    await waitFor(() => within(header).getByText(/SPOT 2/));
+    const panel = await screen.findByTestId("active-seat-panel");
+    await waitFor(() => within(panel).getByText(/SPOT 2/));
   });
 
   it("tapping an already-occupied seat just selects it (no re-occupy, no duplicate player group)", async () => {
@@ -356,9 +402,13 @@ describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
     const { occupySeat } = await import("@/lib/db/repositories/investigations");
     await occupySeat(investigationId, 4);
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     const field = await screen.findByTestId("floor-play-field");
@@ -374,9 +424,13 @@ describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
   it("cards entered through the manual keypad for the dealer and a seat show up in the play field immediately — same round/display state, no separate data model", async () => {
     const investigationId = await freshInvestigationId();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     const field = await screen.findByTestId("floor-play-field");
@@ -394,9 +448,13 @@ describe("FloorScreen — compact play-field summary (FloorPlayField)", () => {
   it('a natural narration ("seat two five") is immediately visible in the play field — one glance confirms what EyeOnPit heard', async () => {
     const investigationId = await freshInvestigationId();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     const field = await screen.findByTestId("floor-play-field");
@@ -550,12 +608,19 @@ describe("FloorScreen — operator usability cleanup: no bare internal seat iden
     // component can render for a seat row.
     await occupySeat(investigationId, 2);
     await occupySeat(investigationId, 5);
-    await updateInvestigation(investigationId, { activeTarget: 5 });
+    // Explicitly configured for 7 spots so this loop's coverage up to seat 7
+    // (including the optional Position 7) still applies — the default table
+    // config is 6 (see PLAYER_SPOT_COUNT_OPTIONS).
+    await updateInvestigation(investigationId, { activeTarget: 5, playerSpotCount: 7 });
 
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     const field = await screen.findByTestId("floor-play-field");
@@ -569,7 +634,7 @@ describe("FloorScreen — operator usability cleanup: no bare internal seat iden
     // The active-target header (a completely separate component) must be
     // equally clean — this is the banner an operator is most likely to
     // glance at for "where does the next card go."
-    const header = screen.getByTestId("active-seat-header");
+    const header = screen.getByTestId("active-seat-panel");
     expect(within(header).queryByText(/^S5\b/)).toBeNull();
     within(header).getByText(/^SPOT 5\b/);
   });
@@ -584,9 +649,13 @@ describe("FloorScreen — operator usability cleanup: no bare internal seat iden
     await updateInvestigation(investigationId, { activeTarget: 6 });
 
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     await screen.findByText("SPOT 6");
@@ -617,56 +686,32 @@ describe("FloorScreen — operator usability cleanup: no bare internal seat iden
   });
 });
 
-describe("FloorScreen — wager/player-action controls (AGENTS.md 1.14b) stay collapsed by default, same progressive disclosure as Surveillance", () => {
-  it("the collapsed PlayerDetailBar trigger is present for an active occupied seat, but its wager chips/player-action buttons stay hidden until opened", async () => {
+describe("FloorScreen — wager entry via ActiveSeatPanel, never a hidden tap (AGENTS.md operational UI rebuild §4/§8/§9, supersedes 1.14b's PlayerDetailBar)", () => {
+  it("BET is always visible for an active occupied seat, and the QuickBetPanel chips are exposed directly in the workspace — but PlayerActionsRow controls are NOT present until CHANGE BET/SET BET is tapped", async () => {
     const investigationId = await freshInvestigationId();
     const { occupySeat, updateInvestigation } = await import("@/lib/db/repositories/investigations");
     await occupySeat(investigationId, 1);
     await updateInvestigation(investigationId, { activeTarget: 1 });
 
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
-    await screen.findByTestId("active-seat-header");
-    // 1.14b: Floor Mode gained the exact same PlayerDetailBar/Sheet
-    // LiveScreen uses — real wager entry and Double/Split/Insurance are now
-    // reachable, but collapsed behind one compact row by default, so the
-    // primary card-entry surface stays uncluttered.
-    await screen.findByTestId("player-detail-bar");
-    expect(screen.queryByRole("button", { name: "$25" })).toBeNull();
+    const panel = await screen.findByTestId("active-seat-panel");
+    within(panel).getByText("SET BET");
+    expect(await screen.findByRole("button", { name: "$25" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Double" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Split" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Insurance" })).toBeNull();
-    expect(screen.queryByText("Decks")).toBeNull();
   });
 
-  it("tapping the collapsed bar reveals the exact same QuickBetPanel/PlayerActionsRow controls LiveScreen uses", async () => {
-    const investigationId = await freshInvestigationId();
-    const { occupySeat, updateInvestigation } = await import("@/lib/db/repositories/investigations");
-    await occupySeat(investigationId, 1);
-    await updateInvestigation(investigationId, { activeTarget: 1 });
-
-    render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
-    );
-
-    const bar = await screen.findByTestId("player-detail-bar");
-    await act(async () => {
-      bar.click();
-    });
-
-    await screen.findByRole("button", { name: "$25" });
-    screen.getByRole("button", { name: "Double" });
-    screen.getByRole("button", { name: "Split" });
-    screen.getByRole("button", { name: "Insurance" });
-  });
-
-  it("a wager change made through Floor's QuickBetPanel is reachable by the SAME global Undo RoundControlsRow already exposes for card entry", async () => {
+  it("tapping SET BET reveals PlayerActionsRow controls (Double/Split/Insurance) LiveScreen also uses, and a wager change made through the sheet's own chip is reachable by the SAME global Undo", async () => {
     const investigationId = await freshInvestigationId();
     const { occupySeat, updateInvestigation, getInvestigation } = await import(
       "@/lib/db/repositories/investigations"
@@ -675,16 +720,26 @@ describe("FloorScreen — wager/player-action controls (AGENTS.md 1.14b) stay co
     await updateInvestigation(investigationId, { activeTarget: 1 });
 
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
-    const bar = await screen.findByTestId("player-detail-bar");
+    const setBetButton = await screen.findByTestId("change-bet-button");
     await act(async () => {
-      bar.click();
+      setBetButton.click();
     });
-    const chip25 = await screen.findByRole("button", { name: "$25" });
+
+    const dialog = await screen.findByRole("dialog", { name: "Spot 1 — Player Details" });
+    const chip25 = within(dialog).getByRole("button", { name: "$25" });
+    within(dialog).getByRole("button", { name: "Double" });
+    within(dialog).getByRole("button", { name: "Split" });
+    within(dialog).getByRole("button", { name: "Insurance" });
+
     await act(async () => {
       chip25.click();
     });
@@ -699,57 +754,45 @@ describe("FloorScreen — wager/player-action controls (AGENTS.md 1.14b) stay co
     // undo()/canUndo — see InvestigationContext.integration.test.tsx for
     // that mechanism's own thorough, independent coverage; this only
     // proves Floor's new wager wiring feeds it, not that Undo itself is
-    // correct). Polled — the DB write lands before React's own history
-    // state/re-render necessarily has, so a synchronous check right after
-    // the DB-level waitFor above can race under heavier parallel test load.
+    // correct).
     await waitFor(() => {
       const undoButton = screen.getByTitle(/undo/i) as HTMLButtonElement;
       expect(undoButton.disabled).toBe(false);
     });
   });
-});
 
-describe("FloorScreen — bet entry is discoverable from the seat interaction itself (AGENTS.md 1.14b UX correction round §4)", () => {
-  it("the bet control leads with BET/SET BET, not the old generic PLAYER DETAILS label an operator wouldn't associate with wagers", async () => {
+  it("the BET/CHANGE BET control renders before CardEntryPad in DOM order — reachable without scrolling past the keypad", async () => {
     const investigationId = await freshInvestigationId();
     const { occupySeat, updateInvestigation } = await import("@/lib/db/repositories/investigations");
     await occupySeat(investigationId, 1);
     await updateInvestigation(investigationId, { activeTarget: 1 });
 
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
-    const bar = await screen.findByTestId("player-detail-bar");
-    expect(bar.textContent).toContain("SET BET");
-  });
-
-  it("the bet control is reachable WITHOUT scrolling past the card keypad — it renders before CardEntryPad in DOM order, not after RoundControlsRow", async () => {
-    const investigationId = await freshInvestigationId();
-    const { occupySeat, updateInvestigation } = await import("@/lib/db/repositories/investigations");
-    await occupySeat(investigationId, 1);
-    await updateInvestigation(investigationId, { activeTarget: 1 });
-
-    render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
-    );
-
-    const bar = await screen.findByTestId("player-detail-bar");
+    const setBetButton = await screen.findByTestId("change-bet-button");
     const keypad = await screen.findByRole("button", { name: "A" });
-    // DOCUMENT_POSITION_FOLLOWING means `keypad` comes after `bar` in the tree.
-    expect(bar.compareDocumentPosition(keypad) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // DOCUMENT_POSITION_FOLLOWING means `keypad` comes after `setBetButton`.
+    expect(setBetButton.compareDocumentPosition(keypad) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("selecting a freshly-occupied spot via a normal tap immediately surfaces the bet control — no separate discovery step", async () => {
+  it("selecting a freshly-occupied spot via a normal tap immediately surfaces SET BET — no separate discovery step", async () => {
     const investigationId = await freshInvestigationId();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
     const seat3 = await screen.findByTestId("floor-seat-3");
@@ -757,26 +800,29 @@ describe("FloorScreen — bet entry is discoverable from the seat interaction it
       seat3.click();
     });
 
-    const bar = await screen.findByTestId("player-detail-bar");
-    expect(bar.textContent).toContain("SET BET");
+    const panel = await screen.findByTestId("active-seat-panel");
+    await waitFor(() => within(panel).getByText("SET BET"));
   });
 
-  it("once a bet is set, the seat tile itself shows the amount without opening details (AGENTS.md 1.14b UX correction round §5)", async () => {
+  it("once a bet is set, the seat tile itself shows the formatted amount without opening details", async () => {
     const investigationId = await freshInvestigationId();
     const { occupySeat, updateInvestigation } = await import("@/lib/db/repositories/investigations");
     await occupySeat(investigationId, 3);
     await updateInvestigation(investigationId, { activeTarget: 3 });
 
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
-    const bar = await screen.findByTestId("player-detail-bar");
-    await act(async () => {
-      bar.click();
-    });
+    // The chip is already live in the workspace for an active occupied
+    // seat — no need to open Player Details first (that's the point of
+    // this test's own title).
     const chip25 = await screen.findByRole("button", { name: "$25" });
     await act(async () => {
       chip25.click();
@@ -787,41 +833,42 @@ describe("FloorScreen — bet entry is discoverable from the seat interaction it
   });
 });
 
-describe("FloorScreen — the operator-loop menu (Pause/Resume, New Shoe, End Investigation, Help — previously Surveillance-only)", () => {
-  it("Floor's own Menu button opens the SAME LiveMenu Surveillance uses, with Pause and New Shoe reachable — not a stripped-down or missing menu", async () => {
+describe("FloorScreen — More menu, Pause/Lock, and closed-investigation state (AGENTS.md operational UI rebuild §12/§13/§15)", () => {
+  it("BottomNavigation's More button opens the shared More sheet, with New Shoe and End & Review reachable — not a stripped-down or missing menu", async () => {
     const investigationId = await freshInvestigationId();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
-    const menuButton = await screen.findByRole("button", { name: "Menu" });
+    const moreButton = await screen.findByRole("button", { name: "More" });
     await act(async () => {
-      menuButton.click();
+      moreButton.click();
     });
 
-    const dialog = await screen.findByRole("dialog", { name: "Menu" });
-    within(dialog).getByRole("button", { name: /Pause Investigation/ });
+    const dialog = await screen.findByRole("dialog", { name: "More" });
     within(dialog).getByRole("button", { name: /New Shoe|New Deck/ });
     within(dialog).getByRole("button", { name: /End & Review/ });
-    within(dialog).getByRole("link", { name: /Surveillance/ });
   });
 
-  it("Pause Investigation from Floor's menu actually pauses the real investigation — same context action Surveillance's header icon uses", async () => {
+  it("Pause is reachable directly from OperationalQuickActions (no menu needed) and actually pauses the real investigation", async () => {
     const investigationId = await freshInvestigationId();
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
-    const menuButton = await screen.findByRole("button", { name: "Menu" });
-    await act(async () => {
-      menuButton.click();
-    });
-    const dialog = await screen.findByRole("dialog", { name: "Menu" });
-    const pauseButton = within(dialog).getByRole("button", { name: /Pause Investigation/ });
+    const pauseButton = await screen.findByRole("button", { name: "Pause Investigation" });
     await act(async () => {
       pauseButton.click();
     });
@@ -833,19 +880,38 @@ describe("FloorScreen — the operator-loop menu (Pause/Resume, New Shoe, End In
     });
   });
 
-  it("a closed investigation replaces the Surveillance link/menu with a '+ New' affordance", async () => {
+  it("Lock is reachable directly from OperationalQuickActions, same EntryLockButton Surveillance uses", async () => {
+    const investigationId = await freshInvestigationId();
+    render(
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
+    );
+
+    await screen.findByRole("button", { name: "Enable Entry Lock" });
+  });
+
+  it("a closed investigation shows its Report content and Home is still reachable via BottomNavigation — no separate '+ New' affordance needed", async () => {
     const investigationId = await freshInvestigationId();
     const { completeInvestigation } = await import("@/lib/db/repositories/investigations");
     await completeInvestigation(investigationId);
 
     render(
-      <InvestigationProvider investigationId={investigationId}>
-        <FloorScreen />
-      </InvestigationProvider>
+      <LockProvider>
+        <EntryLockProvider>
+          <InvestigationProvider investigationId={investigationId}>
+            <FloorScreen />
+          </InvestigationProvider>
+        </EntryLockProvider>
+      </LockProvider>
     );
 
-    await screen.findByRole("button", { name: "+ New" });
-    expect(screen.queryByRole("button", { name: "Menu" })).toBeNull();
-    expect(screen.queryByRole("link", { name: /Surveillance/ })).toBeNull();
+    const home = await screen.findByRole("link", { name: "Home" });
+    expect(home.getAttribute("href")).toBe("/app");
+    expect(screen.queryByRole("button", { name: "A" })).toBeNull(); // no live card entry for a closed investigation
   });
 });

@@ -5,10 +5,12 @@ import { Users } from "lucide-react";
 import { computeApLikelihoodBySeat } from "@/lib/analysis/apLikelihood";
 import { computeHandTotal, isAutoDetectedBlackjack } from "@/lib/utils/blackjackTotal";
 import { formatCard } from "@/lib/utils/cards";
+import { formatCurrency } from "@/lib/utils/currency";
+import { seatToneClasses } from "@/lib/utils/seatTileTone";
 import {
-  ARCH_SEAT_NUMBERS,
   isPosition7Enabled,
   legacyOverflowSeatNumbersFor,
+  visibleArchSeatNumbersFor,
 } from "@/lib/utils/seats";
 import { splitTargetFor } from "@/lib/utils/seatTarget";
 import { seatRingFor } from "@/lib/utils/seatGroupColor";
@@ -35,10 +37,13 @@ interface SeatTilesRowProps {
 }
 
 /**
- * Player seats — six permanent positions in a dealer's-eye-view arch, plus
- * an optional Position 7 centered beneath it. Tiles never shift, rise, or
- * curve for any reason *within a position* — the arch shape comes from each
- * column's fixed offset, not from tile state. Three signals stay visually
+ * Player seats — up to six positions in a dealer's-eye-view arch, plus an
+ * optional Position 7 centered beneath it. The table's configured spot
+ * count (5, 6, or 7 — see QuickSetupSheet) trims the arch from the end
+ * (position 6, then 5); it never renumbers or reorders what's left. Tiles
+ * never shift, rise, or curve for any reason *within a position* — the arch
+ * shape comes from each column's fixed offset, not from tile state. Three
+ * signals stay visually
  * separate on every tile: enabled/occupied (green border), active
  * card-entry target (cyan border, overrides green when both apply), and
  * player grouping (a ring color + optional letter badge, unrelated to
@@ -66,6 +71,7 @@ export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProp
   } = useInvestigationContext();
   const showGroupLabels = useSettingsStore((s) => s.showGroupLabels);
   const apBySeat = computeApLikelihoodBySeat(investigation, cardEvents, currentRound.shoeNumber);
+  const visibleArchSeats = visibleArchSeatNumbersFor(investigation);
   const position7Enabled = isPosition7Enabled(investigation);
   const legacySeats = legacyOverflowSeatNumbersFor(investigation, currentRound);
   const [optionsSeat, setOptionsSeat] = useState<number | null>(null);
@@ -103,17 +109,10 @@ export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProp
     const spotCount = linkedSeatNumbers.length;
     const ring = seatRingFor(isOccupied, spotCount, groupId);
 
-    // Off: muted neutral. Enabled/occupied: green. Active: cyan,
-    // always wins over green so "both enabled and active" stays
-    // visibly distinct from "enabled only" — never merged into one
-    // in-between color.
-    let toneClasses = "border-dashed border-border/60 bg-transparent text-muted-foreground";
-    if (isOccupied) {
-      toneClasses = "border-status-green bg-status-green/10 text-foreground";
-    }
-    if (isActive) {
-      toneClasses = "border-accent-secondary bg-accent-secondary/10 text-foreground";
-    }
+    // Shared EMPTY/OCCUPIED/ACTIVE vocabulary (AGENTS.md operational UI
+    // rebuild §5/§6/§20) — the same helper FloorPlayField/DealerTile use,
+    // so a seat never looks meaningfully different between shells.
+    const toneClasses = seatToneClasses(isActive ? "active" : isOccupied ? "occupied" : "empty");
 
     return (
             <div
@@ -130,8 +129,8 @@ export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProp
                 boxShadow: ring ? `0 0 0 2px ${ring.color}` : undefined,
               }}
               className={`relative flex min-h-[38px] flex-col justify-center gap-0 rounded-xl py-0.5 pl-2 pr-1 transition-shadow duration-200 short:min-h-[52px] ${toneClasses} ${
-                isActive ? "border-2" : "border"
-              } ${editMode ? "outline outline-2 outline-offset-2 outline-accent" : ""}`}
+                editMode ? "outline outline-2 outline-offset-2 outline-accent" : ""
+              }`}
             >
               {ring && showGroupLabels && ring.letter && (
                 <span
@@ -150,7 +149,11 @@ export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProp
                 />
               )}
 
-              <span className="text-[10px] font-bold leading-none">
+              <span
+                className={`text-[11px] font-extrabold leading-none ${
+                  isActive ? "text-accent-secondary" : isOccupied ? "text-status-green" : "text-muted-foreground"
+                }`}
+              >
                 {isActive ? `ACTIVE · SPOT ${seat}` : `SPOT ${seat}`}
               </span>
 
@@ -163,8 +166,8 @@ export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProp
                       {spotCount > 1 ? ` · ${spotIndex} OF ${spotCount}` : ""}
                     </span>
                   </span>
-                  <span className="flex items-center gap-1 text-sm font-semibold leading-none">
-                    {record?.betAmount != null ? `$${record.betAmount}` : "—"}
+                  <span className="flex items-center gap-1 text-sm font-semibold leading-none text-foreground">
+                    {record?.betAmount != null ? formatCurrency(record.betAmount) : "—"}
                     {record?.doubled && (
                       <span className="rounded bg-pending/20 px-1 text-[8px] font-bold text-pending">2X</span>
                     )}
@@ -178,7 +181,7 @@ export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProp
                       : " "}
                   </span>
                   <span
-                    className={`text-[10px] font-medium leading-none ${total?.bust ? "text-dealer" : ""}`}
+                    className={`text-[10px] font-medium leading-none ${total?.bust ? "text-dealer" : "text-foreground"}`}
                   >
                     {isBlackjack
                       ? "BLACKJACK"
@@ -223,15 +226,19 @@ export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProp
 
   return (
     <div className="flex-none bg-surface px-1 pb-1 short:flex short:h-full short:min-h-0 short:flex-1 short:flex-col short:justify-center short:pb-0">
-      {/* Positions 1-6: a fixed arch, numbered left to right exactly as the
-          dealer sees them, bowed concave toward the dealer below. In
-          `short:` (landscape) the arch flattens into a plain 3x2 grid
-          instead — a curve reads fine in a tall narrow column, but in a
-          short wide one it just makes labels overlap between rows; a flat
-          grid scans better at that aspect ratio. Seat numbering/order never
-          changes, only the offset that's applied to it. */}
+      {/* Positions 1-6: an arch, numbered left to right exactly as the
+          dealer sees them, bowed concave toward the dealer below. The table's
+          configured spot count (5, 6, or 7 — see QuickSetupSheet) can trim
+          this to fewer than 6 visible slots; the grid stays 6 columns wide
+          regardless, so a shorter arch just leaves blank trailing columns
+          rather than re-flowing — seat numbering/order and the curve offset
+          per position never change. In `short:` (landscape) the arch
+          flattens into a plain 3x2 grid instead — a curve reads fine in a
+          tall narrow column, but in a short wide one it just makes labels
+          overlap between rows; a flat grid scans better at that aspect
+          ratio. */}
       <div className="grid grid-cols-6 gap-x-1 gap-y-0 pt-2.5 short:grid-cols-3 short:grid-rows-2 short:items-start short:gap-1.5 short:pt-0">
-        {ARCH_SEAT_NUMBERS.map((seat, i) => (
+        {visibleArchSeats.map((seat, i) => (
           <div
             key={seat}
             className="short:!translate-y-0"
@@ -242,7 +249,7 @@ export function SeatTilesRow({ editMode, onSeatOptionsOpened }: SeatTilesRowProp
         ))}
       </div>
 
-      {/* Position 7: optional, centered beneath the arch. Turning it off removes only this slot — positions 1-6 above are untouched. */}
+      {/* Position 7: only present when the table's configured spot count is 7. Turning it off (or down to 5/6) removes only this slot — positions 1-6 above are untouched. */}
       {position7Enabled && (
         <div className="mx-auto mt-1 w-1/3 min-w-[84px] short:mt-0.5 short:w-1/4 short:min-w-[64px] short:flex-none">
           {renderSeat(7)}

@@ -6,8 +6,9 @@ import { SeatTilesRow } from "./SeatTilesRow";
 import { DealerTile } from "./DealerTile";
 
 /**
- * The table map — the six-position arch (plus optional Position 7) above
- * the dealer, all fixed positions in one view, always visible together,
+ * The table map — the arch (up to six positions, trimmed by the table's
+ * configured spot count, plus optional Position 7) above the dealer, all
+ * fixed positions in one view, always visible together,
  * laid out as the dealer sees it while standing at the table. The dealer
  * is just another table position (styled red to stand out instantly), not
  * a separate control box — its actions live in the shared control dock
@@ -39,13 +40,14 @@ export function TableMap() {
           aria-label={editMode ? "Exit Edit Mode" : "Edit Seats & Dealer"}
           aria-pressed={editMode}
           title={editMode ? "Exit Edit Mode" : "Edit Seats & Dealer"}
-          className={`tap-target flex h-8 w-8 shrink-0 items-center justify-center rounded-full border short:h-6 short:w-6 ${
+          className={`tap-target flex shrink-0 flex-col items-center justify-center gap-0.5 rounded-full border px-1.5 short:h-9 short:w-9 short:rounded-full short:px-0 ${
             editMode
               ? "border-accent bg-accent text-accent-foreground"
               : "border-border bg-surface-raised text-muted-foreground"
           }`}
         >
           <Pencil className="h-3.5 w-3.5 short:h-3 short:w-3" aria-hidden />
+          <span className="text-[9px] font-semibold leading-none short:hidden">Edit</span>
         </button>
         <div className="w-1/3 min-w-[92px] short:w-full short:min-w-0">
           <DealerTile editMode={editMode} onOptionsOpened={exitEditMode} />

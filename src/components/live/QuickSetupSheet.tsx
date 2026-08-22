@@ -12,6 +12,7 @@ import {
 } from "@/lib/db/repositories/investigations";
 import { gameConfigFromInvestigation } from "@/lib/utils/gameConfig";
 import { rememberLastGameConfig } from "@/lib/utils/lastGameConfig";
+import { PLAYER_SPOT_COUNT_OPTIONS } from "@/lib/utils/seats";
 import {
   DEFAULT_DECK_COUNT_BY_FORMAT,
   DEFAULT_GAME_CONFIG,
@@ -74,11 +75,12 @@ export function QuickSetupSheet({
     const base = investigation
       ? gameConfigFromInvestigation(investigation)
       : (initialConfig ?? DEFAULT_GAME_CONFIG);
-    // New/edited table configs are limited to the fixed 6+1 arch — legacy
-    // investigations with more positions keep their recorded seat data
-    // (TableMap still renders it, clearly labeled), but applying a config
-    // change here always normalizes going forward to 6 or 7.
-    return { ...base, playerSpotCount: base.playerSpotCount >= 7 ? 7 : 6 };
+    // New/edited table configs pick 5, 6, or 7 spots — legacy investigations
+    // with more positions keep their recorded seat data (TableMap/Floor
+    // still render it, clearly labeled as legacy), but applying a config
+    // change here always normalizes going forward to the nearest of 5/6/7.
+    const clampedSpotCount = base.playerSpotCount <= 5 ? 5 : base.playerSpotCount >= 7 ? 7 : 6;
+    return { ...base, playerSpotCount: clampedSpotCount };
   });
   const [tableNumber, setTableNumber] = useState(
     investigation?.tableNumber ?? initialTableNumber ?? ""
@@ -368,18 +370,21 @@ export function QuickSetupSheet({
           )}
 
           <div>
-            <p className="mb-2 text-sm font-medium text-foreground">Position 7</p>
-            <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => update({ playerSpotCount: 6 })} className={optionButton(config.playerSpotCount === 6)}>
-                Off (6 Positions)
-              </button>
-              <button onClick={() => update({ playerSpotCount: 7 })} className={optionButton(config.playerSpotCount === 7)}>
-                On (7 Positions)
-              </button>
+            <p className="mb-2 text-sm font-medium text-foreground">Player Spots</p>
+            <div className="grid grid-cols-3 gap-2">
+              {PLAYER_SPOT_COUNT_OPTIONS.map((count) => (
+                <button
+                  key={count}
+                  onClick={() => update({ playerSpotCount: count })}
+                  className={optionButton(config.playerSpotCount === count)}
+                >
+                  {count}
+                </button>
+              ))}
             </div>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Positions 1-6 are always shown in the arch. Position 7 adds one optional spot centered above the
-              dealer.
+              How many betting spots the table shows. 5 or 6 trims the arch; 7 adds the optional spot centered
+              above the dealer. Floor and Surveillance always show the same count.
             </p>
           </div>
 

@@ -4,26 +4,17 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
-  ArrowLeftRight,
   Download,
-  FileText,
-  Headphones,
   HelpCircle,
   History as HistoryIcon,
   Layers,
   ListPlus,
-  Menu as MenuIcon,
-  Pause,
-  Play,
-  Settings,
   XOctagon,
 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { SettingsScreen } from "@/components/settings/SettingsScreen";
 import { WorkflowHelpContent } from "@/components/settings/WorkflowHelpContent";
-import { InvestigationReportsView } from "./InvestigationReportsView";
 import { TableEventsSheet } from "./TableEventsSheet";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { completeInvestigation, listInvestigations } from "@/lib/db/repositories/investigations";
@@ -36,14 +27,12 @@ import { useTerminology } from "@/hooks/useTerminology";
 import type { TerminologyDictionary } from "@/lib/terminology";
 import type { Investigation } from "@/types/investigation";
 
-type OverlayKey = "history" | "reports" | "export" | "settings" | "help";
+type OverlayKey = "history" | "export" | "help";
 
 function menuItems(t: TerminologyDictionary): { key: OverlayKey; label: string; icon: typeof HistoryIcon }[] {
   return [
     { key: "history", label: t.history, icon: HistoryIcon },
-    { key: "reports", label: t.report, icon: FileText },
     { key: "export", label: t.export, icon: Download },
-    { key: "settings", label: "Settings", icon: Settings },
     { key: "help", label: "Help", icon: HelpCircle },
   ];
 }
@@ -92,24 +81,20 @@ function ExportOverlayContent() {
 }
 
 /**
- * The sole way to reach History/Reports/Export/Settings/Help from the Live
- * screen — everything renders as an overlay on top of Live, which stays
- * mounted underneath. New Shoe / End Investigation live here too (moved out
- * of the fixed bottom bar to keep that bar to routine round actions only);
- * both still require confirmation.
+ * The "More" sheet — everything operationally real but not frequent enough
+ * to earn its own BottomNavigation icon (AGENTS.md operational UI rebuild
+ * §13/§15): History, Export, Help, Pause/Resume, New Shoe/Deck, Log Table
+ * Event, Misdeal, End & Review. Reports and Settings moved OUT to their own
+ * dedicated BottomNavigation buttons — this menu never duplicates them.
+ * Mode-switching (Floor ↔ Surveillance) also moved out, to
+ * BottomNavigation's own dedicated toggle.
  *
- * Also mounted from FloorScreen (see that component) — `mode` decides
- * whether the top switch-shell link reads "Floor Mode" (→ /floor, shown
- * in Surveillance) or "Surveillance" (→ /live, shown in Floor), and
- * Pause/Resume lives here specifically so Floor — which has no header of
- * its own the way Surveillance's LiveHeader does — still has a
- * discoverable, single place to reach it, identical to Surveillance's.
- * Everything else in this menu (New Shoe, Misdeal, End Investigation,
- * History, Reports, Export, Settings, Help) is unconditionally identical
- * in both shells: one investigation, one ledger, two views — the menu
- * itself is no exception to that rule.
+ * Fully controlled (`open`/`onOpenChange`) rather than owning its own
+ * trigger button — BottomNavigation's "More" icon is the one place this
+ * opens from, in both Floor and Surveillance, so there is exactly one
+ * "more actions" entry point instead of a per-shell hamburger.
  */
-export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "floor" }) {
+export function MoreMenu({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const {
     investigation,
     currentRound,
@@ -121,7 +106,6 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
     resume,
     busy,
   } = useInvestigationContext();
-  const [menuOpen, setMenuOpen] = useState(false);
   const [overlay, setOverlay] = useState<OverlayKey | null>(null);
   const [shoeConfirmOpen, setShoeConfirmOpen] = useState(false);
   const [incompletePromptOpen, setIncompletePromptOpen] = useState(false);
@@ -132,20 +116,17 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
   const completeCheck = canCompleteRound(investigation, currentRound);
   const t = useTerminology();
 
+  function close() {
+    onOpenChange(false);
+  }
+
   function openOverlay(key: OverlayKey) {
-    setMenuOpen(false);
+    close();
     setOverlay(key);
   }
 
   function handleNewShoeSelected() {
-    setMenuOpen(false);
-    // A round that's open but genuinely empty (Floor's own Done-and-advance
-    // — operator-loop correction — leaves exactly this behind after every
-    // hand) has nothing to complete-first-or-void: `startNewShoe()` itself
-    // is documented safe to call directly whenever the current round is
-    // "already completed (or empty)" (see InvestigationContext.tsx's own
-    // interface comment), so treat it the same as completed here rather
-    // than showing the incomplete-round prompt for a round with nothing in it.
+    close();
     const roundHasCards =
       currentRound.dealerHand.cards.length > 0 ||
       Object.values(currentRound.seats).some((seat) => seat && seat.playerCards.length > 0);
@@ -184,23 +165,6 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
         statusBefore: investigation.status,
       });
       await completeInvestigation(investigation.localId);
-      // "End & Review" means review, not "return home" — the operator must
-      // land on the investigation they just finished, not on the launch
-      // screen with no path back to it short of History. PRIORITY 1.9-6/8/9:
-      // LiveScreen/FloorScreen now swap their ENTIRE body to the full
-      // Reports content the instant `investigation.status === "closed"`
-      // (see those components' own doc comments) — this route needs no
-      // special query param to land there anymore; it's simply what a
-      // closed investigation always shows.
-      //
-      // A full `window.location.assign` (not client-side router.push) is
-      // required here for the same reason a full navigation to "/" was
-      // required before: this same InvestigationContext/VoiceControl tree
-      // must fully remount against the now-closed investigation rather
-      // than trusting an in-place refresh() to have reached every
-      // consumer. Always genuinely a different URL from wherever this was
-      // called from (Floor's own route, or this exact route without the
-      // query) — never the "identical URL is a no-op" case "/" used to be.
       diagnostics.info("investigation-lifecycle", "status written to closed, navigating to its review screen", {
         investigationId: investigation.localId,
       });
@@ -208,39 +172,14 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
     } finally {
       setEnding(false);
       setEndConfirmOpen(false);
-      setMenuOpen(false);
+      close();
     }
   }
 
   return (
     <>
-      <button
-        onClick={() => setMenuOpen(true)}
-        aria-label="Menu"
-        className="tap-target flex items-center justify-center text-muted-foreground hover:text-foreground"
-      >
-        <MenuIcon className="h-5 w-5" aria-hidden />
-      </button>
-
-      <BottomSheet open={menuOpen} onClose={() => setMenuOpen(false)} title="Menu">
+      <BottomSheet open={open} onClose={close} title="More">
         <div className="flex flex-col gap-2 pb-4">
-          {mode === "floor" ? (
-            <Link
-              href={`/investigations/${investigation.localId}/live`}
-              onClick={() => setMenuOpen(false)}
-              className="tap-target flex items-center gap-3 rounded-xl border border-accent/50 bg-accent/10 px-3 text-sm font-medium text-accent hover:bg-accent/15"
-            >
-              <ArrowLeftRight className="h-5 w-5" aria-hidden /> Surveillance
-            </Link>
-          ) : (
-            <Link
-              href={`/investigations/${investigation.localId}/floor`}
-              onClick={() => setMenuOpen(false)}
-              className="tap-target flex items-center gap-3 rounded-xl border border-accent/50 bg-accent/10 px-3 text-sm font-medium text-accent hover:bg-accent/15"
-            >
-              <Headphones className="h-5 w-5" aria-hidden /> Floor Mode
-            </Link>
-          )}
           {menuItems(t).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -252,21 +191,13 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
           ))}
           <button
             onClick={() => {
-              setMenuOpen(false);
+              close();
               void (investigation.status === "paused" ? resume() : pause());
             }}
             disabled={busy || (investigation.status !== "active" && investigation.status !== "paused")}
             className="tap-target flex items-center gap-3 rounded-xl border border-border bg-surface-raised px-3 text-sm font-medium text-foreground hover:bg-surface disabled:opacity-40"
           >
-            {investigation.status === "paused" ? (
-              <>
-                <Play className="h-5 w-5" aria-hidden /> Resume Investigation
-              </>
-            ) : (
-              <>
-                <Pause className="h-5 w-5" aria-hidden /> Pause Investigation
-              </>
-            )}
+            {investigation.status === "paused" ? "Resume Investigation" : "Pause Investigation"}
           </button>
           <button
             onClick={handleNewShoeSelected}
@@ -277,7 +208,7 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
           </button>
           <button
             onClick={() => {
-              setMenuOpen(false);
+              close();
               setTableEventsOpen(true);
             }}
             disabled={busy || investigation.status !== "active"}
@@ -287,7 +218,7 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
           </button>
           <button
             onClick={() => {
-              setMenuOpen(false);
+              close();
               setMisdealConfirmOpen(true);
             }}
             disabled={busy || investigation.status !== "active"}
@@ -297,7 +228,7 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
           </button>
           <button
             onClick={() => {
-              setMenuOpen(false);
+              close();
               setEndConfirmOpen(true);
             }}
             disabled={busy || investigation.status === "closed"}
@@ -312,22 +243,8 @@ export function LiveMenu({ mode = "surveillance" }: { mode?: "surveillance" | "f
         <HistoryOverlayContent />
       </BottomSheet>
 
-      <BottomSheet open={overlay === "reports"} onClose={() => setOverlay(null)} title={t.report}>
-        <InvestigationReportsView />
-      </BottomSheet>
-
       <BottomSheet open={overlay === "export"} onClose={() => setOverlay(null)} title={t.export}>
         <ExportOverlayContent />
-      </BottomSheet>
-
-      <BottomSheet open={overlay === "settings"} onClose={() => setOverlay(null)} title="Settings">
-        <SettingsScreen
-          activeInvestigation={{
-            localId: investigation.localId,
-            displayId: investigation.displayId,
-            isDemo: investigation.isDemo,
-          }}
-        />
       </BottomSheet>
 
       <BottomSheet open={overlay === "help"} onClose={() => setOverlay(null)} title="Help">

@@ -2,6 +2,7 @@
 
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { useCardEntry } from "@/hooks/useCardEntry";
+import { resolveSeatTarget } from "@/lib/utils/seatTarget";
 import type { Rank } from "@/types/investigation";
 
 const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
@@ -22,12 +23,11 @@ const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
  * button for the identical action only cost this pad the vertical space
  * its buttons need most.
  *
- * There is no "ENTER CARD → SEAT n" label here anymore either — that fact
- * now lives in exactly one place, ActiveSeatHeader (directly above this,
- * always rendered, dealer or seat), which is what "ENTER CARDS" as its own
- * second line already states. Repeating it here was exactly the "same fact
- * stated four times" duplication the count-first UI pass removed. This
- * keeps only its own status text (not the target name).
+ * The "ENTER CARDS FOR SPOT n" / "ENTER CARDS FOR DEALER" heading (AGENTS.md
+ * operational UI rebuild §10) is this pad's own — ActiveSeatPanel (directly
+ * above) states the seat's BET/CARDS/STATUS, not a redundant restatement of
+ * the entry target, so the two never duplicate the same fact; this heading
+ * is the ONE place "what am I entering cards into" is answered.
  *
  * `blockReason` (operator-loop milestone, §15: every blocked state must
  * explain WHY and, where there's an action, WHAT TO DO NEXT) is the single
@@ -42,18 +42,20 @@ const RANKS: Rank[] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
  * updated to match current reality: a single tap on the seat (or its
  * spoken name) enables it now, not a double-tap.
  *
- * `terminology` (PRIORITY 1.9-10/12 — global operator terminology rule):
- * only affects the "not enabled" block-reason wording below — everything
- * else in this component (the rank buttons, the last-card-event message)
- * has no target name in it at all. Defaults to "spot" (the new global
- * default — see ActiveSeatHeader's own doc comment for the full
- * reasoning) so LiveScreen's own call site (Surveillance) needed no
+ * `terminology` (PRIORITY 1.9-10/12 — global operator terminology rule)
+ * affects both the "ENTER CARDS FOR SPOT/SEAT n" heading and the "not
+ * enabled" block-reason wording below. Defaults to "spot" (the current
+ * global default) so LiveScreen's own call site (Surveillance) needed no
  * change to pick it up.
  */
 export function CardEntryPad({ terminology = "spot" }: { terminology?: "seat" | "spot" } = {}) {
-  const { investigation, currentRound } = useInvestigationContext();
+  const { investigation, currentRound, activeTarget } = useInvestigationContext();
   const { enterCard, disabled, locked, notEnabled } = useCardEntry();
   const word = terminology === "seat" ? "seat" : "spot";
+  const WORD = terminology === "seat" ? "SEAT" : "SPOT";
+
+  const targetLabel =
+    activeTarget === "dealer" ? "DEALER" : `${WORD} ${resolveSeatTarget(currentRound, activeTarget).seatNumber}`;
 
   const lastCardEvent = [...currentRound.eventLog].reverse().find((e) => e.type === "card");
 
@@ -70,6 +72,9 @@ export function CardEntryPad({ terminology = "spot" }: { terminology?: "seat" | 
 
   return (
     <div className="flex flex-none flex-col gap-0.5 border-b border-border bg-surface px-2 py-0.5 short:gap-0 short:border-b-0 short:px-1.5 short:py-0.5">
+      <p className="text-[11px] font-extrabold tracking-wide text-accent-secondary short:text-[10px]">
+        ENTER CARDS FOR {targetLabel}
+      </p>
       {(lastCardEvent || blockReason) && (
         <p
           className={`min-w-0 truncate text-[10px] leading-none short:text-[9px] ${blockReason ? "font-semibold text-pending" : "text-muted-foreground"}`}

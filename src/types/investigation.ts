@@ -103,7 +103,7 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
   ruleProfile: RULE_PROFILE_PRESETS.standard,
   entryDirection: "ltr",
   entryMode: "guided",
-  playerSpotCount: 7,
+  playerSpotCount: 6,
   practiceMode: false,
   pitArea: "",
   investigationLabel: "",

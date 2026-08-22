@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MIN_DECKS_REMAINING,
   calculateTrueCount,
+  computeCardsRemaining,
   computeDecksRemaining,
   roundTrueCountForDisplay,
 } from "./calculateTrueCount";
@@ -20,6 +21,30 @@ describe("computeDecksRemaining", () => {
     expect(computeDecksRemaining(6, 6 * 52)).toBe(MIN_DECKS_REMAINING);
     expect(computeDecksRemaining(6, 6 * 52 + 40)).toBe(MIN_DECKS_REMAINING);
     expect(computeDecksRemaining(1, 51)).toBeGreaterThan(0);
+  });
+});
+
+describe("computeCardsRemaining", () => {
+  it("equals totalDecks*52 exactly at zero cards exposed", () => {
+    expect(computeCardsRemaining(1, 0)).toBe(52);
+    expect(computeCardsRemaining(6, 0)).toBe(312);
+    expect(computeCardsRemaining(8, 0)).toBe(416);
+  });
+
+  it("the alternating-pitch acceptance case: 1 active deck, 26 observed -> 26 remaining, never 78", () => {
+    expect(computeCardsRemaining(1, 26)).toBe(26);
+    expect(computeCardsRemaining(1, 26)).not.toBe(78);
+  });
+
+  it("is never distorted by computeDecksRemaining's MIN_DECKS_REMAINING floor", () => {
+    // 51 of 52 cards exposed: 1 card physically remains, even though
+    // computeDecksRemaining floors the TC divisor at 0.25 decks (13 cards).
+    expect(computeCardsRemaining(1, 51)).toBe(1);
+    expect(computeDecksRemaining(1, 51)).toBe(MIN_DECKS_REMAINING);
+  });
+
+  it("floors at 0, never goes negative", () => {
+    expect(computeCardsRemaining(1, 60)).toBe(0);
   });
 });
 

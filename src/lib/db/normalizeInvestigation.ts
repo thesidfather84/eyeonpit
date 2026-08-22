@@ -3,6 +3,7 @@ import {
   INVESTIGATION_SCHEMA_VERSION,
   RULE_PROFILE_PRESETS,
   DEFAULT_GAME_CONFIG,
+  DEFAULT_DECK_COUNT_BY_FORMAT,
   type BlackjackFormat,
   type CardCode,
   type CorrelationScores,
@@ -305,7 +306,16 @@ export function normalizeInvestigation(raw: unknown): NormalizeResult {
     activeTarget: r.activeTarget === "dealer" || typeof r.activeTarget === "number" ? r.activeTarget : "dealer",
 
     countingSystem: oneOf(r.countingSystem, COUNTING_SYSTEMS, "Hi-Lo"),
-    shoeTotalDecks: num(r.shoeTotalDecks, DEFAULT_GAME_CONFIG.deckCount),
+    // Fallback is derived from THIS record's own (already-normalized) format,
+    // never a blanket shoe-game number — a damaged single/double-deck record
+    // must recover as 1/2 active decks, not silently become a 6-deck shoe.
+    // See AGENTS.md 1.13a §5/§14: no active-pack size may be inferred from
+    // an unrelated default. `format` is normalized just above this line
+    // specifically so it's available here.
+    shoeTotalDecks: num(
+      r.shoeTotalDecks,
+      DEFAULT_DECK_COUNT_BY_FORMAT[oneOf(r.blackjackFormat, BLACKJACK_FORMATS, DEFAULT_GAME_CONFIG.format)]
+    ),
 
     gameType: "blackjack",
     blackjackFormat: oneOf(r.blackjackFormat, BLACKJACK_FORMATS, DEFAULT_GAME_CONFIG.format),

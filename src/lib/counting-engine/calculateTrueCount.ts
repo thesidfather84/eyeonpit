@@ -16,6 +16,18 @@ export function computeDecksRemaining(totalDecks: number, exposedCardCount: numb
 }
 
 /**
+ * Exact cards remaining in the active pack/shoe — totalDecks*52 -
+ * exposedCardCount, floored at 0. Deliberately independent of
+ * computeDecksRemaining's MIN_DECKS_REMAINING floor: that floor exists only
+ * to keep true-count division finite near the end of a shoe, and must never
+ * distort this display-only card count (e.g. a single-deck pack down to 3
+ * cards left shows "3", not "13" from the 0.25-deck TC floor).
+ */
+export function computeCardsRemaining(totalDecks: number, exposedCardCount: number): number {
+  return Math.max(0, totalDecks * 52 - exposedCardCount);
+}
+
+/**
  * True count is only a meaningful conversion for balanced systems — KO is
  * unbalanced by design and never goes through this conversion in published
  * methodology (its IRC-seeded running count is already the actionable

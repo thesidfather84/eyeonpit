@@ -86,6 +86,11 @@ function verdictBadgeClass(verdict: NativeVoiceResult["verdict"] | null): string
   return "bg-muted/30 text-muted-foreground";
 }
 
+/** Formats one of VoskPhraseDiagnostics's elapsed-ms fields for display — "—" for null (that milestone never happened this phrase), never a bare "null" string. */
+function fmtMs(ms: number | null): string {
+  return ms == null ? "—" : `${Math.round(ms)}ms`;
+}
+
 export default function NativeVoiceTestPage() {
   const [providerChoice, setProviderChoice] = useState<ProviderChoice>("vosk");
   const [testMode, setTestMode] = useState<TestMode>("quick");
@@ -461,11 +466,25 @@ function ResultPanel({ record }: { record: PhraseRecord }) {
         </>
       )}
       {record.voskDiagnostics && (
-        <p className="mt-1 text-muted-foreground" data-testid="vosk-diagnostics">
-          Vosk: {record.voskDiagnostics.audioChunksReceived} audio chunks · {record.voskDiagnostics.partialResultCount} partial(s)
-          {record.voskDiagnostics.lastPartialText ? ` (last: "${record.voskDiagnostics.lastPartialText}")` : ""} · finalized by{" "}
-          {record.voskDiagnostics.finalizedBy}
-        </p>
+        <div className="mt-1 text-muted-foreground" data-testid="vosk-diagnostics">
+          <p className={record.voskDiagnostics.startupTimedOut ? "font-semibold text-destructive" : undefined}>
+            {record.voskDiagnostics.startupTimedOut ? "AUDIO PIPELINE TIMED OUT — " : ""}
+            {record.voskDiagnostics.audioChunksReceived} audio chunks · {record.voskDiagnostics.partialResultCount} partial(s)
+            {record.voskDiagnostics.lastPartialText ? ` (last: "${record.voskDiagnostics.lastPartialText}")` : ""} · finalized by{" "}
+            {record.voskDiagnostics.finalizedBy}
+          </p>
+          <p className="text-[10px]">
+            mic ready: {fmtMs(record.voskDiagnostics.micReadyMs)} · AudioContext {record.voskDiagnostics.audioContextStateAtStart ?? "—"} → running:{" "}
+            {fmtMs(record.voskDiagnostics.audioContextRunningMs)} · worklet ready: {fmtMs(record.voskDiagnostics.workletReadyMs)} · recognizer ready:{" "}
+            {fmtMs(record.voskDiagnostics.recognizerReadyMs)}
+          </p>
+          <p className="text-[10px]">
+            first audio chunk: {fmtMs(record.voskDiagnostics.firstAudioChunkMs)} · non-zero audio:{" "}
+            {record.voskDiagnostics.nonZeroAudioObserved ? `yes (${fmtMs(record.voskDiagnostics.firstNonZeroAudioChunkMs)})` : "no"} · first partial:{" "}
+            {fmtMs(record.voskDiagnostics.firstPartialMs)} · End Phrase pressed: {fmtMs(record.voskDiagnostics.endPhrasePressedMs)} · drain:{" "}
+            {fmtMs(record.voskDiagnostics.drainDurationMs)}
+          </p>
+        </div>
       )}
       <p className="mt-1 text-muted-foreground">
         First interim: {record.firstInterimMs != null ? `${Math.round(record.firstInterimMs)}ms` : "—"} · Final:{" "}

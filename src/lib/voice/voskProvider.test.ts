@@ -20,6 +20,9 @@ import {
   createVoskProvider,
   detectVoskSupport,
   resolveDefaultVoskModelUrl,
+  VOSK_AUDIO_DRAIN_MS,
+  VOSK_AUDIO_PIPELINE_TIMEOUT_MESSAGE,
+  VOSK_AUDIO_STARTUP_TIMEOUT_MS,
   VOSK_MODEL_SAMPLE_RATE,
   VOSK_PROTOTYPE_GRAMMAR_PHRASES,
   VOSK_PROVENANCE,
@@ -121,9 +124,9 @@ describe("createVoskProvider — unsupported environment fails closed (jsdom has
     expect(onFinalResult).not.toHaveBeenCalled();
   });
 
-  it("stop() on a never-started unsupported provider is a safe no-op", () => {
+  it("stop() on a never-started unsupported provider is a safe no-op", async () => {
     const provider = createVoskProvider({ onFinalResult: vi.fn() });
-    expect(() => provider.stop()).not.toThrow();
+    await expect(provider.stop()).resolves.toBeUndefined();
   });
 });
 
@@ -201,18 +204,20 @@ describe("createVoskProvider — model load failure, never permanently wedged (m
   });
 });
 
-// Real onPhraseDiagnostics verification — see voskProvider.ts's own PHRASE
-// DIAGNOSTICS doc comment (added to investigate the real "Dealer has a
-// five" mic miss). Requires a fuller fake Web Audio harness (getUserMedia,
-// AudioContext, AudioWorkletNode all lack any jsdom implementation) so
-// start() can proceed all the way through to a real, controllable
-// recognizer instance instead of short-circuiting at loadModel() like the
-// tests above.
-describe("createVoskProvider — onPhraseDiagnostics (real Dealer-has-a-five investigation instrumentation)", () => {
+// Real onPhraseDiagnostics + AUDIO PIPELINE READINESS + FINALIZATION DRAIN
+// verification — see voskProvider.ts's own doc comments (the real iPhone
+// Quick Test investigation this round). Requires a fuller fake Web Audio
+// harness (getUserMedia, AudioContext, AudioWorkletNode all lack any jsdom
+// implementation) so start() can proceed all the way through to a real,
+// controllable recognizer instance instead of short-circuiting at
+// loadModel() like the tests above.
+describe("createVoskProvider — audio pipeline readiness, finalization drain, and diagnostics (v0.2.1 real-device investigation)", () => {
   class FakeRecognizer {
     static instances: FakeRecognizer[] = [];
     listeners: Record<string, (msg: unknown) => void> = {};
     removed = false;
+    acceptWaveformFloatCalls: unknown[] = [];
+    retrieveFinalResultCalledAt: number | null = null;
     constructor(
       public sampleRate: number,
       public grammar?: string
@@ -223,8 +228,11 @@ describe("createVoskProvider — onPhraseDiagnostics (real Dealer-has-a-five inv
     on(event: string, cb: (msg: unknown) => void) {
       this.listeners[event] = cb;
     }
-    acceptWaveformFloat() {}
+    acceptWaveformFloat(data: Float32Array) {
+      this.acceptWaveformFloatCalls.push(data);
+    }
     retrieveFinalResult() {
+      this.retrieveFinalResultCalledAt = Date.now();
       // Real vosk-browser semantics: this only POSTS a message; the reply
       // arrives asynchronously — simulated here via a microtask, matching
       // this module's own doc comment on why diagnostics are reported from
@@ -246,12 +254,22 @@ describe("createVoskProvider — onPhraseDiagnostics (real Dealer-has-a-five inv
   }
 
   class FakeAudioContext {
+    static instances: FakeAudioContext[] = [];
     sampleRate = 48000;
+    state: AudioContextState = "running";
     audioWorklet = { addModule: vi.fn().mockResolvedValue(undefined) };
+    constructor() {
+      FakeAudioContext.instances.push(this);
+    }
     createMediaStreamSource() {
       return { connect: vi.fn() };
     }
+    resume() {
+      this.state = "running";
+      return Promise.resolve();
+    }
     close() {
+      this.state = "closed";
       return Promise.resolve();
     }
   }
@@ -259,6 +277,7 @@ describe("createVoskProvider — onPhraseDiagnostics (real Dealer-has-a-five inv
   beforeEach(() => {
     FakeRecognizer.instances = [];
     FakeAudioWorkletNode.instances = [];
+    FakeAudioContext.instances = [];
     vi.resetModules();
     vi.stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
     vi.stubGlobal("AudioContext", FakeAudioContext);
@@ -278,6 +297,144 @@ describe("createVoskProvider — onPhraseDiagnostics (real Dealer-has-a-five inv
     vi.doUnmock("vosk-browser");
     vi.resetModules();
     vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("REGRESSION A — onAudioStart never fires merely because setup promises resolved, only once real audio is confirmed flowing", async () => {
+    const { createVoskProvider: createProvider } = await import("./voskProvider");
+    const onAudioStart = vi.fn();
+    const provider = createProvider({ onFinalResult: vi.fn(), onAudioStart });
+
+    await provider.start();
+    // Setup (model load, recognizer construction, getUserMedia, AudioContext,
+    // worklet registration, source.connect) has fully completed by the time
+    // start() resolves — yet onAudioStart must NOT have fired: no real audio
+    // chunk has been delivered yet.
+    expect(onAudioStart).not.toHaveBeenCalled();
+
+    const worklet = FakeAudioWorkletNode.instances[0];
+    worklet.port.onmessage?.({ data: new Float32Array(128) } as MessageEvent);
+    expect(onAudioStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("REGRESSION B — zero-audio startup is detected within the timeout and reported as an explicit, disclosed error, never a silent empty phrase", async () => {
+    vi.useFakeTimers();
+    try {
+      const { createVoskProvider: createProvider } = await import("./voskProvider");
+      const onAudioStart = vi.fn();
+      const onError = vi.fn();
+      const onPhraseDiagnostics = vi.fn();
+      const provider = createProvider({ onFinalResult: vi.fn(), onAudioStart, onError, onPhraseDiagnostics });
+
+      await provider.start();
+      // Never deliver any worklet message — simulates the real "zero audio
+      // chunks ever arrived" iPhone finding.
+      await vi.advanceTimersByTimeAsync(VOSK_AUDIO_STARTUP_TIMEOUT_MS);
+
+      expect(onAudioStart).not.toHaveBeenCalled(); // the operator was never told to speak
+      expect(onError).toHaveBeenCalledWith(VOSK_AUDIO_PIPELINE_TIMEOUT_MESSAGE);
+      expect(onPhraseDiagnostics).toHaveBeenCalledWith(
+        expect.objectContaining({ audioChunksReceived: 0, startupTimedOut: true, firstAudioChunkMs: null })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not spuriously time out once real audio is already flowing", async () => {
+    vi.useFakeTimers();
+    try {
+      const { createVoskProvider: createProvider } = await import("./voskProvider");
+      const onError = vi.fn();
+      const provider = createProvider({ onFinalResult: vi.fn(), onError });
+
+      await provider.start();
+      const worklet = FakeAudioWorkletNode.instances[0];
+      worklet.port.onmessage?.({ data: new Float32Array(128) } as MessageEvent);
+
+      await vi.advanceTimersByTimeAsync(VOSK_AUDIO_STARTUP_TIMEOUT_MS);
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("REGRESSION C — the first phrase after page load (a fresh provider, first-ever start()) receives audio", async () => {
+    const { createVoskProvider: createProvider } = await import("./voskProvider");
+    const onAudioStart = vi.fn();
+    const provider = createProvider({ onFinalResult: vi.fn(), onAudioStart });
+
+    await provider.start();
+    const worklet = FakeAudioWorkletNode.instances[0];
+    worklet.port.onmessage?.({ data: new Float32Array(128) } as MessageEvent);
+
+    expect(onAudioStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("REGRESSION D — repeated Start/End Phrase cycles each independently continue receiving audio (no state leakage between phrases)", async () => {
+    const { createVoskProvider: createProvider } = await import("./voskProvider");
+    const diagnosticsPerPhrase: unknown[] = [];
+    const provider = createProvider({ onFinalResult: vi.fn(), onPhraseDiagnostics: (d) => diagnosticsPerPhrase.push(d) });
+
+    // Phrase 1
+    await provider.start();
+    FakeAudioWorkletNode.instances[0].port.onmessage?.({ data: new Float32Array(128) } as MessageEvent);
+    FakeRecognizer.instances[0].listeners["result"]?.({ event: "result", recognizerId: "fake", result: { text: "dealer has a five", result: [] } });
+    await provider.stop();
+
+    // Phrase 2 — a fresh recognizer/worklet is constructed each start().
+    await provider.start();
+    expect(FakeAudioWorkletNode.instances).toHaveLength(2);
+    FakeAudioWorkletNode.instances[1].port.onmessage?.({ data: new Float32Array(128) } as MessageEvent);
+    FakeRecognizer.instances[1].listeners["result"]?.({ event: "result", recognizerId: "fake", result: { text: "dealer has a king", result: [] } });
+    await provider.stop();
+
+    expect(diagnosticsPerPhrase).toHaveLength(2);
+    expect(diagnosticsPerPhrase[0]).toMatchObject({ audioChunksReceived: 1 });
+    expect(diagnosticsPerPhrase[1]).toMatchObject({ audioChunksReceived: 1 });
+  });
+
+  it("REGRESSION E — End Phrase drains pending audio: a worklet message arriving during the drain window is still forwarded to the recognizer before finalization completes", async () => {
+    vi.useFakeTimers();
+    try {
+      const { createVoskProvider: createProvider } = await import("./voskProvider");
+      const provider = createProvider({ onFinalResult: vi.fn() });
+
+      await provider.start();
+      const worklet = FakeAudioWorkletNode.instances[0];
+      const recognizer = FakeRecognizer.instances[0];
+      worklet.port.onmessage?.({ data: new Float32Array(128) } as MessageEvent); // audio during the phrase itself
+      expect(recognizer.acceptWaveformFloatCalls).toHaveLength(1);
+
+      const stopPromise = provider.stop(); // no prior result — this will drain before forcing finalization
+
+      // Simulate audio that was still "in flight" (captured by the worklet's
+      // render thread but not yet delivered) arriving DURING the drain
+      // window, before the drain timer has elapsed.
+      worklet.port.onmessage?.({ data: new Float32Array(128) } as MessageEvent);
+      expect(recognizer.acceptWaveformFloatCalls).toHaveLength(2); // forwarded immediately — the recognizer/pipeline is still alive
+
+      await vi.advanceTimersByTimeAsync(VOSK_AUDIO_DRAIN_MS);
+      await stopPromise;
+
+      // The in-flight chunk was received and forwarded BEFORE retrieveFinalResult() tore anything down.
+      expect(recognizer.acceptWaveformFloatCalls).toHaveLength(2);
+      expect(recognizer.removed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("skips the drain entirely when a result already arrived spontaneously — nothing to drain for", async () => {
+    const { createVoskProvider: createProvider } = await import("./voskProvider");
+    const onPhraseDiagnostics = vi.fn();
+    const provider = createProvider({ onFinalResult: vi.fn(), onPhraseDiagnostics });
+
+    await provider.start();
+    FakeRecognizer.instances[0].listeners["result"]?.({ event: "result", recognizerId: "fake", result: { text: "dealer has a five", result: [] } });
+    await provider.stop();
+
+    expect(onPhraseDiagnostics).toHaveBeenCalledWith(expect.objectContaining({ drainDurationMs: null, finalizedBy: "endpointer" }));
   });
 
   it("zero partials + real audio chunks received is real evidence of a genuine decode miss (the 'Dealer has a five' scenario) — never silently unreported", async () => {
@@ -301,12 +458,9 @@ describe("createVoskProvider — onPhraseDiagnostics (real Dealer-has-a-five inv
     recognizer.listeners["result"]?.({ event: "result", recognizerId: "fake", result: { text: "", result: [] } });
 
     expect(onPhraseDiagnostics).toHaveBeenCalledTimes(1);
-    expect(onPhraseDiagnostics).toHaveBeenCalledWith({
-      audioChunksReceived: 2,
-      partialResultCount: 0,
-      lastPartialText: null,
-      finalizedBy: "endpointer",
-    });
+    expect(onPhraseDiagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({ audioChunksReceived: 2, partialResultCount: 0, lastPartialText: null, finalizedBy: "endpointer" })
+    );
     // Empty text is never forwarded as a real final result — matches
     // EMPTY_TRANSCRIPT handling everywhere else in this app.
     expect(onFinalResult).not.toHaveBeenCalled();
@@ -333,11 +487,7 @@ describe("createVoskProvider — onPhraseDiagnostics (real Dealer-has-a-five inv
     const provider = createProvider({ onFinalResult: vi.fn(), onPhraseDiagnostics });
 
     await provider.start();
-    provider.stop();
-    // retrieveFinalResult()'s reply is asynchronous (see FakeRecognizer's
-    // own doc comment) — flush microtasks before asserting.
-    await Promise.resolve();
-    await Promise.resolve();
+    await provider.stop();
 
     expect(onPhraseDiagnostics).toHaveBeenCalledTimes(1);
     expect(onPhraseDiagnostics).toHaveBeenCalledWith(expect.objectContaining({ finalizedBy: "forced" }));
@@ -353,11 +503,31 @@ describe("createVoskProvider — onPhraseDiagnostics (real Dealer-has-a-five inv
     recognizer.listeners["result"]?.({ event: "result", recognizerId: "fake", result: { text: "dealer has a five", result: [] } });
     // A stray second "result" event (should not happen in real operation,
     // but defensively verified) must never produce a second onFinalResult.
-    provider.stop();
-    await Promise.resolve();
-    await Promise.resolve();
+    await provider.stop();
 
     expect(onFinalResult).toHaveBeenCalledTimes(1);
     expect(onFinalResult).toHaveBeenCalledWith(expect.objectContaining({ transcript: "dealer has a five", isFinal: true }));
+  });
+
+  it("records the AudioContext's suspended-at-start state honestly, and confirms it resumes to running", async () => {
+    const { createVoskProvider: createProvider } = await import("./voskProvider");
+    const onPhraseDiagnostics = vi.fn();
+    const provider = createProvider({ onFinalResult: vi.fn(), onPhraseDiagnostics });
+
+    // Simulate the real, documented iOS Safari behavior: a freshly
+    // constructed AudioContext starts suspended.
+    const OriginalCtor = FakeAudioContext;
+    class SuspendedFakeAudioContext extends OriginalCtor {
+      constructor() {
+        super();
+        this.state = "suspended";
+      }
+    }
+    vi.stubGlobal("AudioContext", SuspendedFakeAudioContext);
+
+    await provider.start();
+    FakeRecognizer.instances[0].listeners["result"]?.({ event: "result", recognizerId: "fake", result: { text: "dealer has a five", result: [] } });
+
+    expect(onPhraseDiagnostics).toHaveBeenCalledWith(expect.objectContaining({ audioContextStateAtStart: "suspended" }));
   });
 });

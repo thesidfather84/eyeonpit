@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowLeftRight, Headphones } from "lucide-react";
 import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { formatLiveStatusLine } from "@/lib/utils/gameConfig";
 import { InvestigationReportsView } from "./InvestigationReportsView";
 import { CountSummaryPanel } from "./CountSummaryPanel";
 import { FloorPlayField } from "./FloorPlayField";
@@ -79,11 +80,11 @@ export function FloorScreen() {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
       <div className="flex flex-none items-center justify-between gap-1.5 border-b border-border bg-surface px-2 py-1.5">
-        <div className="flex min-w-0 items-center gap-1.5">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <Headphones className="h-4 w-4 shrink-0 text-accent" aria-hidden />
           <span className="shrink-0 text-[11px] font-bold text-foreground">FLOOR</span>
-          <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
-            {investigation.displayId}
+          <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-muted-foreground">
+            {formatLiveStatusLine(investigation)}
           </span>
           <span
             className={`inline-block h-2 w-2 shrink-0 rounded-full ${isOnline ? "bg-status-green" : "bg-muted-foreground"}`}

@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import {
   advanceRound as advanceRoundRepo,
   assignSeatToPlayerGroup as assignSeatToPlayerGroupRepo,
+  changeDealer as changeDealerRepo,
   completeRound as completeRoundRepo,
   createPlayerGroup as createPlayerGroupRepo,
   getInvestigation,
@@ -196,6 +197,8 @@ interface InvestigationContextValue {
   misdealAndAdvance: (reason?: RoundExceptionReason) => Promise<void>;
   /** Logs a table event (dealer change, shuffle, seat/player joins-leaves, table closed) to the current round. */
   logTableEvent: (kind: TableEventKind, detail?: string) => Promise<void>;
+  /** The real "Next Dealer" transition — updates investigation.dealerName and logs the change, independent of shoeNumber/CardEvents/New Shoe. See AGENTS.md 1.14a §4/§8. */
+  changeDealer: (newDealerName: string) => Promise<void>;
 }
 
 const InvestigationContext = createContext<InvestigationContextValue | null>(null);
@@ -987,6 +990,20 @@ export function InvestigationProvider({
     [investigation, refresh]
   );
 
+  const changeDealer = useCallback(
+    async (newDealerName: string) => {
+      if (!investigation) return;
+      setBusy(true);
+      try {
+        await changeDealerRepo(investigation.localId, newDealerName);
+        await refresh();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [investigation, refresh]
+  );
+
   const clearSeatHand = useCallback(
     (seatNumber: number) => {
       return mutate(
@@ -1115,6 +1132,7 @@ export function InvestigationProvider({
         splitSeat,
         misdealAndAdvance,
         logTableEvent,
+        changeDealer,
       }}
     >
       {children}

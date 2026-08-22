@@ -16,9 +16,16 @@ const EVENTS: { kind: TableEventKind; label: string; needsDetail?: boolean }[] =
   { kind: "table-closed", label: "Table Closed" },
 ];
 
-/** Table events aren't tied to any one seat's hand — logged straight to the current round's event log for the record. */
+/**
+ * Table events aren't tied to any one seat's hand — logged straight to the
+ * current round's event log for the record. Dealer Change is the one
+ * exception with a real state effect: beyond the log entry, it's also the
+ * app's "Next Dealer" transition (AGENTS.md 1.14a §4/§8) — it updates
+ * investigation.dealerName so the Live/Floor header reflects who's dealing,
+ * while staying entirely independent of shoeNumber/CardEvents/New Shoe.
+ */
 export function TableEventsSheet({ onClose }: { onClose: () => void }) {
-  const { logTableEvent, busy } = useInvestigationContext();
+  const { logTableEvent, changeDealer, busy } = useInvestigationContext();
   const [pendingDetailFor, setPendingDetailFor] = useState<TableEventKind | null>(null);
   const [detail, setDetail] = useState("");
 
@@ -28,7 +35,14 @@ export function TableEventsSheet({ onClose }: { onClose: () => void }) {
       setDetail("");
       return;
     }
-    await logTableEvent(kind, needsDetail ? detail : undefined);
+    // A blank dealer name would silently clear the header's dealer display —
+    // require an actual name/badge before this state-changing action commits.
+    if (needsDetail && !detail.trim()) return;
+    if (kind === "dealer-change") {
+      await changeDealer(detail);
+    } else {
+      await logTableEvent(kind, needsDetail ? detail : undefined);
+    }
     onClose();
   }
 
@@ -53,7 +67,11 @@ export function TableEventsSheet({ onClose }: { onClose: () => void }) {
                   placeholder="New dealer name/badge #"
                   className="tap-target w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none"
                 />
-                <Button variant="primary" disabled={busy} onClick={() => handleLog(kind, needsDetail)}>
+                <Button
+                  variant="primary"
+                  disabled={busy || (needsDetail && !detail.trim())}
+                  onClick={() => handleLog(kind, needsDetail)}
+                >
                   Log
                 </Button>
               </div>

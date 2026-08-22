@@ -6,7 +6,7 @@ import { useInvestigationContext } from "@/contexts/InvestigationContext";
 import { useElapsedTimer } from "@/hooks/useElapsedTimer";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { formatElapsedTime } from "@/lib/utils/formatters";
-import { formatGameConfigSummary } from "@/lib/utils/gameConfig";
+import { formatGameConfigSummary, formatLiveStatusLine } from "@/lib/utils/gameConfig";
 import { LiveMenu } from "./LiveMenu";
 import { EntryLockButton } from "./EntryLockButton";
 import { QuickSetupSheet } from "./QuickSetupSheet";
@@ -55,9 +55,12 @@ export function LiveHeader() {
         <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
           {formatElapsedTime(elapsedMs)}
         </span>
-        <span className="hidden min-w-0 flex-1 truncate text-[11px] text-muted-foreground sm:inline">
-          T{investigation.tableNumber || "—"} · {formatGameConfigSummary(investigation, currentRound.shoeNumber)} · R
-          {currentRound.roundNumber}
+        <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+          {formatLiveStatusLine(investigation)}
+          <span className="hidden sm:inline">
+            {" "}
+            · {formatGameConfigSummary(investigation, currentRound.shoeNumber)} · R{currentRound.roundNumber}
+          </span>
         </span>
       </div>
 

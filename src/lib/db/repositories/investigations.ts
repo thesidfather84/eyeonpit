@@ -484,6 +484,7 @@ export async function createPlayerGroup(localId: string, label?: string): Promis
 
 export interface GameConfigPatch {
   tableNumber?: string;
+  dealerName?: string;
   countingSystem?: CountingSystem;
   blackjackFormat?: BlackjackFormat;
   shoeTotalDecks?: number;
@@ -496,10 +497,7 @@ export interface GameConfigPatch {
   investigationLabel?: string;
 }
 
-/** Safe-field path — table label, entry direction, rule profile, seat count, etc. Never touches counting-relevant state, so it applies immediately with no confirmation. */
-export async function updateGameConfig(localId: string, patch: GameConfigPatch): Promise<void> {
-  const investigation = await getInvestigation(localId);
-  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+async function applyGameConfigPatch(localId: string, investigation: Investigation, patch: GameConfigPatch): Promise<void> {
   await updateInvestigation(localId, {
     ...patch,
     rounds: appendEventToRounds(investigation.rounds, {
@@ -510,17 +508,58 @@ export async function updateGameConfig(localId: string, patch: GameConfigPatch):
 }
 
 /**
+ * Safe-field path — table label, dealer name, entry direction, rule
+ * profile, seat count, etc. Refuses (throws) a patch that would change
+ * `blackjackFormat`/`shoeTotalDecks` on an investigation that already has
+ * active pack/shoe events recorded — the active-pack denominator every
+ * already-observed CardEvent is being counted against must never change
+ * except through a caller that explicitly chose HOW (see
+ * updateGameConfigAndRecalculate / updateGameConfigAndStartNewShoe below).
+ * This guard lives here, not only in QuickSetupSheet's own isRiskyChange
+ * check, so no future caller can bypass it by skipping that UI (AGENTS.md
+ * 1.14a §13).
+ */
+export async function updateGameConfig(localId: string, patch: GameConfigPatch): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+
+  const changesActivePackConfig =
+    (patch.blackjackFormat !== undefined && patch.blackjackFormat !== investigation.blackjackFormat) ||
+    (patch.shoeTotalDecks !== undefined && patch.shoeTotalDecks !== investigation.shoeTotalDecks);
+  if (changesActivePackConfig) {
+    const hasCardEvents = await getDb()
+      .cardEvents.where("[investigationId+shoeNumber]")
+      .equals([localId, investigation.rounds[investigation.rounds.length - 1].shoeNumber])
+      .first();
+    if (hasCardEvents) {
+      throw new Error(
+        "updateGameConfig cannot change blackjackFormat/shoeTotalDecks on a shoe with recorded cards — " +
+          "use updateGameConfigAndRecalculate (deliberate, in-place reinterpretation) or " +
+          "updateGameConfigAndStartNewShoe (safe — the historical shoe keeps its original denominator) instead."
+      );
+    }
+  }
+
+  await applyGameConfigPatch(localId, investigation, patch);
+}
+
+/**
  * The "Recalculate" branch of a risky config change (format/deck count/
- * counting system). Nothing about recorded cards changes — every count is
- * always computed live from them — so applying the new config in place is
- * the entire recalculation; the next calculateCountSnapshot() over the
- * unchanged card ledger picks it up automatically.
+ * counting system) — the one deliberate, explicit path allowed to reinterpret
+ * an already-recorded shoe's CardEvents under a new denominator. Nothing
+ * about recorded cards changes — every count is always computed live from
+ * them — so applying the new config in place is the entire recalculation;
+ * the next calculateCountSnapshot() over the unchanged card ledger picks it
+ * up automatically. Only ever reached from QuickSetupSheet's own risky-change
+ * confirmation, never silently.
  */
 export async function updateGameConfigAndRecalculate(
   localId: string,
   patch: GameConfigPatch
 ): Promise<void> {
-  await updateGameConfig(localId, patch);
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+  await applyGameConfigPatch(localId, investigation, patch);
 }
 
 /** The "Start New Shoe" branch of a risky config change — applies the patch, then resets the shoe exactly like a normal New Shoe, voiding the current round first if it wasn't already complete. */
@@ -682,6 +721,29 @@ export async function logTableEvent(
   const label = TABLE_EVENT_LABELS[kind];
   const message = detail?.trim() ? `${label} — ${detail.trim()}` : label;
   await updateInvestigation(localId, {
+    rounds: appendEventToRounds(investigation.rounds, { type: "table-event", message }),
+  });
+}
+
+/**
+ * The real "Next Dealer" state transition (AGENTS.md 1.14a §4/§8) — sets
+ * `investigation.dealerName` AND logs the change to the event log in the
+ * same write, so the Live/Floor header always reflects who EyeOnPit
+ * believes is dealing right now, not just a historical text note. Dealer
+ * change and New Deck/New Shoe are deliberately independent events: this
+ * never touches `shoeNumber`, `rounds[].dealerHand`, or the CardEvent
+ * ledger — the active shoe/pack, its exposed cards, and every count stay
+ * exactly as they were. See advanceRound for the (separate) pack-transition
+ * path.
+ */
+export async function changeDealer(localId: string, newDealerName: string): Promise<void> {
+  const investigation = await getInvestigation(localId);
+  if (!investigation) throw new Error(`Investigation ${localId} not found.`);
+  const trimmed = newDealerName.trim();
+  const label = TABLE_EVENT_LABELS["dealer-change"];
+  const message = trimmed ? `${label} — ${trimmed}` : label;
+  await updateInvestigation(localId, {
+    dealerName: trimmed,
     rounds: appendEventToRounds(investigation.rounds, { type: "table-event", message }),
   });
 }

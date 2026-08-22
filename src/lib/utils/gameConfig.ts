@@ -37,6 +37,24 @@ export function formatGameConfigSummary(investigation: Investigation, shoeOrDeck
   ].join(" · ");
 }
 
+/**
+ * The at-a-glance operational status line (AGENTS.md 1.14a §9/§12) — Table,
+ * Dealer, and the active pack/shoe size, the three things an operator must
+ * be able to confirm before/while counting. Deliberately terser than
+ * formatGameConfigSummary (drops rule profile/entry direction/round number,
+ * which matter for Reports but not for "am I counting the right thing right
+ * now") and — unlike that function's own header usage — meant to always be
+ * visible, never hidden below a breakpoint.
+ */
+export function formatLiveStatusLine(investigation: Investigation): string {
+  const deckPart =
+    investigation.blackjackFormat === "shoe"
+      ? `${investigation.shoeTotalDecks}D SHOE`
+      : `${investigation.shoeTotalDecks}D`;
+  const dealerPart = investigation.dealerName.trim() || "No Dealer Set";
+  return `T${investigation.tableNumber || "—"} · ${dealerPart} · ${deckPart}`;
+}
+
 /** t.resetShoe for shoe games, "New Deck" for single/double deck — same reset action underneath (advanceRound), just labeled for what the format actually is. Deck resets have no separate terminology mapping, so that label stays fixed across every language level. */
 export function newShoeOrDeckLabel(investigation: Investigation, t: TerminologyDictionary): string {
   return investigation.blackjackFormat === "shoe" ? t.resetShoe : "New Deck";

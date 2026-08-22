@@ -83,6 +83,7 @@ export function QuickSetupSheet({
   const [tableNumber, setTableNumber] = useState(
     investigation?.tableNumber ?? initialTableNumber ?? ""
   );
+  const [dealerName, setDealerName] = useState(investigation?.dealerName ?? "");
   const [customDeckInput, setCustomDeckInput] = useState(String(config.deckCount));
   const [submitting, setSubmitting] = useState(false);
   const [riskyPatch, setRiskyPatch] = useState<GameConfigPatch | null>(null);
@@ -108,6 +109,7 @@ export function QuickSetupSheet({
   function buildPatch(): GameConfigPatch {
     return {
       tableNumber: tableNumber.trim(),
+      dealerName: dealerName.trim(),
       blackjackFormat: config.format,
       shoeTotalDecks: config.deckCount,
       ruleProfile: config.ruleProfile,
@@ -152,7 +154,7 @@ export function QuickSetupSheet({
       const created = await createInvestigation({
         casino: "",
         tableNumber: tableNumber.trim(),
-        dealerName: "",
+        dealerName: dealerName.trim(),
         investigationDate: new Date().toISOString().slice(0, 10),
         operatorName: "",
         countingSystem: "Hi-Lo",
@@ -309,6 +311,12 @@ export function QuickSetupSheet({
                 value={tableNumber}
                 onChange={(e) => setTableNumber(e.target.value)}
                 placeholder="Table ID"
+                className={textInputClasses}
+              />
+              <input
+                value={dealerName}
+                onChange={(e) => setDealerName(e.target.value)}
+                placeholder="Dealer name/badge # (optional)"
                 className={textInputClasses}
               />
               <input
